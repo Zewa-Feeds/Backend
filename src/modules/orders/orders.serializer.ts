@@ -211,6 +211,25 @@ export function serializeOrder(order: OrderRow) {
       (order.paymentStatus === PaymentStatus.PAID ||
         order.paymentStatus === PaymentStatus.PARTIALLY_REFUNDED) &&
       refundedPaise < order.totalPaise,
+
+    /**
+     * Money still held against an order that will never ship.
+     *
+     * Cancelling restocks inventory and reverses the coupon, but deliberately
+     * does NOT move money: a refund is irreversible and needs an amount and a
+     * reason, so it stays a separate action. That leaves a real failure mode —
+     * a CANCELLED order sitting at PAID, where the customer has been charged
+     * for nothing and no screen says so.
+     *
+     * Surfacing it as a flag lets the CMS show an unmissable warning rather
+     * than relying on whoever cancelled the order to remember.
+     */
+    awaitingRefund:
+      order.status === OrderStatus.CANCELLED &&
+      (order.paymentStatus === PaymentStatus.PAID ||
+        order.paymentStatus === PaymentStatus.PARTIALLY_REFUNDED) &&
+      refundedPaise < order.totalPaise,
+
     /** §6.5: the invoice PDF appears once a number has been entered. */
     canDownloadInvoice: Boolean(order.invoiceNumber),
   };
