@@ -214,8 +214,19 @@ export const env = {
   isDev: raw.NODE_ENV === 'development',
   isTest: raw.NODE_ENV === 'test',
 
-  /** Every origin allowed by CORS. */
-  corsOrigins: [raw.STOREFRONT_ORIGIN, raw.CMS_ORIGIN, ...raw.EXTRA_CORS_ORIGINS].filter(Boolean),
+  /**
+   * Every origin allowed by CORS, normalised.
+   *
+   * A trailing slash is stripped because the CORS check is an exact string
+   * match and browsers ALWAYS send Origin without one. Pasting
+   * "https://example.com/" into a dashboard — which is what you get by copying
+   * from the address bar — therefore blocked every request from that site,
+   * with no error anywhere on the server to explain it. Normalising here means
+   * the value works whichever way it was entered.
+   */
+  corsOrigins: [raw.STOREFRONT_ORIGIN, raw.CMS_ORIGIN, ...raw.EXTRA_CORS_ORIGINS]
+    .filter(Boolean)
+    .map((origin) => origin.replace(/\/+$/, '')),
 } as const;
 
 export type Env = typeof env;
