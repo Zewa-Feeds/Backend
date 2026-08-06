@@ -71,8 +71,12 @@ services:
         sync: false
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
+      # Required at boot in production, but the mail client checks it again
+      # before sending and logs "ZeptoMail not configured — email skipped"
+      # rather than throwing. A placeholder therefore boots safely: order
+      # emails are skipped, nothing crashes. Replace with the real token.
       - key: ZEPTOMAIL_TOKEN
-        sync: false
+        value: "placeholder-not-configured"
       - key: ZEPTOMAIL_FROM
         sync: false
       - key: CLOUDINARY_CLOUD_NAME
@@ -86,10 +90,21 @@ services:
       # without charging. Stated explicitly rather than relying on the default.
       - key: RAZORPAY_AUTO_CONFIRM
         value: "false"
+
+      # COD-only until real Razorpay credentials exist.
+      #
+      # The production guardrail demands RAZORPAY_KEY_ID/_KEY_SECRET and a
+      # webhook secret whenever PAYMENT_RAZORPAY_ENABLED is true, and refuses
+      # to boot without them — deliberately, so a live deploy can never accept
+      # simulated payments. Disabling online payment satisfies it honestly
+      # instead of weakening the check.
+      #
+      # TO ENABLE ONLINE PAYMENT: set the three RAZORPAY_* values in the
+      # dashboard, then flip this to "true".
       - key: PAYMENT_RAZORPAY_ENABLED
-        value: "true"
-      - key: PAYMENT_COD_ENABLED
         value: "false"
+      - key: PAYMENT_COD_ENABLED
+        value: "true"
 
       # No separate worker service on the free plan, so the API hosts the
       # queue consumers. Without this nothing drains the payment and email
