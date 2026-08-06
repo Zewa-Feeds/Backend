@@ -1,0 +1,171 @@
+# Render blueprint for the Zewa Feeds backend.
+#
+# TWO services, not one. The API and the BullMQ worker are separate processes:
+# the worker is what confirms payments, sends order email and releases stock,
+# so an API-only deploy takes orders that never confirm — the exact failure
+# seen locally when `npm run worker` was not running.
+#
+# Deploy with: Render Dashboard -> New -> Blueprint -> point at this repo.
+# `rootDir` assumes this file sits in Backend/ inside a repo whose root is the
+# project folder; adjust if you deploy Backend/ as its own repo.
+
+services:
+  # ---- HTTP API ------------------------------------------------------------
+  - type: web
+    name: zewa-api
+    runtime: node
+    plan: starter # free tier sleeps after inactivity; not viable for a payment webhook
+    rootDir: Backend
+    buildCommand: npm ci && npm run build && npx prisma migrate deploy
+    startCommand: npm run start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+
+      # Managed infra — wired automatically from the definitions below.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: zewa-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: zewa-redis
+          property: connectionString
+
+      # Generated once by Render, then shared with the worker via envVarGroup
+      # so both processes verify the same tokens.
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: JWT_PREVIEW_SECRET
+        generateValue: true
+
+      # Set these in the Render dashboard — never commit them.
+      #   TWOFA_ENCRYPTION_KEY : 64 hex chars -> openssl rand -hex 32
+      #   STOREFRONT_ORIGIN    : https://... (boot fails if it contains localhost)
+      #   CMS_ORIGIN           : https://...
+      #   RAZORPAY_KEY_ID / _KEY_SECRET / _WEBHOOK_SECRET
+      #   ZEPTOMAIL_TOKEN      : required in production or boot fails
+      #   CLOUDINARY_*
+      - key: TWOFA_ENCRYPTION_KEY
+        sync: false
+      - key: STOREFRONT_ORIGIN
+        sync: false
+      - key: CMS_ORIGIN
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: ZEPTOMAIL_TOKEN
+        sync: false
+      - key: ZEPTOMAIL_FROM
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+
+      # Production refuses to boot with this true — it would confirm payments
+      # without charging. Stated explicitly rather than relying on the default.
+      - key: RAZORPAY_AUTO_CONFIRM
+        value: "false"
+      - key: PAYMENT_RAZORPAY_ENABLED
+        value: "true"
+      - key: PAYMENT_COD_ENABLED
+        value: "false"
+
+  # ---- Background worker ---------------------------------------------------
+  # No healthCheckPath and no port: this process serves no HTTP.
+  - type: worker
+    name: zewa-worker
+    runtime: node
+    plan: starter
+    rootDir: Backend
+    # Migrations run in the API build only — two services applying them
+    # concurrently on deploy can deadlock on the advisory lock.
+    buildCommand: npm ci && npm run build
+    startCommand: npm run worker:prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: zewa-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: zewa-redis
+          property: connectionString
+
+      # Must match the API exactly — the worker verifies the same tokens.
+      - key: JWT_ACCESS_SECRET
+        fromService:
+          type: web
+          name: zewa-api
+          envVarKey: JWT_ACCESS_SECRET
+      - key: JWT_REFRESH_SECRET
+        fromService:
+          type: web
+          name: zewa-api
+          envVarKey: JWT_REFRESH_SECRET
+      - key: JWT_PREVIEW_SECRET
+        fromService:
+          type: web
+          name: zewa-api
+          envVarKey: JWT_PREVIEW_SECRET
+
+      - key: TWOFA_ENCRYPTION_KEY
+        sync: false
+      - key: STOREFRONT_ORIGIN
+        sync: false
+      - key: CMS_ORIGIN
+        sync: false
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: ZEPTOMAIL_TOKEN
+        sync: false
+      - key: ZEPTOMAIL_FROM
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: RAZORPAY_AUTO_CONFIRM
+        value: "false"
+      - key: PAYMENT_RAZORPAY_ENABLED
+        value: "true"
+      - key: PAYMENT_COD_ENABLED
+        value: "false"
+
+  # ---- Redis (BullMQ queue backing store) ----------------------------------
+  # BullMQ requires maxmemoryPolicy=noeviction: under an "allkeys-lru" policy
+  # Redis can evict job data mid-flight and payments silently vanish.
+  - type: keyvalue
+    name: zewa-redis
+    plan: starter
+    maxmemoryPolicy: noeviction
+    ipAllowList: [] # internal-only; reachable from your Render services
+
+databases:
+  - name: zewa-postgres
+    plan: basic-256mb
+    postgresMajorVersion: "16"

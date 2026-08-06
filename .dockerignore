@@ -1,0 +1,21 @@
+node_modules
+dist
+npm-debug.log*
+*.log
+
+# Never bake secrets into an image.
+.env
+.env.local
+.env.*.local
+
+.git
+.gitignore
+.DS_Store
+.idea
+.vscode
+
+docker/docker-compose.yml
+README.md
+coverage
+tmp
+uploads

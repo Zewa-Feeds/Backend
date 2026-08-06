@@ -1,0 +1,40 @@
+node_modules/
+dist/
+*.log
+npm-debug.log*
+
+# Env — never commit real secrets. .env.example is the tracked template.
+.env
+.env.local
+.env.*.local
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# OS / editor
+.DS_Store
+.idea/
+*.swp
+
+# Generated invoices / temp artefacts
+tmp/
+# Leading slash: the runtime upload directory at the project root ONLY.
+# Without it this also matched src/modules/uploads/, silently excluding the
+# uploads route from the repo.
+/uploads/
+coverage/
+
+# Raw brand/marketing footage — 1.3GB of source video that lives in this
+# folder for convenience. Delivered assets are served from Cloudinary, and
+# GitHub rejects files over 100MB, so these must never be committed.
+Brand Videos/
+*.mp4
+*.mov
+
+# Source artwork and staged video. Both are inputs to the import scripts,
+# not deliverables: the finished assets are served from Cloudinary. Keeping
+# them out holds the repo at ~8MB instead of ~1.6GB.
+Listing Images/
+scripts/video-web/
+*.psd

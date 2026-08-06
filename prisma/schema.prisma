@@ -1,0 +1,879 @@
+// ============================================================================
+// Zewa Feeds — database schema
+//
+// Derived from CMS/lib/seed.js (the de-facto schema the CMS was built against)
+// and the storefront's hardcoded product shapes. Section references (§) point at
+// CMS/Zewa_Feeds_CMS_Specification_v2.docx.
+//
+// Two conventions that hold everywhere:
+//   1. Money is an Int in paise. Never a float, never rupees.
+//   2. Anything an order needs for an invoice is SNAPSHOT onto the order at
+//      purchase time — the catalogue changes, invoices must not.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+  // "native" covers local dev (macOS). The debian target is what Render and
+  // most Linux hosts run — without it the deployed client fails at startup
+  // with "Query engine binary for current platform could not be found".
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+/// PRODUCT TYPE — how the feed behaves, which is how the catalogue is browsed.
+///
+/// Deliberately NOT species. A feed suits many species (F2 covers six tetra
+/// varieties) and a species eats many feeds, so species is a MANY-valued
+/// attribute and lives in `ProductFamily.tags`. Forcing it into this enum would
+/// have thrown that detail away.
+///
+/// Pack size is likewise absent: 11 of 13 products ship both a 45g and a 1kg
+/// SKU, so "1kg" is a variant filter (`ProductVariant.pack`), not a category —
+/// otherwise one product would need to be in two categories at once.
+enum Category {
+  DRIED_BSF_LARVAE
+  FLOATING_PELLETS
+  SLOW_SINKING_PELLETS
+  BOTTOM_DWELLERS
+  HATCHERY_FEEDS
+
+  // ---- Legacy species values -------------------------------------------
+  // Kept so existing rows and any stored filter/URL remain valid. Postgres
+  // cannot drop an enum value that data or a default might still reference.
+  // Do not assign these to new products.
+  BETTA
+  CICHLID
+  HATCHERY
+  GUPPY
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  COMING_SOON
+  /// Temporarily off sale but not retired — hidden from the storefront, kept in
+  /// the catalogue so it can be switched back to ACTIVE without re-creating it.
+  /// Distinct from DISCONTINUED, which means "gone for good".
+  INACTIVE
+  DISCONTINUED
+}
+
+enum Badge {
+  BESTSELLER
+  NEW
+  PRO
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PAID
+  UNPAID
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentMethod {
+  RAZORPAY
+  COD
+}
+
+enum CustomerStatus {
+  ACTIVE
+  BANNED
+}
+
+enum Role {
+  CONTENT_EDITOR
+  OPS_MANAGER
+  ADMIN
+}
+
+enum CmsUserStatus {
+  ACTIVE
+  DEACTIVATED
+}
+
+enum TwofaMethod {
+  TOTP
+  SMS_OTP
+}
+
+enum ReviewState {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum DiscountType {
+  FLAT
+  PERCENTAGE
+}
+
+/// Which products a coupon applies to (§10.2 extension).
+enum CouponScope {
+  ALL_PRODUCTS
+  SPECIFIC_PRODUCTS
+}
+
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum ContentVersion {
+  LIVE
+  DRAFT
+}
+
+enum AuditModule {
+  PRODUCTS
+  ORDERS
+  CONTENT
+  REVIEWS
+  COUPONS
+  CUSTOMERS
+  USERS
+  SETTINGS
+  AUTH
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+// ============================================================================
+// PRODUCTS (§5)
+//
+// Two levels: ProductFamily ("Betta Bites F3") and ProductVariant ("45 g").
+// Every family has one PDP; its variants are the pack selector.
+// ============================================================================
+
+model ProductFamily {
+  id       String        @id @default(uuid())
+  /// Immutable after first publish (§5.2).
+  slug     String        @unique
+  name     String
+  category Category
+  status   ProductStatus @default(DRAFT)
+  badge    Badge?
+
+  /// Max 200 chars (§5.2). Enforced in the DTO too.
+  shortDesc    String @db.VarChar(200)
+  /// Sanitised Tiptap HTML — sanitised server-side on write, never trusted raw.
+  fullDescHtml String @default("")
+
+  proteinPct Int      @default(0)
+  /// Up to 8 bullet points, shown as trust badges on the PDP (§5.2).
+  benefits   String[]
+
+  /// Species and search tags, e.g. ["betta","halfmoon","plakat"].
+  ///
+  /// Many-valued on purpose: one feed suits several species, so this is what
+  /// powers a "find feed for my fish" filter. Sourced from the PDP master doc's
+  /// "Primary Species" / "Also Suitable For" rows.
+  tags       String[] @default([])
+
+  // Feeding guide (§5.2 tab 5)
+  feedFreq      String?
+  feedPortion   String?
+  feedNotesHtml String?
+
+  /// { fat, fibre, moisture, ash, astaxanthin } — free-form, varies per product.
+  nutrition Json @default("{}")
+  /// Storefront-only presentation the CMS does not edit yet: gallery, highlights,
+  /// feature grid, FAQ, accent colours. Parked here so schema churn isn't a blocker.
+  presentation Json @default("{}")
+
+  seoTitle String?
+  seoDesc  String?
+
+  publishedAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  updatedById String?
+  updatedBy   CmsUser? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  variants   ProductVariant[]
+  draft      ProductDraft?
+  reviews    Review[]
+  spotlights Spotlight[]
+  /// Ordered gallery — photos AND video interleaved. See ProductMedia.
+  media      ProductMedia[]
+  coupons    CouponProduct[]
+
+  @@index([status, category])
+  @@index([deletedAt])
+}
+
+model ProductVariant {
+  id       String @id @default(uuid())
+  familyId String
+
+  sku  String @unique
+  pack String
+
+  /// Money in paise. 249 rupees == 24900.
+  mrpPaise   Int
+  pricePaise Int
+  stock      Int @default(0)
+
+  /// HSN code — required on the invoice (§6.5).
+  hsn         String @default("23099090")
+  /// Used for shipping weight bands.
+  weightGrams Int?
+
+  position Int     @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  family     ProductFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+  /// Pack-specific photography. Shared assets have variantId = NULL instead.
+  media      ProductMedia[]
+
+  @@index([familyId])
+  @@index([stock])
+}
+
+/// What a ProductMedia row holds. Drives which Cloudinary resource type the
+/// asset was uploaded as, and which element the storefront renders.
+enum MediaType {
+  IMAGE
+  VIDEO
+}
+
+/// One ordered gallery per product: photos and (at most one) video interleaved.
+///
+/// Ordering is `position`, NOT the media type — the owner arranges the gallery
+/// freely, so "photo, video, photo, photo" is just positions 0..3 with a VIDEO at
+/// 1. A product with no video simply has no VIDEO row; nothing special-cases it.
+///
+/// "At most one VIDEO per family" is enforced TWICE on purpose: the service
+/// validates it to return a readable 422, and a partial unique index
+/// (`ProductMedia_one_video_per_family`, see the migration) makes it impossible
+/// to violate even from raw SQL. The index is not expressible in the Prisma
+/// schema, so it lives only in the migration — do not `prisma db push` this
+/// schema, as that would silently drop it.
+model ProductMedia {
+  id       String    @id @default(uuid())
+  familyId String
+  type     MediaType @default(IMAGE)
+
+  /// Which pack this asset shows, or NULL for a SHARED asset.
+  ///
+  /// A product sells the same feed in a 45g bottle, a 200g pouch and a 1kg
+  /// pouch, and each has its own photography. With everything hanging off the
+  /// family alone, a shopper choosing "45g Bottle" was shown 1kg pouch shots.
+  ///
+  /// NULL means "show for every pack" — fish photos, nutrition panels, feature
+  /// graphics. Those are the majority, so nullable is the right default.
+  variantId String?
+
+  /// Cloudinary secure_url of the asset itself.
+  url      String
+  /// Cloudinary public_id, kept so a removed asset can be destroyed rather than
+  /// orphaned — an orphan is billed forever.
+  publicId String?
+
+  /// Alt text. Required-in-spirit for images (a11y + SEO); videos use it as a
+  /// caption/label, so it stays nullable at the DB level.
+  alt      String?
+
+  /// Position in the gallery. Contiguous from 0, rewritten wholesale on save.
+  position Int       @default(0)
+
+  /// Poster frame for a VIDEO, derived from Cloudinary rather than uploaded
+  /// separately. Null for IMAGE rows. Without one, a <video> paints black until
+  /// the first frame decodes.
+  posterUrl String?
+
+  /// Intrinsic dimensions, used to reserve layout space and avoid CLS.
+  width  Int?
+  height Int?
+  /// VIDEO only — surfaced in the CMS so an accidental 10-minute upload is obvious.
+  durationSec Float?
+
+  family  ProductFamily   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  /// SetNull, not Cascade: retiring a pack size must not delete its photography,
+  /// which is still useful as a shared asset.
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([familyId, position])
+  @@index([variantId])
+}
+
+/// Draft overlay (§5.2). Editing a live product writes here; the live rows are
+/// untouched until Publish. Preview renders from this payload.
+model ProductDraft {
+  id       String @id @default(uuid())
+  familyId String @unique
+
+  /// The entire editable family + variants payload, as edited in the CMS.
+  payload Json
+
+  updatedById String?
+  updatedBy   CmsUser? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  family ProductFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================================
+// ORDERS (§6)
+// ============================================================================
+
+model Order {
+  id      String @id @default(uuid())
+  /// ZW-{YYYYMMDD}-{4-digit daily sequence}. Generated in the checkout txn from
+  /// OrderCounter — never from COUNT(*).
+  orderNo String @unique
+
+  /// Null for guest checkout. Matched to an account by email later if they register.
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  email String
+  phone String
+
+  status        OrderStatus   @default(PENDING)
+  paymentStatus PaymentStatus @default(UNPAID)
+  paymentMethod PaymentMethod
+
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+
+  // ---- Money, all paise ----
+  subtotalPaise Int
+  discountPaise Int @default(0)
+  shippingPaise Int @default(0)
+  taxPaise      Int @default(0)
+  totalPaise    Int
+
+  couponCode String?
+
+  /// Snapshot at purchase time: { name, line1, line2, city, state, pincode, phone }.
+  shippingAddress Json
+
+  /// Entered manually, must match the Tally sequence. No auto-generation (§6.5).
+  /// Required before the order can move past PROCESSING.
+  invoiceNumber String?
+
+  carrier        String?
+  trackingNumber String?
+  trackingUrl    String?
+
+  /// What the CUSTOMER typed at checkout ("leave at the gate"). Read-only for
+  /// staff — it is the shopper's own words and must not be edited or overwritten.
+  ///
+  /// Previously the checkout wrote this into `internalNote`, so a customer's
+  /// delivery instruction landed in the staff-only field and the first staff note
+  /// silently destroyed it.
+  customerNote String?
+
+  /// Staff-only. Never sent to the customer (§6.3).
+  internalNote String?
+  cancelReason String?
+
+  /// Guards against double-submits on checkout.
+  idempotencyKey String? @unique
+
+  placedAt    DateTime  @default(now())
+  acceptedAt  DateTime?
+  shippedAt   DateTime?
+  deliveredAt DateTime?
+  cancelledAt DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  items       OrderItem[]
+  emails      OrderEmail[]
+  refunds     Refund[]
+  redemptions CouponRedemption[]
+
+  @@index([status, placedAt])
+  @@index([paymentStatus])
+  @@index([email])
+  @@index([customerId])
+  // Supports the stock-release sweep for abandoned Razorpay orders.
+  @@index([status, paymentStatus, placedAt])
+}
+
+model OrderItem {
+  id      String @id @default(uuid())
+  orderId String
+
+  /// Nullable: the SKU may be deleted later. The snapshot below is authoritative.
+  variantId String?
+
+  // ---- Snapshots. The invoice reads these, not the live catalogue. ----
+  productName    String
+  sku            String
+  pack           String
+  unitPricePaise Int
+  qty            Int
+  hsn            String
+  taxRatePct     Decimal @db.Decimal(5, 2)
+  lineTotalPaise Int
+
+  order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+}
+
+/// What the customer was actually sent, and when (§6.3 + §15).
+model OrderEmail {
+  id      String @id @default(uuid())
+  orderId String
+
+  subject           String
+  toEmail           String
+  status            EmailStatus @default(QUEUED)
+  providerMessageId String?
+  error             String?
+  queuedAt          DateTime    @default(now())
+  sentAt            DateTime?
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+}
+
+model Refund {
+  id      String @id @default(uuid())
+  orderId String
+
+  amountPaise     Int
+  reason          String
+  razorpayRefundId String?
+  processedById   String?
+
+  createdAt DateTime @default(now())
+
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  processedBy CmsUser? @relation(fields: [processedById], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+}
+
+/// Monotonic sequence per document series.
+///
+/// The id is the series key, not a date: numbering is now
+/// `27ZFO###` / `27ZFI###` — a financial-year prefix plus a running number that
+/// does NOT reset daily. Keys look like "27ZFO" and "27ZFI".
+///
+/// Legacy per-day rows (id "20260728") are harmless; nothing reads them.
+model OrderCounter {
+  /// Series key, e.g. "27ZFO" (orders) or "27ZFI" (invoices).
+  dateKey String @id
+  seq     Int    @default(0)
+}
+
+// ============================================================================
+// CUSTOMERS (§7)
+// ============================================================================
+
+model Customer {
+  id    String @id @default(uuid())
+  email String @unique
+  phone String?
+
+  firstName String
+  lastName  String
+
+  /// Null for guest-only records (order placed, never registered).
+  passwordHash String?
+
+  /// BANNED prevents login and shows "Your account has been suspended" (§7.2).
+  status CustomerStatus @default(ACTIVE)
+
+  emailVerifiedAt DateTime?
+  registeredAt    DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  addresses Address[]
+  orders    Order[]
+  reviews   Review[]
+
+  @@index([status])
+}
+
+model Address {
+  id         String @id @default(uuid())
+  customerId String
+
+  name     String
+  phone    String
+  line1    String
+  line2    String?
+  city     String
+  state    String
+  pincode  String
+  isDefault Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+// ============================================================================
+// CMS USERS (§11, §14)
+//
+// Deliberately a separate table from Customer: different auth, different
+// lifecycle, different threat model. Staff get mandatory 2FA; customers do not.
+// ============================================================================
+
+model CmsUser {
+  id    String @id @default(uuid())
+  email String @unique
+  name  String
+
+  /// bcrypt, cost 12 (§14.1).
+  passwordHash String
+
+  role   Role
+  status CmsUserStatus @default(ACTIVE)
+
+  // ---- 2FA — mandatory for every role (§14.3) ----
+  twofaMethod     TwofaMethod?
+  /// AES-256-GCM encrypted at rest.
+  twofaSecret     String?
+  twofaEnrolledAt DateTime?
+
+  /// Last 5 bcrypt hashes — blocks reuse (§14.2).
+  passwordHistory Json @default("[]")
+
+  /// Bumped on deactivate / password change / "terminate all sessions".
+  /// Access tokens carry this; a mismatch invalidates the token without a DB
+  /// lookup on every request. This is how §11.3 works.
+  tokenVersion Int @default(0)
+
+  lastLoginAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  sessions        CmsSession[]
+  backupCodes     BackupCode[]
+  auditLogs       AuditLog[]
+  refundsHandled  Refund[]
+  productsUpdated ProductFamily[]
+  productDrafts   ProductDraft[]
+  articles        Article[]
+  reviewsModerated Review[]
+
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model CmsSession {
+  id     String @id @default(uuid())
+  userId String
+
+  refreshTokenHash String  @unique
+  ip               String
+  userAgent        String?
+
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  lastSeenAt DateTime @default(now())
+
+  user CmsUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// 8 single-use codes, generated at 2FA setup (§14.3). Stored hashed.
+model BackupCode {
+  id     String @id @default(uuid())
+  userId String
+
+  codeHash String
+  usedAt   DateTime?
+  createdAt DateTime @default(now())
+
+  user CmsUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ============================================================================
+// REVIEWS (§9)
+// ============================================================================
+
+model Review {
+  id       String @id @default(uuid())
+  familyId String
+
+  /// Null for guest reviews.
+  customerId String?
+  guestName  String?
+  email      String
+
+  rating Int
+  body   String
+
+  isVerifiedPurchase Boolean     @default(false)
+  state              ReviewState @default(PENDING)
+
+  moderatedById String?
+  moderatedAt   DateTime?
+
+  submittedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  family      ProductFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  customer    Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  moderatedBy CmsUser?      @relation(fields: [moderatedById], references: [id], onDelete: SetNull)
+
+  @@index([state, submittedAt])
+  @@index([familyId, state])
+}
+
+// ============================================================================
+// COUPONS (§10)
+// ============================================================================
+
+model Coupon {
+  id   String @id @default(uuid())
+  /// Uppercase alphanumeric + hyphens only (§10.2).
+  code String @unique
+
+  discountType DiscountType
+  /// Paise when FLAT, whole percent when PERCENTAGE.
+  discountValue Int
+
+  minOrderPaise Int @default(0)
+
+  startsAt DateTime
+  endsAt   DateTime
+
+  /// Null means unlimited (§10.2).
+  totalUsageLimit  Int?
+  perCustomerLimit Int  @default(1)
+  usedCount        Int  @default(0)
+
+  isActive Boolean @default(true)
+
+  /// ALL_PRODUCTS applies the discount to the whole cart; SPECIFIC_PRODUCTS
+  /// restricts it to the families in `products`, and the discount is then
+  /// computed on the ELIGIBLE portion of the cart only.
+  scope CouponScope @default(ALL_PRODUCTS)
+
+  // ---- Revenue attribution -------------------------------------------------
+  // Denormalised running totals, incremented when an order is CONFIRMED (paid,
+  // or accepted for COD) — not at checkout. A coupon on an abandoned or
+  // cancelled order must not inflate reported revenue.
+  //
+  // Kept as columns rather than computed on read because the coupon list shows
+  // them for every row; a per-row aggregate would be N queries.
+  /// Cart value of confirmed orders that used this coupon, in paise.
+  revenuePaise  Int @default(0)
+  /// Discount actually given away on those orders, in paise.
+  discountedPaise Int @default(0)
+  /// Confirmed orders that used it. May trail `usedCount`, which counts attempts.
+  confirmedOrders Int @default(0)
+
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  redemptions CouponRedemption[]
+  products    CouponProduct[]
+
+  @@index([isActive, startsAt, endsAt])
+}
+
+/// Join table for SPECIFIC_PRODUCTS scope. A row means "this coupon applies to
+/// this product family".
+model CouponProduct {
+  couponId String
+  familyId String
+
+  coupon Coupon        @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  family ProductFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, familyId])
+  @@index([familyId])
+}
+
+model CouponRedemption {
+  id       String @id @default(uuid())
+  couponId String
+  orderId  String
+
+  customerId String?
+  email      String
+
+  /// Snapshot of what this redemption was worth, so the per-coupon report does
+  /// not depend on the order still existing in its original state.
+  cartValuePaise Int @default(0)
+  discountPaise  Int @default(0)
+
+  /// Set when the order is confirmed (paid, or COD accepted). Null while the
+  /// order is still pending — only confirmed rows count toward revenue.
+  confirmedAt DateTime?
+
+  redeemedAt DateTime @default(now())
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, orderId])
+  @@index([couponId, email])
+}
+
+// ============================================================================
+// CONTENT (§8)
+// ============================================================================
+
+model Article {
+  id    String @id @default(uuid())
+  slug  String @unique
+  title String
+
+  tag         String
+  readMinutes Int    @default(5)
+
+  excerpt  String
+  /// Sanitised Tiptap HTML.
+  bodyHtml String @default("")
+  /// The storefront's structured block array (lead / h2 / p / stat-block /
+  /// pullquote). Kept so the existing renderer in Frontend/lib/articles.js works.
+  contentBlocks Json?
+
+  coverImageUrl String?
+  coverImageId  String?
+
+  status   ContentStatus @default(DRAFT)
+  seoTitle String?
+  seoDesc  String?
+
+  authorName String
+
+  /// Draft overlay, same pattern as products (§8.1).
+  draftPayload Json?
+
+  publishedAt DateTime?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  updatedById String?
+  updatedBy   CmsUser? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([status, publishedAt])
+  @@index([tag])
+}
+
+/// Rotating spotlight on the products listing page — up to 3 active (§8.2).
+model Spotlight {
+  id       String @id @default(uuid())
+  familyId String
+
+  tagline  String
+  subText  String
+  badge    String?
+  imageUrl String?
+
+  position Int     @default(0)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  family ProductFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
+
+  @@index([isActive, position])
+}
+
+/// Exactly two rows: LIVE and DRAFT. Publish copies DRAFT.sections onto LIVE so
+/// all pending homepage edits go live at once (§8.3).
+model HomepageContent {
+  id      String         @id @default(uuid())
+  version ContentVersion @unique
+
+  /// { hero, science, why, knowledge, announcement }
+  sections Json
+
+  publishedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  updatedById String?
+}
+
+// ============================================================================
+// SETTINGS (§13)
+// ============================================================================
+
+/// Key/value so a new settings group is a data change, not a migration.
+/// Keys: "shipping" | "tax" | "announcement" | "maintenance"
+model Setting {
+  key   String @id
+  value Json
+
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}
+
+// ============================================================================
+// AUDIT LOG (§12)
+//
+// Append-only. The migration that creates this table also REVOKEs UPDATE and
+// DELETE from the application role — §12 says no one can edit entries, including
+// Admins, so that is enforced in the database rather than only in app code.
+// ============================================================================
+
+model AuditLog {
+  id BigInt @id @default(autoincrement())
+
+  actorId String?
+  /// Denormalised so entries survive a user delete (§11.3: the name stays
+  /// visible in the log against past actions).
+  actorName String
+  actorRole String
+
+  module AuditModule
+  /// Human-readable, e.g. "Updated stock for F3-45G from 120 to 96" (§12.1).
+  action String
+
+  recordId String?
+  /// Before/after, when a diff is meaningful.
+  diff Json?
+
+  ip        String
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  actor CmsUser? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([module, createdAt])
+  @@index([actorId, createdAt])
+  @@index([recordId])
+}

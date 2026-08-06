@@ -1,0 +1,1909 @@
+{
+  "images": [
+    {
+      "file": "140G Pouch/A10 Moster Bites/1.png",
+      "code": "A10",
+      "slug": "monster-sticks",
+      "rank": 1,
+      "why": "word:moster",
+      "pack": "140g",
+      "position": 0,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/A10 Moster Bites/2.png",
+      "code": "A10",
+      "slug": "monster-sticks",
+      "rank": 5,
+      "why": "word:moster",
+      "pack": "140g",
+      "position": 1,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/A10 Moster Bites/3.png",
+      "code": "A10",
+      "slug": "monster-sticks",
+      "rank": 5,
+      "why": "word:moster",
+      "pack": "140g",
+      "position": 2,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/A10 Moster Bites/4.png",
+      "code": "A10",
+      "slug": "monster-sticks",
+      "rank": 5,
+      "why": "word:moster",
+      "pack": "140g",
+      "position": 3,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/A10 Moster Bites/5.png",
+      "code": "A10",
+      "slug": "monster-sticks",
+      "rank": 5,
+      "why": "word:moster",
+      "pack": "140g",
+      "position": 4,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/A10 Moster Bites/A10-140G.png",
+      "code": "A10",
+      "slug": "monster-sticks",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "140g",
+      "position": 5,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/K4 Goldfidh bites/1.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 1,
+      "why": "word:goldfidh",
+      "pack": "140g",
+      "position": 0,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/K4 Goldfidh bites/2.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "word:goldfidh",
+      "pack": "140g",
+      "position": 1,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/K4 Goldfidh bites/3.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "word:goldfidh",
+      "pack": "140g",
+      "position": 2,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/K4 Goldfidh bites/4.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "word:goldfidh",
+      "pack": "140g",
+      "position": 3,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/K4 Goldfidh bites/5.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "word:goldfidh",
+      "pack": "140g",
+      "position": 4,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/K4 Goldfidh bites/6.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "word:goldfidh",
+      "pack": "140g",
+      "position": 5,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/K4 Goldfidh bites/K4-140G side 1.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "140g",
+      "position": 6,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/K4 Goldfidh bites/K4-140G side.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "140g",
+      "position": 7,
+      "include": true
+    },
+    {
+      "file": "140G Pouch/K4 Goldfidh bites/k7 new 1 kg mockup.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "word:goldfidh",
+      "pack": "1kg",
+      "position": 8,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/C4-1KG/2.png",
+      "code": "C4",
+      "slug": "cichlid-bites-c4",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 0,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/C4-1KG/C4 1KG.png",
+      "code": "C4",
+      "slug": "cichlid-bites-c4",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 1,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/C4-1KG/Jpg 2-100.jpg",
+      "code": "C4",
+      "slug": "cichlid-bites-c4",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 2,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/C4-1KG/Jpg1-100.jpg",
+      "code": "C4",
+      "slug": "cichlid-bites-c4",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 3,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/C4-1KG/Jpg3-100.jpg",
+      "code": "C4",
+      "slug": "cichlid-bites-c4",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 4,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/C4-1KG/Jpg4-100.jpg",
+      "code": "C4",
+      "slug": "cichlid-bites-c4",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 5,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/C5-1KG/2.png",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 7,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/C5-1KG/C5 1KG.png",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 8,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/C5-1KG/Jpg 2-100.jpg",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 9,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/C5-1KG/Jpg1-100.jpg",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 10,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/C5-1KG/Jpg3-100.jpg",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 11,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/C5-1KG/Jpg4-100.jpg",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 12,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/F3-1KG/2.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 6,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/F3-1KG/F3 1KG.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 7,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/F3-1KG/Jpg 2-100.jpg",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 8,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/F3-1KG/Jpg1-100.jpg",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 9,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/F3-1KG/Jpg3-100.jpg",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 10,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/F3-1KG/Jpg4-100.jpg",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 11,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/G2-1KG/1.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 7,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/G2-1KG/2.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 8,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/G2-1KG/Jpg 2-100.jpg",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 9,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/G2-1KG/Jpg1-100.jpg",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 10,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/G2-1KG/Jpg3-100.jpg",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 11,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/G2-1KG/Jpg4-100.jpg",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 12,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/K7-1KG/1.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 7,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/K7-1KG/2.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 8,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/K7-1KG/3.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 9,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/K7-1KG/4.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 10,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/K7-1KG/5.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 11,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/K7-1KG/Koi back png.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 8,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 13,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/K7-1KG/k7 new 1 kg mockup.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 12,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/P5-1KG/P5 back.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 8,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 16,
+      "include": true
+    },
+    {
+      "file": "1Kg Pouches_/P5-1KG/P5 front.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 0,
+      "why": "sku-in-path",
+      "pack": "1kg",
+      "position": 15,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/G2-200G/G2-200G Back 1.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 8,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 6,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/G2-200G/G2-200G Front 1.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 0,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 0,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/G2-200G/G2-200G ISO.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 2,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 5,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/G2-200G/Guppy 200g/Guppy 02.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 1,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/G2-200G/Guppy 200g/Guppy 03.jpg",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 2,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/G2-200G/Guppy 200g/Guppy 04.jpg",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 3,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/G2-200G/Guppy 200g/Guppy 05.jpg",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 4,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/M3-200G/M3-200G Back 1.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 8,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 6,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/M3-200G/M3-200G Back_Blinkit.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 8,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 7,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/M3-200G/M3-200G Front 1.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 0,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 0,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/M3-200G/M3-200G ISO.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 2,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 5,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/M3-200G/Micropellet 200g 2/Micro 02.jpg",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 1,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/M3-200G/Micropellet 200g 2/Micro 03.jpg",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 2,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/M3-200G/Micropellet 200g 2/Micro 04.jpg",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 3,
+      "include": true
+    },
+    {
+      "file": "200G Pouches/M3-200G/Micropellet 200g 2/Micro 05.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "200g",
+      "position": 4,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/C5-500G/C5-500G Back 1.png",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 8,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 6,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/C5-500G/C5-500G Front 1.png",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 0,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 0,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/C5-500G/C5-500G ISO 1.png",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 2,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 5,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/C5-500G/Cichlid Bites  500g/Cichild 02.jpg",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 1,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/C5-500G/Cichlid Bites  500g/Cichild 03.jpg",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 2,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/C5-500G/Cichlid Bites  500g/Cichild 04.jpg",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 3,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/C5-500G/Cichlid Bites  500g/Cichild 05.jpg",
+      "code": "C5",
+      "slug": "cichlid-bites-c5",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 4,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/K7-500G/1.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 1,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 1,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/K7-500G/2.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 2,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/K7-500G/3.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 3,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/K7-500G/4.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 4,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/K7-500G/5.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 5,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/K7-500G/koi 500 mockup front.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 0,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 0,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/K7-500G/koi 500g 2.png",
+      "code": "K7",
+      "slug": "koi-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 6,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/P5-500G/P5-500G Back 1.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 8,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 14,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/P5-500G/P5-500G Front 1.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 0,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 8,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/P5-500G/P5-500G ISO 1.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 2,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 9,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/P5-500G/Pleco Bites   500g/Jpg 2-100.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 10,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/P5-500G/Pleco Bites   500g/Jpg1-100.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 11,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/P5-500G/Pleco Bites   500g/Jpg3-100.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 12,
+      "include": true
+    },
+    {
+      "file": "500G Pouches/P5-500G/Pleco Bites   500g/Jpg4-100.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "500g",
+      "position": 13,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Betta 01.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 1,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 14,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Betta 01_02.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 24,
+      "include": false
+    },
+    {
+      "file": "Bottles/Betta/Betta 01_03.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 25,
+      "include": false
+    },
+    {
+      "file": "Bottles/Betta/Betta 02.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 1,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 15,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Betta 03.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 1,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 16,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Betta 04.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 1,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 17,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Betta 05.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 1,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 18,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Betta 20G/1.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 1,
+      "why": "word:betta",
+      "pack": "20g",
+      "position": 0,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Betta 20G/2.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "word:betta",
+      "pack": "20g",
+      "position": 1,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Betta 20G/3.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "word:betta",
+      "pack": "20g",
+      "position": 2,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Betta 20G/4.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "word:betta",
+      "pack": "20g",
+      "position": 3,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Betta 20G/5.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "word:betta",
+      "pack": "20g",
+      "position": 4,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Betta 20G/betta 20 mockup 3.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "word:betta",
+      "pack": "20g",
+      "position": 5,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Betta F3_Back.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 8,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 28,
+      "include": false
+    },
+    {
+      "file": "Bottles/Betta/Betta F3_Front.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 0,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 12,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Cichild/Cichild 01.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 1,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 19,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Cichild/Cichild 01_02.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 26,
+      "include": false
+    },
+    {
+      "file": "Bottles/Betta/Cichild/Cichild 01_03.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 5,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 27,
+      "include": false
+    },
+    {
+      "file": "Bottles/Betta/Cichild/Cichild 02.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 1,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 20,
+      "include": false
+    },
+    {
+      "file": "Bottles/Betta/Cichild/Cichild 03.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 1,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 21,
+      "include": false
+    },
+    {
+      "file": "Bottles/Betta/Cichild/Cichild 04.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 1,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 22,
+      "include": false
+    },
+    {
+      "file": "Bottles/Betta/Cichild/Cichild 05.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 1,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 23,
+      "include": false
+    },
+    {
+      "file": "Bottles/Betta/Cichild/Cichild C4_Front.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 0,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 13,
+      "include": true
+    },
+    {
+      "file": "Bottles/Betta/Cichild/Cichild C4_back.png",
+      "code": "F3",
+      "slug": "betta-bites",
+      "rank": 8,
+      "why": "word:betta",
+      "pack": "bottle",
+      "position": 29,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/DBSFL 25G.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 5,
+      "why": "word:dbsfl",
+      "pack": "25g",
+      "position": 2,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/DBSFL 75G.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 5,
+      "why": "word:dbsfl",
+      "pack": "75g",
+      "position": 12,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/DBSFL 75G_Front.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 0,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 20,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/DBSFL 75G_back.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 8,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 34,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/DBSFL25_02.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 5,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 21,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/India/25/Artboard 1 copy 2.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "25g",
+      "position": 3,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/India/25/Artboard 1 copy 3.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "25g",
+      "position": 4,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/India/25/Artboard 1 copy 4.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "25g",
+      "position": 5,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/India/25/Artboard 1 copy.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "25g",
+      "position": 6,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/India/25/Artboard 1-1.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "25g",
+      "position": 7,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/India/25/Artboard 1.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "25g",
+      "position": 8,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/India/75/Artboard 1 copy 2.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "75g",
+      "position": 13,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/India/75/Artboard 1 copy 3.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "75g",
+      "position": 14,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/India/75/Artboard 1 copy 4.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "75g",
+      "position": 15,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/India/75/Artboard 1 copy.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "75g",
+      "position": 16,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/India/75/Artboard 1-1.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "75g",
+      "position": 17,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/India/75/Artboard 1.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "75g",
+      "position": 18,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/25 DBSFL Listing Image/25g back 2.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 8,
+      "why": "word:dbsfl",
+      "pack": "25g",
+      "position": 9,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/25 DBSFL Listing Image/25g back.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 8,
+      "why": "word:dbsfl",
+      "pack": "25g",
+      "position": 10,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/25 DBSFL Listing Image/25g front 2.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 0,
+      "why": "word:dbsfl",
+      "pack": "25g",
+      "position": 0,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/25 DBSFL Listing Image/25g front.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 0,
+      "why": "word:dbsfl",
+      "pack": "25g",
+      "position": 1,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/25 DBSFL Listing Image/Artboard 1 copy 2.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 22,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/25 DBSFL Listing Image/Artboard 1 copy 3.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 23,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/25 DBSFL Listing Image/Artboard 1 copy 4.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 24,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/25 DBSFL Listing Image/Artboard 1 copy.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 25,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/25 DBSFL Listing Image/Artboard 1-1.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 26,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/25 DBSFL Listing Image/Artboard 1.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 27,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/75 DBSFL Listing Image/75g back.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 8,
+      "why": "word:dbsfl",
+      "pack": "75g",
+      "position": 19,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/75 DBSFL Listing Image/75g front.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 0,
+      "why": "word:dbsfl",
+      "pack": "75g",
+      "position": 11,
+      "include": true
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/75 DBSFL Listing Image/Artboard 1 copy 2.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 28,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/75 DBSFL Listing Image/Artboard 1 copy 3.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 29,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/75 DBSFL Listing Image/Artboard 1 copy 4.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 30,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/75 DBSFL Listing Image/Artboard 1 copy.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 31,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/75 DBSFL Listing Image/Artboard 1-1.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 32,
+      "include": false
+    },
+    {
+      "file": "Bottles/DBSFL/US Exports/75 DBSFL Listing Image/Artboard 1.png",
+      "code": "DBSFL",
+      "slug": "dried-bsf-larvae",
+      "rank": 7,
+      "why": "word:dbsfl",
+      "pack": "bottle",
+      "position": 33,
+      "include": false
+    },
+    {
+      "file": "Bottles/Goldfish/K4 45G_1.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "word:goldfish",
+      "pack": "bottle",
+      "position": 10,
+      "include": true
+    },
+    {
+      "file": "Bottles/Goldfish/K4 45G_2.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "word:goldfish",
+      "pack": "bottle",
+      "position": 11,
+      "include": true
+    },
+    {
+      "file": "Bottles/Goldfish/K4 45G_3.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "word:goldfish",
+      "pack": "bottle",
+      "position": 12,
+      "include": true
+    },
+    {
+      "file": "Bottles/Goldfish/K4 45G_4.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "word:goldfish",
+      "pack": "bottle",
+      "position": 13,
+      "include": true
+    },
+    {
+      "file": "Bottles/Goldfish/K4 45G_5.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "word:goldfish",
+      "pack": "bottle",
+      "position": 14,
+      "include": true
+    },
+    {
+      "file": "Bottles/Goldfish/K4 45G_6.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 5,
+      "why": "word:goldfish",
+      "pack": "bottle",
+      "position": 15,
+      "include": true
+    },
+    {
+      "file": "Bottles/Goldfish/goldfish front.png",
+      "code": "K4",
+      "slug": "goldfish-bites",
+      "rank": 0,
+      "why": "word:goldfish",
+      "pack": "bottle",
+      "position": 9,
+      "include": true
+    },
+    {
+      "file": "Bottles/Guppy/Guppy 01.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 1,
+      "why": "word:guppy",
+      "pack": "bottle",
+      "position": 13,
+      "include": true
+    },
+    {
+      "file": "Bottles/Guppy/Guppy 01_02.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 5,
+      "why": "word:guppy",
+      "pack": "bottle",
+      "position": 17,
+      "include": true
+    },
+    {
+      "file": "Bottles/Guppy/Guppy 01_03.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 5,
+      "why": "word:guppy",
+      "pack": "bottle",
+      "position": 18,
+      "include": true
+    },
+    {
+      "file": "Bottles/Guppy/Guppy 02.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 1,
+      "why": "word:guppy",
+      "pack": "bottle",
+      "position": 14,
+      "include": true
+    },
+    {
+      "file": "Bottles/Guppy/Guppy 03.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 1,
+      "why": "word:guppy",
+      "pack": "bottle",
+      "position": 15,
+      "include": true
+    },
+    {
+      "file": "Bottles/Guppy/Guppy 04.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 1,
+      "why": "word:guppy",
+      "pack": "bottle",
+      "position": 16,
+      "include": true
+    },
+    {
+      "file": "Bottles/Guppy/Guppy 05_2.png",
+      "code": "G2",
+      "slug": "guppy-bites",
+      "rank": 5,
+      "why": "word:guppy",
+      "pack": "bottle",
+      "position": 19,
+      "include": true
+    },
+    {
+      "file": "Bottles/Micro/Micro 01.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 1,
+      "why": "word:micro",
+      "pack": "bottle",
+      "position": 9,
+      "include": true
+    },
+    {
+      "file": "Bottles/Micro/Micro 01_02.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 5,
+      "why": "word:micro",
+      "pack": "bottle",
+      "position": 14,
+      "include": true
+    },
+    {
+      "file": "Bottles/Micro/Micro 01_03.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 5,
+      "why": "word:micro",
+      "pack": "bottle",
+      "position": 15,
+      "include": true
+    },
+    {
+      "file": "Bottles/Micro/Micro 02.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 1,
+      "why": "word:micro",
+      "pack": "bottle",
+      "position": 10,
+      "include": true
+    },
+    {
+      "file": "Bottles/Micro/Micro 03.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 1,
+      "why": "word:micro",
+      "pack": "bottle",
+      "position": 11,
+      "include": true
+    },
+    {
+      "file": "Bottles/Micro/Micro 04.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 1,
+      "why": "word:micro",
+      "pack": "bottle",
+      "position": 12,
+      "include": true
+    },
+    {
+      "file": "Bottles/Micro/Micro 05.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 1,
+      "why": "word:micro",
+      "pack": "bottle",
+      "position": 13,
+      "include": true
+    },
+    {
+      "file": "Bottles/Micro/Micropellets 45G_Front.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 0,
+      "why": "word:micro",
+      "pack": "bottle",
+      "position": 8,
+      "include": true
+    },
+    {
+      "file": "Bottles/Micro/Micropellets 45G_back.png",
+      "code": "M3",
+      "slug": "micro-pellets",
+      "rank": 8,
+      "why": "word:micro",
+      "pack": "bottle",
+      "position": 16,
+      "include": true
+    },
+    {
+      "file": "Bottles/Pleco/Albino pleco customer video.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 5,
+      "why": "word:pleco",
+      "pack": "bottle",
+      "position": 18,
+      "include": true
+    },
+    {
+      "file": "Bottles/Pleco/P5 45G-2.jpg",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 5,
+      "why": "word:pleco",
+      "pack": "45g",
+      "position": 0,
+      "include": true
+    },
+    {
+      "file": "Bottles/Pleco/P5 45G-3.jpg",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 5,
+      "why": "word:pleco",
+      "pack": "45g",
+      "position": 1,
+      "include": true
+    },
+    {
+      "file": "Bottles/Pleco/P5 45G-4.jpg",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 5,
+      "why": "word:pleco",
+      "pack": "45g",
+      "position": 2,
+      "include": true
+    },
+    {
+      "file": "Bottles/Pleco/P5-45G-5.jpg",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 5,
+      "why": "sku-in-path",
+      "pack": "45g",
+      "position": 3,
+      "include": true
+    },
+    {
+      "file": "Bottles/Pleco/Pleco 45G Background Removed.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 8,
+      "why": "word:pleco",
+      "pack": "45g",
+      "position": 7,
+      "include": true
+    },
+    {
+      "file": "Bottles/Pleco/Pleco 45G-1.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 5,
+      "why": "word:pleco",
+      "pack": "45g",
+      "position": 4,
+      "include": true
+    },
+    {
+      "file": "Bottles/Pleco/Pleco 45G-1_2.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 5,
+      "why": "word:pleco",
+      "pack": "45g",
+      "position": 5,
+      "include": true
+    },
+    {
+      "file": "Bottles/Pleco/Pleco 45G-1_3.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 5,
+      "why": "word:pleco",
+      "pack": "45g",
+      "position": 6,
+      "include": true
+    },
+    {
+      "file": "Bottles/Pleco/Pleco 45G_Front.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 0,
+      "why": "word:pleco",
+      "pack": "bottle",
+      "position": 17,
+      "include": true
+    },
+    {
+      "file": "Bottles/Pleco/Pleco 45G_back.png",
+      "code": "P5",
+      "slug": "pleco-bites",
+      "rank": 8,
+      "why": "word:pleco",
+      "pack": "bottle",
+      "position": 19,
+      "include": true
+    },
+    {
+      "file": "Bottles/Shrimp Grazers/S5-Shrimp Grazers 20G_1.png",
+      "code": "S5",
+      "slug": "shrimp-grazers",
+      "rank": 5,
+      "why": "word:shrimp",
+      "pack": "bottle",
+      "position": 0,
+      "include": true
+    },
+    {
+      "file": "Bottles/Shrimp Grazers/S5-Shrimp Grazers 20G_2.png",
+      "code": "S5",
+      "slug": "shrimp-grazers",
+      "rank": 5,
+      "why": "word:shrimp",
+      "pack": "bottle",
+      "position": 1,
+      "include": true
+    },
+    {
+      "file": "Bottles/Shrimp Grazers/S5-Shrimp Grazers 20G_3.png",
+      "code": "S5",
+      "slug": "shrimp-grazers",
+      "rank": 5,
+      "why": "word:shrimp",
+      "pack": "bottle",
+      "position": 2,
+      "include": true
+    },
+    {
+      "file": "Bottles/Shrimp Grazers/S5-Shrimp Grazers 20G_4.png",
+      "code": "S5",
+      "slug": "shrimp-grazers",
+      "rank": 5,
+      "why": "word:shrimp",
+      "pack": "bottle",
+      "position": 3,
+      "include": true
+    },
+    {
+      "file": "Bottles/Shrimp Grazers/S5-Shrimp Grazers 20G_5.png",
+      "code": "S5",
+      "slug": "shrimp-grazers",
+      "rank": 5,
+      "why": "word:shrimp",
+      "pack": "bottle",
+      "position": 4,
+      "include": true
+    },
+    {
+      "file": "Bottles/Shrimp Grazers/shrimp Grazers.png",
+      "code": "S5",
+      "slug": "shrimp-grazers",
+      "rank": 5,
+      "why": "word:shrimp",
+      "pack": "bottle",
+      "position": 5,
+      "include": true
+    },
+    {
+      "file": "Bottles/Tetra/Artboard 1 copy 2-100.jpg",
+      "code": "F2",
+      "slug": "tetra-pellets",
+      "rank": 7,
+      "why": "word:tetra",
+      "pack": "bottle",
+      "position": 3,
+      "include": true
+    },
+    {
+      "file": "Bottles/Tetra/Artboard 1 copy 3-100.jpg",
+      "code": "F2",
+      "slug": "tetra-pellets",
+      "rank": 7,
+      "why": "word:tetra",
+      "pack": "bottle",
+      "position": 4,
+      "include": true
+    },
+    {
+      "file": "Bottles/Tetra/Artboard 1 copy-100.jpg",
+      "code": "F2",
+      "slug": "tetra-pellets",
+      "rank": 7,
+      "why": "word:tetra",
+      "pack": "bottle",
+      "position": 5,
+      "include": true
+    },
+    {
+      "file": "Bottles/Tetra/Artboard 1-100.jpg",
+      "code": "F2",
+      "slug": "tetra-pellets",
+      "rank": 7,
+      "why": "word:tetra",
+      "pack": "bottle",
+      "position": 6,
+      "include": true
+    },
+    {
+      "file": "Bottles/Tetra/Tetra 01_02.png",
+      "code": "F2",
+      "slug": "tetra-pellets",
+      "rank": 5,
+      "why": "word:tetra",
+      "pack": "bottle",
+      "position": 1,
+      "include": true
+    },
+    {
+      "file": "Bottles/Tetra/Tetra 01_03.png",
+      "code": "F2",
+      "slug": "tetra-pellets",
+      "rank": 5,
+      "why": "word:tetra",
+      "pack": "bottle",
+      "position": 2,
+      "include": true
+    },
+    {
+      "file": "Bottles/Tetra/Tetra Pellets 01.png",
+      "code": "F2",
+      "slug": "tetra-pellets",
+      "rank": 1,
+      "why": "word:tetra",
+      "pack": "bottle",
+      "position": 0,
+      "include": true
+    }
+  ],
+  "unmatched": [
+    "1Kg Pouches_/1Kg Pouches.jpg",
+    "Bottles/45G Bottles.jpg",
+    "Bottles/All products.jpg"
+  ]
+}

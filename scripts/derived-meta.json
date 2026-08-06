@@ -1,0 +1,249 @@
+[
+  {
+    "code": "DBSFL",
+    "slug": "dried-bsf-larvae",
+    "category": "DRIED_BSF_LARVAE",
+    "tags": [
+      "arowana",
+      "silver",
+      "asian",
+      "jardini",
+      "oscar",
+      "flowerhorn",
+      "discus",
+      "red-tail-catfish",
+      "alligator-gar",
+      "parrot-fish",
+      "pacu",
+      "datnoid",
+      "peacock-bass",
+      "goldfish",
+      "carp"
+    ]
+  },
+  {
+    "code": "G2",
+    "slug": "guppy-bites",
+    "category": "SLOW_SINKING_PELLETS",
+    "tags": [
+      "guppy",
+      "endler-guppy",
+      "poecilia-reticulata",
+      "molly",
+      "platy",
+      "swordtail",
+      "livebearers",
+      "white-cloud-minnow"
+    ]
+  },
+  {
+    "code": "F2",
+    "slug": "tetra-pellets",
+    "category": "SLOW_SINKING_PELLETS",
+    "tags": [
+      "neon-tetra",
+      "cardinal-tetra",
+      "black-skirt-tetra",
+      "rummy-nose-tetra",
+      "ember-tetra",
+      "glowlight-tetra",
+      "congo-tetra",
+      "serpae-tetra",
+      "harlequin-rasbora",
+      "barbs",
+      "danio"
+    ]
+  },
+  {
+    "code": "F3",
+    "slug": "betta-bites",
+    "category": "SLOW_SINKING_PELLETS",
+    "tags": [
+      "betta-splendens-veiltail",
+      "crowntail",
+      "halfmoon",
+      "double-tail",
+      "plakat",
+      "giant-betta",
+      "betta",
+      "dwarf-gourami",
+      "honey-gourami",
+      "paradise-fish"
+    ]
+  },
+  {
+    "code": "M3",
+    "slug": "micro-pellets",
+    "category": "SLOW_SINKING_PELLETS",
+    "tags": [
+      "tetra",
+      "betta",
+      "barbs",
+      "guppy",
+      "rasbora",
+      "danio",
+      "molly",
+      "platy",
+      "swordtail",
+      "gourami",
+      "white-cloud-minnow",
+      "killifish"
+    ]
+  },
+  {
+    "code": "S5",
+    "slug": "shrimp-grazers",
+    "category": "BOTTOM_DWELLERS",
+    "tags": [
+      "neocaridina",
+      "cherry",
+      "blue-velvet",
+      "snowball",
+      "caridina",
+      "crystal-red",
+      "crystal-black",
+      "amano-shrimp",
+      "tiger-shrimp",
+      "ghost-shrimp",
+      "bamboo-shrimp",
+      "freshwater-snails",
+      "nerite",
+      "mystery"
+    ]
+  },
+  {
+    "code": "C4",
+    "slug": "cichlid-bites-c4",
+    "category": "SLOW_SINKING_PELLETS",
+    "tags": [
+      "african-cichlids-mbuna",
+      "peacock",
+      "aulonocara",
+      "hap-angelfish-discus",
+      "ram-cichlid",
+      "apistogramma",
+      "kribensis",
+      "convict-cichlid",
+      "firemouth",
+      "juvenile-oscar"
+    ]
+  },
+  {
+    "code": "C5",
+    "slug": "cichlid-bites-c5",
+    "category": "SLOW_SINKING_PELLETS",
+    "tags": [
+      "oscar",
+      "astronotus-ocellatus",
+      "flowerhorn",
+      "jaguar-cichlid",
+      "jack-dempsey",
+      "green-terror",
+      "texas-cichlid",
+      "red-devil",
+      "midas-cichlid",
+      "parrot-fish",
+      "wolf-cichlid"
+    ]
+  },
+  {
+    "code": "P5",
+    "slug": "pleco-bites",
+    "category": "BOTTOM_DWELLERS",
+    "tags": [
+      "common-pleco",
+      "bristlenose-pleco",
+      "zebra-pleco",
+      "l046",
+      "royal-pleco",
+      "l190",
+      "otocinclus",
+      "corydoras",
+      "hillstream-loach",
+      "kuhli-loach",
+      "siamese-algae-eater",
+      "bottom-feeding-catfish"
+    ]
+  },
+  {
+    "code": "K4",
+    "slug": "goldfish-bites",
+    "category": "SLOW_SINKING_PELLETS",
+    "tags": [
+      "goldfish-oranda",
+      "ryukin",
+      "lionhead",
+      "ranchu",
+      "telescope-eye",
+      "pearlscale",
+      "common-goldfish",
+      "comet",
+      "shubunkin",
+      "fantail",
+      "black-moor",
+      "bubble-eye"
+    ]
+  },
+  {
+    "code": "A10",
+    "slug": "monster-sticks",
+    "category": "FLOATING_PELLETS",
+    "tags": [
+      "arowana",
+      "silver",
+      "asian",
+      "jardini",
+      "oscar",
+      "flowerhorn",
+      "cichlids",
+      "parrot-fish",
+      "pacu",
+      "gar",
+      "datnoid",
+      "peacock-bass",
+      "snakehead",
+      "stingray"
+    ]
+  },
+  {
+    "code": "K7",
+    "slug": "koi-bites",
+    "category": "FLOATING_PELLETS",
+    "tags": [
+      "koi-carp",
+      "cyprinus-rubrofuscus-kohaku",
+      "sanke",
+      "showa",
+      "butterfly-koi",
+      "ogon",
+      "tancho",
+      "pond-goldfish",
+      "common-carp",
+      "ghost-koi",
+      "grass-carp"
+    ]
+  },
+  {
+    "code": "H1 / H2 / H3",
+    "slug": "hatchery-feeds",
+    "category": "HATCHERY_FEEDS",
+    "tags": [
+      "all-ornamental-fish-fry-guppy",
+      "molly",
+      "platy",
+      "betta",
+      "tetra",
+      "barb",
+      "cichlid",
+      "angelfish",
+      "discus",
+      "arowana",
+      "goldfish-fry",
+      "koi-fry",
+      "gourami-fry",
+      "danio-fry",
+      "rasbora-fry",
+      "hatchery-reared-ornamental"
+    ]
+  }
+]

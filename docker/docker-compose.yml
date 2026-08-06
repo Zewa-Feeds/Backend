@@ -1,0 +1,64 @@
+# Local development dependencies: Postgres + Redis.
+#
+# The API itself runs on the host via `npm run dev` (fast reload). This file only
+# provides the stateful services, so you don't install Postgres on your Mac.
+#
+#   npm run docker:up      start
+#   npm run docker:logs    tail
+#   npm run docker:down    stop (keeps data)
+#   npm run docker:nuke    stop and DELETE all data
+#
+# Ports are deliberately non-default (5433 / 6380) so they can't collide with an
+# existing local Postgres or Redis.
+
+name: zewa-feeds
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: zewa-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zewa
+      POSTGRES_PASSWORD: zewa_local_dev
+      POSTGRES_DB: zewa_feeds
+      # Deterministic collation — keeps sort order identical to production.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U zewa -d zewa_feeds']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: zewa-redis
+    restart: unless-stopped
+    # appendonly: BullMQ jobs survive a container restart.
+    # maxmemory-policy noeviction: never silently drop queued jobs under pressure.
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy noeviction
+    ports:
+      - '6380:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  postgres_data:
+    name: zewa_postgres_data
+  redis_data:
+    name: zewa_redis_data

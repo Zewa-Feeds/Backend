@@ -1,0 +1,253 @@
+/**
+ * Auth routes — /api/v1/admin/auth/*
+ *
+ * This is the ONLY admin router mounted above the auth guard, because login must
+ * be reachable unauthenticated. Everything here is therefore explicit about what
+ * it requires: the pre-session endpoints take a challengeToken, and the
+ * post-session ones are individually wrapped in requireAuth.
+ *
+ * Token placement, and why:
+ *   - access token  → response BODY, held in memory by the CMS. Not a cookie, so
+ *                     it cannot be sent automatically and CSRF does not apply.
+ *   - refresh token → httpOnly + SameSite=strict COOKIE, so JS (and therefore
+ *                     XSS) cannot read it. SameSite=strict is the CSRF defence:
+ *                     the browser will not attach it to a cross-site request.
+ */
+import { Router } from 'express';
+import { z } from 'zod';
+import { asyncHandler } from '@/middleware/asyncHandler';
+import { validate, emailSchema } from '@/middleware/validate';
+import { requireAuth } from '@/middleware/auth';
+import { currentUser } from '@/middleware/auth';
+import { loginLimiter, passwordResetLimiter, twofaLimiter } from '@/middleware/rateLimit';
+import { auditContext } from '@/modules/audit/audit.service';
+import { verifyAccessToken } from '@/lib/tokens';
+import { unauthenticated } from '@/lib/errors';
+import { env } from '@/config/env';
+import { PASSWORD_RULES } from './password.policy';
+import * as authService from './auth.service';
+import { ttlToMs } from './auth.service';
+
+export const authRouter = Router();
+
+/** Name kept generic — it should not advertise what it holds. */
+const REFRESH_COOKIE = 'zewa_rt';
+
+const refreshCookieOptions = (maxAgeMs: number) =>
+  ({
+    httpOnly: true,
+    // Required for SameSite=None in cross-site production; harmless locally.
+    secure: env.isProd,
+    // The CSRF defence for the refresh endpoint.
+    sameSite: env.isProd ? ('none' as const) : ('lax' as const),
+    path: '/api/v1/admin/auth',
+    maxAge: maxAgeMs,
+  }) as const;
+
+/**
+ * Cookie lifetime for a "stay signed in" session, taken from the same env value
+ * that signs the refresh token (REFRESH_TOKEN_TTL_REMEMBER, default 7d) so the
+ * cookie can never outlive the token it carries.
+ *
+ * Sessions without "remember me" deliberately keep this same cookie maxAge: the
+ * shorter REFRESH_TOKEN_TTL (8h) is enforced by the token itself and by
+ * CmsSession.expiresAt, so an expired one is rejected server-side regardless of
+ * how long the browser holds the cookie.
+ */
+const rememberCookieMaxAge = () => ttlToMs(env.REFRESH_TOKEN_TTL_REMEMBER);
+
+// ---- Schemas ---------------------------------------------------------------
+
+const loginSchema = z.object({
+  email: emailSchema,
+  // Not policy-checked on login: the stored password may predate a policy change,
+  // and rejecting it here would leak which passwords are valid shapes.
+  password: z.string().min(1, 'Enter your password.').max(200),
+  remember: z.boolean().optional().default(false),
+});
+
+const codeSchema = z.object({
+  challengeToken: z.string().min(10),
+  code: z.string().trim().min(6).max(20),
+  remember: z.boolean().optional().default(false),
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(1).max(200),
+});
+
+// ============================================================================
+// PRE-SESSION — no auth, rate limited
+// ============================================================================
+
+/** Step 1 — password. Returns a challenge token, never a session. */
+authRouter.post(
+  '/login',
+  loginLimiter,
+  validate({ body: loginSchema }),
+  asyncHandler(async (req, res) => {
+    const { email, password } = req.body;
+    const result = await authService.login(email, password, auditContext(req));
+    res.json({ data: result });
+  }),
+);
+
+/** Step 2 — 2FA code. Returns the session. */
+authRouter.post(
+  '/2fa/verify',
+  twofaLimiter,
+  validate({ body: codeSchema }),
+  asyncHandler(async (req, res) => {
+    const { challengeToken, code, remember } = req.body;
+    const session = await authService.verifyTwofa(
+      challengeToken,
+      code,
+      auditContext(req),
+      remember,
+    );
+
+    res.cookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOptions(rememberCookieMaxAge()));
+    // The refresh token is in the cookie only — never echoed in the body.
+    const { refreshToken: _omit, ...body } = session;
+    res.json({ data: body });
+  }),
+);
+
+/** Begin forced 2FA enrolment (§14.3 first login). */
+authRouter.post(
+  '/2fa/setup',
+  twofaLimiter,
+  validate({ body: z.object({ challengeToken: z.string().min(10) }) }),
+  asyncHandler(async (req, res) => {
+    const result = await authService.startTwofaEnrolment(req.body.challengeToken);
+    res.json({ data: result });
+  }),
+);
+
+/** Confirm enrolment; returns the session plus one-time backup codes. */
+authRouter.post(
+  '/2fa/enroll',
+  twofaLimiter,
+  validate({ body: codeSchema }),
+  asyncHandler(async (req, res) => {
+    const { challengeToken, code, remember } = req.body;
+    const result = await authService.completeTwofaEnrolment(
+      challengeToken,
+      code,
+      auditContext(req),
+      remember,
+    );
+
+    res.cookie(REFRESH_COOKIE, result.refreshToken, refreshCookieOptions(rememberCookieMaxAge()));
+    const { refreshToken: _omit, ...body } = result;
+    res.json({ data: body });
+  }),
+);
+
+/** Rotate the refresh token. Reads the cookie, not the body. */
+authRouter.post(
+  '/refresh',
+  asyncHandler(async (req, res) => {
+    const token = req.cookies?.[REFRESH_COOKIE];
+    if (!token) throw unauthenticated('No session. Please sign in.');
+
+    const session = await authService.refresh(token, auditContext(req));
+
+    res.cookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOptions(rememberCookieMaxAge()));
+    const { refreshToken: _omit, ...body } = session;
+    res.json({ data: body });
+  }),
+);
+
+/** Sign out. Idempotent — always 200, even without a valid session. */
+authRouter.post(
+  '/logout',
+  asyncHandler(async (req, res) => {
+    await authService.logout(req.cookies?.[REFRESH_COOKIE]);
+    res.clearCookie(REFRESH_COOKIE, { path: '/api/v1/admin/auth' });
+    res.json({ data: { ok: true } });
+  }),
+);
+
+/** The §14.2 rules, so the CMS checklist stays in sync with the server. */
+authRouter.get('/password-policy', (_req, res) => {
+  res.json({
+    data: { rules: PASSWORD_RULES.map(({ key, label }) => ({ key, label })) },
+  });
+});
+
+// ============================================================================
+// POST-SESSION — each explicitly guarded, since this router sits above the
+// admin router's blanket requireAuth.
+// ============================================================================
+
+/** Session restore on page reload. */
+authRouter.get(
+  '/me',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    res.json({ data: { user } });
+  }),
+);
+
+authRouter.post(
+  '/change-password',
+  requireAuth,
+  passwordResetLimiter,
+  validate({ body: changePasswordSchema }),
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    const { currentPassword, newPassword } = req.body;
+
+    const session = await authService.changePassword(
+      user.id,
+      currentPassword,
+      newPassword,
+      auditContext(req),
+    );
+
+    res.cookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOptions(rememberCookieMaxAge()));
+    const { refreshToken: _omit, ...body } = session;
+    res.json({ data: body });
+  }),
+);
+
+/** Fresh backup codes. Shown once. */
+authRouter.post(
+  '/2fa/backup-codes',
+  requireAuth,
+  twofaLimiter,
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    const codes = await authService.regenerateBackupCodes(user.id, auditContext(req));
+    res.json({ data: { backupCodes: codes } });
+  }),
+);
+
+authRouter.get(
+  '/sessions',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    // Identify the caller's own session so the UI can label it "this device".
+    const token = req.get('authorization')?.slice(7) ?? '';
+    const claims = verifyAccessToken(token);
+
+    const sessions = await authService.listSessions(user.id, claims.sid);
+    res.json({ data: sessions });
+  }),
+);
+
+authRouter.delete(
+  '/sessions/:id',
+  requireAuth,
+  validate({ params: z.object({ id: z.string().uuid() }) }),
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    // Scoped to the caller's own sessions inside the service — see revokeSession.
+    await authService.revokeSession(user.id, req.params.id as string, auditContext(req));
+    res.json({ data: { ok: true } });
+  }),
+);

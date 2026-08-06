@@ -1,0 +1,11 @@
+{
+  // Typechecks files outside src/ (the Prisma seed, prisma.config.ts, one-off
+  // scripts). They run through tsx and are never compiled to dist/, so they need
+  // their own scope — but they should still be typechecked in CI.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["prisma/**/*.ts", "scripts/**/*.ts", "prisma.config.ts"]
+}
