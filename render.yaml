@@ -18,7 +18,13 @@ services:
     name: zewa-api
     runtime: node
     plan: free
-    buildCommand: npm ci && npm run build && npx prisma migrate deploy
+    # `--include=dev` is required, not optional. NODE_ENV=production (set below)
+    # makes npm skip devDependencies, but typescript, tsc-alias, prisma and the
+    # @types packages all live there — without them `tsc` fails with hundreds of
+    # "Cannot find name 'process'" and "Could not find a declaration file for
+    # module 'express'" errors. Runtime is unaffected: `start` runs plain JS
+    # from dist/, so the dev packages are only needed during the build.
+    buildCommand: npm ci --include=dev && npm run build && npx prisma migrate deploy
     startCommand: npm run start
     healthCheckPath: /health
     envVars:
