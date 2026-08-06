@@ -6,8 +6,8 @@
 # seen locally when `npm run worker` was not running.
 #
 # Deploy with: Render Dashboard -> New -> Blueprint -> point at this repo.
-# `rootDir` assumes this file sits in Backend/ inside a repo whose root is the
-# project folder; adjust if you deploy Backend/ as its own repo.
+# This repo's root IS the backend (package.json sits beside this file), so no
+# rootDir is set.
 
 services:
   # ---- HTTP API ------------------------------------------------------------
@@ -15,7 +15,6 @@ services:
     name: zewa-api
     runtime: node
     plan: starter # free tier sleeps after inactivity; not viable for a payment webhook
-    rootDir: Backend
     buildCommand: npm ci && npm run build && npx prisma migrate deploy
     startCommand: npm run start
     healthCheckPath: /health
@@ -90,7 +89,6 @@ services:
     name: zewa-worker
     runtime: node
     plan: starter
-    rootDir: Backend
     # Migrations run in the API build only — two services applying them
     # concurrently on deploy can deadlock on the advisory lock.
     buildCommand: npm ci && npm run build
