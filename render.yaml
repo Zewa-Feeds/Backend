@@ -91,20 +91,19 @@ services:
       - key: RAZORPAY_AUTO_CONFIRM
         value: "false"
 
-      # COD-only until real Razorpay credentials exist.
+      # Online payment only — Cash on Delivery is switched off.
       #
-      # The production guardrail demands RAZORPAY_KEY_ID/_KEY_SECRET and a
-      # webhook secret whenever PAYMENT_RAZORPAY_ENABLED is true, and refuses
-      # to boot without them — deliberately, so a live deploy can never accept
-      # simulated payments. Disabling online payment satisfies it honestly
-      # instead of weakening the check.
+      # COD is disabled here rather than deleted from the code: two existing
+      # orders were placed with it, and dropping the enum value would break
+      # their invoices and order history. The storefront offers Razorpay
+      # exclusively; the COD branches that remain only render past orders.
       #
-      # TO ENABLE ONLINE PAYMENT: set the three RAZORPAY_* values in the
-      # dashboard, then flip this to "true".
+      # Requires RAZORPAY_KEY_ID, _KEY_SECRET and _WEBHOOK_SECRET in the
+      # dashboard — the production guardrail refuses to boot without them.
       - key: PAYMENT_RAZORPAY_ENABLED
-        value: "false"
-      - key: PAYMENT_COD_ENABLED
         value: "true"
+      - key: PAYMENT_COD_ENABLED
+        value: "false"
 
       # No separate worker service on the free plan, so the API hosts the
       # queue consumers. Without this nothing drains the payment and email
