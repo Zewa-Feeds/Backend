@@ -17,6 +17,17 @@ import { env } from '@/config/env';
 import { logger } from '@/lib/logger';
 import { checkDatabase, disconnectPrisma } from '@/lib/prisma';
 import { checkRedis, disconnectRedis } from '@/lib/redis';
+import { startEmailWorker } from '@/jobs/workers/email.worker';
+import { startPaymentWorker } from '@/jobs/workers/payment.worker';
+import { closeQueues } from '@/jobs/queues';
+
+/**
+ * Workers hosted inside this process. Empty unless RUN_WORKERS_IN_API.
+ *
+ * Typed by the only capability shutdown needs, since the email and payment
+ * workers carry different job types and share no useful common supertype.
+ */
+type EmbeddedWorkers = { close: () => Promise<void> }[];
 
 const log = logger.child({ module: 'server' });
 
@@ -38,7 +49,7 @@ async function verifyDependencies(): Promise<void> {
   }
 }
 
-function installShutdownHandlers(server: Server): void {
+function installShutdownHandlers(server: Server, workers: EmbeddedWorkers): void {
   let shuttingDown = false;
 
   const shutdown = async (signal: string) => {
@@ -63,6 +74,18 @@ function installShutdownHandlers(server: Server): void {
         server.close((err) => (err ? reject(err) : resolve()));
       });
       log.info('http server closed');
+
+      /*
+       * Close any in-process workers BEFORE the shared Prisma/Redis clients.
+       * `close()` lets an in-flight job finish; tearing the connections down
+       * first would kill it mid-write — a half-confirmed payment or a
+       * duplicate email on retry.
+       */
+      if (workers.length > 0) {
+        await Promise.allSettled(workers.map((w) => w.close()));
+        await closeQueues();
+        log.info({ workers: workers.length }, 'in-process workers closed');
+      }
 
       await Promise.allSettled([disconnectPrisma(), disconnectRedis()]);
       log.info('shutdown complete');
@@ -106,7 +129,22 @@ async function main(): Promise<void> {
   server.keepAliveTimeout = 65_000;
   server.headersTimeout = 70_000;
 
-  installShutdownHandlers(server);
+  /*
+   * Optionally host the queue consumers here. See RUN_WORKERS_IN_API in
+   * config/env.ts for why a separate process is otherwise preferred.
+   */
+  const workers: EmbeddedWorkers = env.RUN_WORKERS_IN_API
+    ? [startEmailWorker(), startPaymentWorker()]
+    : [];
+
+  if (workers.length > 0) {
+    log.warn(
+      { workers: workers.length },
+      'workers running INSIDE the API process — a stuck job can affect request latency',
+    );
+  }
+
+  installShutdownHandlers(server, workers);
 }
 
 void main();

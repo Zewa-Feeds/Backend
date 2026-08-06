@@ -84,6 +84,21 @@ const schema = z.object({
     .preprocess((v) => v === 'true' || v === true, z.boolean())
     .default(false),
 
+  /**
+   * Run the BullMQ workers inside the API process instead of separately.
+   *
+   * Off by default: a dedicated worker process is the right shape, because a
+   * slow PDF render or mail send cannot then block an HTTP request, and a job
+   * handler crash cannot take the API down.
+   *
+   * Set true only where a second always-on process is not available — a free
+   * hosting tier, for instance. Without it, nothing consumes the payment and
+   * email queues, so orders are taken but never confirmed.
+   */
+  RUN_WORKERS_IN_API: z
+    .preprocess((v) => v === 'true' || v === true, z.boolean())
+    .default(false),
+
   /** Payment methods can be switched off per deployment without code changes. */
   PAYMENT_RAZORPAY_ENABLED: z
     .preprocess((v) => v !== 'false' && v !== false, z.boolean())
