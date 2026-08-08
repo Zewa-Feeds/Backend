@@ -202,11 +202,16 @@ export async function transition(
     if (input.internalNote?.trim()) data.internalNote = input.internalNote.trim();
 
     /*
-     * Issue an invoice number on Accept if the order does not already have one.
+     * Issue the invoice number here — on Accept, not at checkout.
      *
-     * New orders get theirs at checkout, so this only fires for rows created
-     * before auto-numbering existed — they would otherwise be stuck, unable to
-     * ship because §6.5 requires an invoice number that nothing now supplies.
+     * This is the only place a ZFI number is minted. Checkout deliberately does
+     * not, because GST requires the invoice series to be continuous: a number
+     * consumed by an order that is never paid for, or is cancelled minutes
+     * later, leaves a permanent hole that has to be explained. Accepting the
+     * order is the first point at which a sale is real.
+     *
+     * The `!order.invoiceNumber` guard keeps this idempotent — re-entering
+     * PROCESSING must not mint a second number for the same sale.
      */
     let issuedInvoiceNo: string | null = null;
     if (input.to === OrderStatus.PROCESSING && !order.invoiceNumber) {

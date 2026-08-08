@@ -30,7 +30,7 @@ import { writeAudit, type AuditContext } from '@/modules/audit/audit.service';
 import * as settingsService from '@/modules/settings/settings.service';
 import { paymentProvider, enabledPaymentMethods } from '@/integrations/razorpay/payment.service';
 import { MOCK_CONFIRM_DELAY_MS } from '@/integrations/razorpay/mock.provider';
-import { nextInvoiceNo, nextOrderNo } from '@/modules/orders/numbering';
+import { nextOrderNo } from '@/modules/orders/numbering';
 import { likelyStateForPincode, pincodeMatchesState } from '@/lib/pincode';
 import { emailQueue, paymentQueue } from '@/jobs/queues';
 import { serializeOrder, ORDER_SELECT } from '@/modules/orders/orders.serializer';
@@ -218,14 +218,19 @@ export async function checkout(
 
       const orderNo = await nextOrderNo(tx);
       /*
-       * The invoice number is issued here, with the order.
+       * NO invoice number here — it is issued when the order is accepted
+       * (the transition to PROCESSING, in orders.service.ts).
        *
-       * It used to be typed in by hand before dispatch, which meant a human
-       * chose the number — risking duplicates and gaps in a series that GST
-       * requires to be continuous. Both series now come from the same atomic
-       * counter, so numbers are unique and sequential by construction.
+       * Issuing it at checkout consumed a number from the ZFI series for every
+       * order placed, including ones that were never paid for or were
+       * cancelled seconds later. GST requires the invoice series to be
+       * continuous, so each abandoned order left a permanent hole in it: of
+       * the first thirteen orders, ten burned a number without a sale behind
+       * it.
+       *
+       * The order number (ZFO) is still issued now, because the customer needs
+       * something to reference immediately. Gaps there carry no legal weight.
        */
-      const invoiceNumber = await nextInvoiceNo(tx);
 
       // Auto-link guest checkouts to a Customer profile so they appear in CMS Customers (§7.1)
       let customerId = input.customerId ?? null;
@@ -276,7 +281,6 @@ export async function checkout(
           // staff-only and starts empty.
           customerNote: input.customerNote?.trim() || null,
           idempotencyKey: input.idempotencyKey ?? null,
-          invoiceNumber,
           items: {
             // Snapshots — the invoice reads these, never the live catalogue.
             create: cart.lines.map((l) => ({
