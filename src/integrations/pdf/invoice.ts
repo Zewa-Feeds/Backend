@@ -8,9 +8,40 @@
  * invoice is a legal document: if a product's price or name changes next month,
  * last month's invoice must still show what was actually charged.
  */
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { PDFDocument, StandardFonts, rgb, type PDFFont } from 'pdf-lib';
 import { computeInvoiceTax, formatInr, type TaxConfig } from '@/modules/orders/tax';
 import { env } from '@/config/env';
+import { logger } from '@/lib/logger';
+
+const log = logger.child({ module: 'pdf.invoice' });
+
+/**
+ * Brand mark for the invoice header.
+ *
+ * Resolved from the project root rather than `__dirname`: `tsc` compiles TS to
+ * dist/ but does not copy assets, so a path relative to the compiled file would
+ * exist in development and 404 in production.
+ *
+ * Read once and cached — an invoice PDF is generated per order, and re-reading
+ * a 64KB file each time is pointless. `null` means we tried and failed; the
+ * header then falls back to the company name in text, because a missing logo
+ * must never stop a legally required document from being produced.
+ */
+const LOGO_PATH = join(process.cwd(), 'assets', 'logo.png');
+let logoBytes: Uint8Array | null | undefined;
+
+async function loadLogo(): Promise<Uint8Array | null> {
+  if (logoBytes !== undefined) return logoBytes;
+  try {
+    logoBytes = new Uint8Array(await readFile(LOGO_PATH));
+  } catch (err) {
+    log.warn({ err, path: LOGO_PATH }, 'invoice logo missing — falling back to text header');
+    logoBytes = null;
+  }
+  return logoBytes;
+}
 
 export interface InvoiceOrder {
   orderNo: string;
@@ -125,6 +156,30 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
   };
 
   // ---- Header ------------------------------------------------------------
+  /*
+   * Logo above the title, on the left.
+   *
+   * Drawn first so `y` can drop by its height before "TAX INVOICE" is placed —
+   * the company block on the right is anchored to the same `y`, so both stay
+   * aligned whether or not the logo loaded.
+   */
+  const logo = await loadLogo();
+  if (logo) {
+    try {
+      const img = await doc.embedPng(logo);
+      // 26pt read as an afterthought beside an 18pt title; 44 gives the mark
+      // presence without competing with "TAX INVOICE".
+      const LOGO_H = 44;
+      const scaled = img.scale(LOGO_H / img.height);
+      y -= LOGO_H;
+      page.drawImage(img, { x: MARGIN, y, width: scaled.width, height: scaled.height });
+      y -= 18;
+    } catch (err) {
+      // A corrupt PNG must not break invoice generation.
+      log.warn({ err }, 'could not embed invoice logo');
+    }
+  }
+
   text('TAX INVOICE', MARGIN, y, { size: 18, font: bold });
   textRight(env.COMPANY_NAME, PAGE_WIDTH - MARGIN, y, { size: 11, font: bold });
   y -= 16;
