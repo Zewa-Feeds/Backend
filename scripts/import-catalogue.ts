@@ -21,6 +21,7 @@ import { basename, join } from 'node:path';
 import { Category, ProductStatus, MediaType } from '@prisma/client';
 import { prisma } from '../src/lib/prisma';
 import { env } from '../src/config/env';
+import { buildMediaAlt } from '../src/lib/media-alt';
 
 const DIR = __dirname;
 const IMAGES_ROOT = join(DIR, '..', 'Listing Images');
@@ -314,7 +315,9 @@ async function main() {
             type: MediaType.IMAGE,
             url: up.url,
             publicId: up.publicId,
-            alt: `${p.name} — ${basename(g.file, '.png').replace(/[-_]/g, ' ')}`.slice(0, 300),
+            // Only stripped .png, so every JPEG kept its extension in the
+            // alt text. See buildMediaAlt for the full reasoning.
+            alt: buildMediaAlt(p.name, basename(g.file), i),
             position: i,
             width: up.width,
             height: up.height,
