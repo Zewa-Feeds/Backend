@@ -34,7 +34,13 @@ export const shippingSchema = z.object({
 });
 
 export const taxSchema = z.object({
-  gstRatePct: z.number().min(0).max(50).default(18),
+  /*
+   * Defaults to 0, and is edited from the CMS (Settings -> Tax) rather than in
+   * code. The rate applicable to these products is not settled yet, so the
+   * safe default is to charge none — an 18% default silently adds tax to every
+   * order the moment a fresh environment comes up without a saved setting.
+   */
+  gstRatePct: z.number().min(0).max(50).default(0),
   /** True when listed prices already contain GST — drives reverse-calculation. */
   gstInclusive: z.boolean().default(true),
   gstin: z.string().max(20).transform(plainText).default(''),

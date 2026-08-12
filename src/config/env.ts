@@ -121,13 +121,26 @@ const schema = z.object({
   SENTRY_DSN: optionalUrl,
 
   // ---- Company (invoices, §6.5) -------------------------------------------
-  COMPANY_NAME: z.string().default('Zewa Ecosystems Pvt Ltd'),
-  COMPANY_GSTIN: z.string().default('27AABCZ1234E1Z5'),
-  /** Place of supply — decides CGST+SGST (intra-state) vs IGST (inter-state). */
-  COMPANY_STATE: z.string().default('Maharashtra'),
-  COMPANY_ADDRESS: z.string().default('Zewa Ecosystems Pvt Ltd, Thrissur, Kerala, India'),
+  COMPANY_NAME: z.string().default('Zewa Ecosystems Pvt. Ltd'),
+  /** As issued on the GST registration certificate. */
+  COMPANY_GSTIN: z.string().default('32AABCZ8255E1ZC'),
+  /**
+   * Place of supply — decides CGST+SGST (intra-state) vs IGST (inter-state).
+   *
+   * This defaulted to Maharashtra, which is not where the company is
+   * registered: every Kerala order — the home state, and so the most common
+   * intra-state case — was being split as IGST on the invoice.
+   */
+  COMPANY_STATE: z.string().default('Kerala'),
+  /** GST state code for Kerala; printed beside the state name on invoices. */
+  COMPANY_STATE_CODE: z.string().default('32'),
+  COMPANY_ADDRESS: z
+    .string()
+    .default(
+      '17/31A, TR Nair Rd, Elamthuruthy-Kalady, Kuttanellur PO, Thrissur, Kerala 680014, India',
+    ),
   COMPANY_EMAIL: z.string().email().default('orders@zewafeeds.com'),
-  COMPANY_PHONE: z.string().default('+91 00000 00000'),
+  COMPANY_PHONE: z.string().default('+91-94966 42259'),
 });
 
 /**

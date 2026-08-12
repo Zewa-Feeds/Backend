@@ -95,6 +95,32 @@ const TEAL = rgb(0.05, 0.72, 0.62);
  */
 const money = (paise: number): string => formatInr(paise).replace('₹', 'Rs.');
 
+/**
+ * Break a comma-separated address into lines that fit the invoice's right-hand
+ * column, without splitting mid-component.
+ *
+ * Helvetica at 8pt averages a little under half the point size per character;
+ * 60 characters keeps a line inside roughly 240pt, which clears the heading on
+ * the opposite side of the page.
+ */
+function wrapAddress(address: string, maxChars = 60): string[] {
+  const parts = address.split(',').map((s) => s.trim()).filter(Boolean);
+  const lines: string[] = [];
+  let current = '';
+
+  for (const part of parts) {
+    const candidate = current ? `${current}, ${part}` : part;
+    if (candidate.length > maxChars && current) {
+      lines.push(current);
+      current = part;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
 export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConfig): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   doc.setTitle(`Invoice ${order.invoiceNumber ?? order.orderNo}`);
@@ -183,9 +209,24 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
   text('TAX INVOICE', MARGIN, y, { size: 18, font: bold });
   textRight(env.COMPANY_NAME, PAGE_WIDTH - MARGIN, y, { size: 11, font: bold });
   y -= 16;
-  textRight(env.COMPANY_ADDRESS, PAGE_WIDTH - MARGIN, y, { size: 8, color: MUTED });
+  /*
+   * The registered address is long enough to run into the "TAX INVOICE"
+   * heading on the left as a single right-aligned line, so it is wrapped on
+   * commas into chunks that fit the right-hand column.
+   */
+  for (const line of wrapAddress(env.COMPANY_ADDRESS)) {
+    textRight(line, PAGE_WIDTH - MARGIN, y, { size: 8, color: MUTED });
+    y -= 11;
+  }
+  textRight(`GSTIN/UIN: ${env.COMPANY_GSTIN}`, PAGE_WIDTH - MARGIN, y, { size: 8, color: MUTED });
   y -= 11;
-  textRight(`GSTIN: ${env.COMPANY_GSTIN}`, PAGE_WIDTH - MARGIN, y, { size: 8, color: MUTED });
+  // State and code are both required on a GST invoice.
+  textRight(
+    `State Name: ${env.COMPANY_STATE}, Code: ${env.COMPANY_STATE_CODE}`,
+    PAGE_WIDTH - MARGIN,
+    y,
+    { size: 8, color: MUTED },
+  );
   y -= 11;
   textRight(`${env.COMPANY_EMAIL} · ${env.COMPANY_PHONE}`, PAGE_WIDTH - MARGIN, y, {
     size: 8,
