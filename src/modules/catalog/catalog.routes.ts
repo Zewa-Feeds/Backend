@@ -19,6 +19,7 @@ import { notFound } from '@/lib/errors';
 import { plainText } from '@/lib/sanitize';
 import {
   CATEGORY_LABELS,
+  ACTIVE_CATEGORIES,
   serializePublic,
   FAMILY_SELECT,
   toRupees,
@@ -126,6 +127,32 @@ catalogRouter.get(
 );
 
 /** Rotating spotlight banners on the products page (§8.2). */
+/**
+ * Browsable categories, in display order.
+ *
+ * The storefront used to derive its filter chips from whatever products the
+ * catalogue happened to return. That collapsed the list to two entries, because
+ * only three of thirteen products are ACTIVE — the rest are still DRAFT, so the
+ * public endpoint (correctly) does not return them, and their categories
+ * vanished with them.
+ *
+ * The category list is a fixed taxonomy, not a function of what is published
+ * today. Serving it from ACTIVE_CATEGORIES keeps the shop's chips stable as
+ * products are published, and keeps one source of truth shared with the CMS.
+ */
+catalogRouter.get(
+  '/catalog/categories',
+  asyncHandler(async (_req, res) => {
+    res.setHeader('Cache-Control', CACHE_60S);
+    res.json({
+      data: ACTIVE_CATEGORIES.map((value) => ({
+        value,
+        label: CATEGORY_LABELS[value],
+      })),
+    });
+  }),
+);
+
 catalogRouter.get(
   '/catalog/spotlights',
   asyncHandler(async (_req, res) => {
