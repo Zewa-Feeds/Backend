@@ -140,7 +140,8 @@ const schema = z.object({
       '17/31A, TR Nair Rd, Elamthuruthy-Kalady, Kuttanellur PO, Thrissur, Kerala 680014, India',
     ),
   COMPANY_EMAIL: z.string().email().default('orders@zewafeeds.com'),
-  COMPANY_PHONE: z.string().default('+91-94966 42259'),
+  /** Customer care, not the GST-registered contact. */
+  COMPANY_PHONE: z.string().default('+91-95004 39828'),
 });
 
 /**
