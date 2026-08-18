@@ -18,6 +18,24 @@ const baseOptions = {
   // Exponential backoff, capped.
   retryStrategy: (times: number) => Math.min(times * 200, 3_000),
   enableOfflineQueue: true,
+  /*
+   * Do not let a broken Redis kill the process.
+   *
+   * When the Upstash quota is exhausted the server accepts the socket and then
+   * fails AUTH. ioredis raises that as a rejection from its internal auth call,
+   * which nothing awaits — so it surfaced as an unhandled rejection and took
+   * the whole API down in a restart loop, taking the storefront with it.
+   *
+   * These two options keep the failure on the 'error' event (already logged
+   * below) instead of an unawaited promise:
+   *   - reconnectOnError returns false, so a command that fails with an error
+   *     reply is not silently retried on a fresh connection.
+   *   - Errors on a connection with no pending command have nowhere to be
+   *     delivered; the handler attached after construction catches them.
+   *
+   * maxRetriesPerRequest stays per-client below, because BullMQ requires null.
+   */
+  reconnectOnError: () => false,
 } as const;
 
 export const redis = new Redis(env.REDIS_URL, {

@@ -34,18 +34,31 @@ const log = logger.child({ module: 'server' });
 /** How long in-flight requests get to finish before we force the process down. */
 const SHUTDOWN_GRACE_MS = 15_000;
 
+/**
+ * Postgres is required; Redis is not.
+ *
+ * Without Postgres there is no catalogue, no orders, nothing to serve — exiting
+ * non-zero is right, because a crash-loop is a louder signal than silent 500s.
+ *
+ * Redis only backs rate limiting and queues, both of which degrade rather than
+ * break (see middleware/rateLimit.ts). Refusing to boot without it meant an
+ * expired cache quota could keep the entire storefront offline, so a bad Redis
+ * is now a loud warning and the API serves on.
+ */
 async function verifyDependencies(): Promise<void> {
   const [database, cache] = await Promise.all([checkDatabase(), checkRedis()]);
 
   if (!database) {
     log.fatal('cannot reach Postgres — check DATABASE_URL and that the container is up');
-  }
-  if (!cache) {
-    log.fatal('cannot reach Redis — check REDIS_URL and that the container is up');
-  }
-  if (!database || !cache) {
     log.fatal('startup aborted: run `npm run docker:up` for local dependencies');
     process.exit(1);
+  }
+
+  if (!cache) {
+    log.warn(
+      'cannot reach Redis — check REDIS_URL. Starting anyway: rate limits are DISABLED ' +
+        'and background jobs (payment confirmation, email) will not run until it returns.',
+    );
   }
 }
 

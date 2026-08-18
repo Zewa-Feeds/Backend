@@ -10,13 +10,16 @@ import type { RequestHandler } from 'express';
 import { redis } from '@/lib/redis';
 import { ErrorCode } from '@/lib/errors';
 import { env } from '@/config/env';
+import { logger } from '@/lib/logger';
+
+const log = logger.child({ module: 'rateLimit' });
 
 /**
  * Shared Redis store factory. A distinct prefix per limiter keeps their counters
  * independent.
  */
-const store = (prefix: string) =>
-  new RedisStore({
+const redisStore = (prefix: string) => {
+  const store = new RedisStore({
     // rate-limit-redis issues raw Redis commands; ioredis exposes them via `call`.
     // The tuple cast is needed because `call` expects (command, ...args) rather
     // than a single spread array.
@@ -25,9 +28,68 @@ const store = (prefix: string) =>
     prefix: `rl:${prefix}:`,
   });
 
-const base = (prefix: string, overrides: Partial<Options>): RequestHandler =>
-  rateLimit({
-    store: store(prefix),
+  /*
+   * The constructor kicks off SCRIPT LOAD and stores the pending promises. If
+   * Redis is down those reject with nobody awaiting them yet, and an unhandled
+   * rejection takes the process down before any request arrives.
+   *
+   * Attaching a catch marks them handled. The rejection still propagates to
+   * whoever awaits the promise later, so a failing store is caught per-request
+   * by withFallback — this only stops the crash, it does not hide the error.
+   */
+  for (const sha of [store.incrementScriptSha, store.getScriptSha]) {
+    void Promise.resolve(sha).catch(() => {});
+  }
+
+  return store;
+};
+
+let degraded = false;
+
+/**
+ * FAIL OPEN onto an in-memory store when Redis is unusable.
+ *
+ * Rate limiting is a protective measure, not a correctness one, so a dead Redis
+ * must not take the API down with it. Previously any Redis failure — an
+ * exhausted Upstash quota, a network blip — rejected inside express-rate-limit
+ * and surfaced as a 500 on EVERY route, the public catalogue included. Losing
+ * the whole storefront to protect it from traffic it was not receiving is the
+ * wrong trade.
+ *
+ * Swallowing the error per-command is not enough: rate-limit-redis validates
+ * its own SCRIPT LOAD reply and throws "unexpected reply from redis client",
+ * which surfaces as an unhandled rejection and kills the process. So instead of
+ * feeding it fake replies, the request is retried against express-rate-limit's
+ * default memory store.
+ *
+ * The trade-off of that fallback is real and deliberate: counters live in this
+ * process only, so limits are per-instance rather than global and reset on
+ * restart. For a protective ceiling during a cache outage that is fine — it is
+ * strictly better than no limit at all, and far better than a downed API.
+ */
+const withFallback = (redisLimiter: RequestHandler, memoryLimiter: RequestHandler): RequestHandler =>
+  (req, res, next) =>
+    redisLimiter(req, res, (err?: unknown) => {
+      if (!err) {
+        if (degraded) {
+          degraded = false;
+          log.info('rate-limit store recovered — limits are global again');
+        }
+        return next();
+      }
+
+      // Log the transition only. A downed Redis would otherwise emit a line per
+      // request and bury everything else in the log.
+      if (!degraded) {
+        degraded = true;
+        log.error({ err }, 'rate-limit store unavailable — falling back to in-memory limits');
+      }
+
+      memoryLimiter(req, res, next);
+    });
+
+const base = (prefix: string, overrides: Partial<Options>): RequestHandler => {
+  const common: Partial<Options> = {
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     // Deliver our error envelope rather than express-rate-limit's default text.
@@ -42,7 +104,11 @@ const base = (prefix: string, overrides: Partial<Options>): RequestHandler =>
     // Skip entirely in tests so suites are not flaky.
     skip: () => env.isTest,
     ...overrides,
-  });
+  };
+
+  // Omitting `store` leaves express-rate-limit on its built-in MemoryStore.
+  return withFallback(rateLimit({ ...common, store: redisStore(prefix) }), rateLimit({ ...common }));
+};
 
 /**
  * §14.1 — CMS login. 10 failures per IP per 15 min, then locked out for 15 min.
