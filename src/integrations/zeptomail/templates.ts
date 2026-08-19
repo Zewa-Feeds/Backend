@@ -193,6 +193,57 @@ export const templates = {
 
 export type CustomerTemplateName = keyof typeof templates;
 
+// ---- Account templates -----------------------------------------------------
+//
+// Kept apart from `templates` above because those are all keyed to an order and
+// render from OrderEmailContext. Account mail has no order behind it, so giving
+// it its own registry keeps both context types honest rather than making every
+// order field optional.
+
+export const accountTemplates = {
+  /**
+   * Password reset link.
+   *
+   * The email states the expiry and says what to do if it was not requested —
+   * an unexpected reset mail is exactly when someone needs to know their address
+   * is known to an attacker, and silence there is its own security failure.
+   */
+  'password-reset': (ctx: { firstName: string; resetUrl: string; expiresInMinutes: number }) => ({
+    subject: 'Reset your Zewa Feeds password',
+    html: shell(
+      'Reset your password',
+      `Hi ${esc(ctx.firstName)}, we received a request to reset the password on your Zewa Feeds account. This link is valid for ${esc(ctx.expiresInMinutes)} minutes and can be used once.`,
+      button('Choose a new password', ctx.resetUrl) +
+        `<p style="margin:22px 0 0;font-size:12px;line-height:1.6;color:${MUTED};">
+           If the button does not work, paste this into your browser:<br/>
+           <span style="word-break:break-all;color:${INK};">${esc(ctx.resetUrl)}</span>
+         </p>
+         <p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:${MUTED};">
+           Didn't request this? You can ignore this email — your password stays as it is.
+         </p>`,
+    ),
+  }),
+
+  /**
+   * Confirmation that a password actually changed.
+   *
+   * Sent after both the reset flow and a signed-in change, because this is the
+   * message that lets someone notice an account takeover they did not perform.
+   */
+  'password-changed': (ctx: { firstName: string }) => ({
+    subject: 'Your Zewa Feeds password was changed',
+    html: shell(
+      'Password changed',
+      `Hi ${esc(ctx.firstName)}, your Zewa Feeds account password was just changed.`,
+      `<p style="margin:0;font-size:13px;line-height:1.6;color:${MUTED};">
+         If this was you, nothing more to do. If it wasn't, reply to this email straight away and we'll secure your account.
+       </p>`,
+    ),
+  }),
+} as const;
+
+export type AccountTemplateName = keyof typeof accountTemplates;
+
 // ---- Staff alert templates (§15) -------------------------------------------
 
 export const staffTemplates = {

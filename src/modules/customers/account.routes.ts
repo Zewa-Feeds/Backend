@@ -20,7 +20,9 @@ import {
   validate,
 } from '@/middleware/validate';
 import { loginLimiter, passwordResetLimiter } from '@/middleware/rateLimit';
-import { fakeVerify, hashPassword, verifyPassword } from '@/lib/crypto';
+import { fakeVerify, generateToken, hashPassword, hashToken, verifyPassword } from '@/lib/crypto';
+import { sendAccountEmail } from '@/modules/customers/account.mailer';
+import { env } from '@/config/env';
 import { signCustomerToken, verifyCustomerToken } from '@/lib/tokens';
 import { AppError, ErrorCode, notFound, unauthenticated } from '@/lib/errors';
 import { plainText } from '@/lib/sanitize';
@@ -147,7 +149,14 @@ customerAuthRouter.post(
 customerAuthRouter.post(
   '/login',
   loginLimiter,
-  validate({ body: z.object({ email: emailSchema, password: z.string().min(1).max(200) }) }),
+  validate({
+    body: z.object({
+      email: emailSchema,
+      password: z.string().min(1).max(200),
+      /** "Keep me signed in" — lengthens the token's own TTL, not just storage. */
+      remember: z.boolean().optional().default(false),
+    }),
+  }),
   asyncHandler(async (req, res) => {
     const customer = await prisma.customer.findUnique({
       where: { email: req.body.email },
@@ -176,7 +185,10 @@ customerAuthRouter.post(
 
     res.json({
       data: {
-        accessToken: signCustomerToken({ sub: customer.id, email: customer.email }),
+        accessToken: signCustomerToken(
+          { sub: customer.id, email: customer.email },
+          { remember: req.body.remember },
+        ),
         customer: {
           id: customer.id,
           email: customer.email,
@@ -194,6 +206,8 @@ customerAuthRouter.post(
  * Always returns 200, whether or not the address exists — otherwise this becomes
  * an account-enumeration oracle.
  */
+const RESET_TTL_MINUTES = 60;
+
 customerAuthRouter.post(
   '/forgot-password',
   passwordResetLimiter,
@@ -201,16 +215,126 @@ customerAuthRouter.post(
   asyncHandler(async (req, res) => {
     const customer = await prisma.customer.findUnique({
       where: { email: req.body.email },
-      select: { id: true, passwordHash: true },
+      select: { id: true, email: true, firstName: true, passwordHash: true, status: true },
     });
 
-    if (customer?.passwordHash) {
-      // TODO: queue a reset email once the customer-reset template lands.
-      log.info({ customerId: customer.id }, 'password reset requested');
+    // Guest rows (no password) and banned accounts get the same silent no-op as
+    // an unknown address — issuing a token for either would let someone set a
+    // password on an account that was never registered, or unban themselves.
+    if (customer?.passwordHash && customer.status !== CustomerStatus.BANNED) {
+      // Outstanding tokens are burned first: requesting a new link must retire
+      // the old one, or an intercepted earlier email stays usable.
+      await prisma.customerPasswordReset.updateMany({
+        where: { customerId: customer.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+
+      const token = generateToken();
+      await prisma.customerPasswordReset.create({
+        data: {
+          customerId: customer.id,
+          tokenHash: hashToken(token),
+          expiresAt: new Date(Date.now() + RESET_TTL_MINUTES * 60_000),
+        },
+      });
+
+      // Not awaited — see account.mailer.ts. Awaiting would make this branch
+      // slower than the unknown-address branch and leak which emails exist.
+      sendAccountEmail(customer.email, 'password-reset', {
+        firstName: customer.firstName,
+        resetUrl: `${env.STOREFRONT_ORIGIN}/reset-password?token=${encodeURIComponent(token)}`,
+        expiresInMinutes: RESET_TTL_MINUTES,
+      });
+
+      log.info({ customerId: customer.id }, 'password reset issued');
     }
 
     res.json({
       data: { message: 'If that email has an account, a reset link is on its way.' },
+    });
+  }),
+);
+
+/**
+ * Complete a reset.
+ *
+ * The token is looked up by HASH — the plaintext is never stored, so a database
+ * dump yields nothing replayable. A row is valid only if it is unused and unexpired,
+ * and it is marked used inside the same transaction that changes the password, so
+ * a replayed request cannot set the password twice.
+ */
+customerAuthRouter.post(
+  '/reset-password',
+  passwordResetLimiter,
+  validate({
+    body: z.object({
+      token: z.string().min(1, 'Reset link is missing its token.').max(200),
+      password: customerPasswordSchema,
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const record = await prisma.customerPasswordReset.findUnique({
+      where: { tokenHash: hashToken(req.body.token) },
+      select: {
+        id: true,
+        usedAt: true,
+        expiresAt: true,
+        customer: {
+          select: { id: true, email: true, firstName: true, lastName: true, status: true },
+        },
+      },
+    });
+
+    // One message for missing, spent and expired alike — distinguishing them
+    // tells a probe which tokens once existed.
+    if (!record || record.usedAt || record.expiresAt < new Date()) {
+      throw new AppError(
+        400,
+        ErrorCode.TOKEN_INVALID,
+        'This reset link is invalid or has expired. Request a new one.',
+      );
+    }
+    if (record.customer.status === CustomerStatus.BANNED) {
+      throw new AppError(403, ErrorCode.ACCOUNT_BANNED, 'Your account has been suspended.');
+    }
+
+    const passwordHash = await hashPassword(req.body.password);
+
+    await prisma.$transaction([
+      prisma.customer.update({
+        where: { id: record.customer.id },
+        data: { passwordHash },
+      }),
+      prisma.customerPasswordReset.update({
+        where: { id: record.id },
+        data: { usedAt: new Date() },
+      }),
+      // Any other live token for this account dies with the one just spent.
+      prisma.customerPasswordReset.updateMany({
+        where: { customerId: record.customer.id, usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+    ]);
+
+    sendAccountEmail(record.customer.email, 'password-changed', {
+      firstName: record.customer.firstName,
+    });
+
+    // Signed in immediately: bouncing someone to a login form to retype the
+    // password they just chose is friction with no security benefit.
+    res.json({
+      data: {
+        accessToken: signCustomerToken({
+          sub: record.customer.id,
+          email: record.customer.email,
+        }),
+        customer: {
+          id: record.customer.id,
+          email: record.customer.email,
+          firstName: record.customer.firstName,
+          lastName: record.customer.lastName,
+        },
+      },
     });
   }),
 );
@@ -282,10 +406,14 @@ accountRouter.post(
       });
     }
 
-    await prisma.customer.update({
+    const updated = await prisma.customer.update({
       where: { id: req.customer!.id },
       data: { passwordHash: await hashPassword(req.body.newPassword) },
+      select: { email: true, firstName: true },
     });
+
+    // Tells the owner an account takeover happened if it wasn't them.
+    sendAccountEmail(updated.email, 'password-changed', { firstName: updated.firstName });
 
     res.json({ data: { ok: true } });
   }),
@@ -297,62 +425,115 @@ accountRouter.post(
  * Matched by BOTH customerId and email, so orders placed as a guest before
  * registering still appear.
  */
+/**
+ * Ownership predicate, in one place.
+ *
+ * Matching on customerId OR email is what lets orders placed as a guest appear
+ * once that person registers with the same address. Both routes below build
+ * their WHERE from this, so the detail endpoint cannot accidentally be looser
+ * than the list — which is exactly how an IDOR gets shipped.
+ */
+const ownedBy = (customer: { id: string; email: string }) => ({
+  OR: [{ customerId: customer.id }, { email: customer.email }],
+});
+
+/** Everything the account UI renders for an order, list or detail. */
+const orderSelect = {
+  orderNo: true,
+  placedAt: true,
+  acceptedAt: true,
+  shippedAt: true,
+  deliveredAt: true,
+  cancelledAt: true,
+  status: true,
+  paymentStatus: true,
+  paymentMethod: true,
+  subtotalPaise: true,
+  discountPaise: true,
+  shippingPaise: true,
+  totalPaise: true,
+  carrier: true,
+  trackingNumber: true,
+  trackingUrl: true,
+  shippingAddress: true,
+  customerNote: true,
+  invoiceNumber: true,
+  items: {
+    select: { productName: true, pack: true, qty: true, lineTotalPaise: true, sku: true },
+  },
+} as const;
+
+type AccountOrder = Awaited<
+  ReturnType<typeof prisma.order.findFirstOrThrow<{ select: typeof orderSelect }>>
+>;
+
+/** Wire shape for one order. Money is sent as paise AND formatted rupees. */
+function serialiseOrder(o: AccountOrder) {
+  return {
+    orderNo: o.orderNo,
+    placedAt: o.placedAt,
+    status: o.status,
+    statusLabel: ORDER_STATUS_LABELS[o.status],
+    paymentStatus: o.paymentStatus,
+    paymentLabel: PAYMENT_STATUS_LABELS[o.paymentStatus],
+    paymentMethod: o.paymentMethod,
+    invoiceNumber: o.invoiceNumber,
+    customerNote: o.customerNote,
+    subtotalPaise: o.subtotalPaise,
+    discountPaise: o.discountPaise,
+    shippingPaise: o.shippingPaise,
+    totalPaise: o.totalPaise,
+    total: toRupees(o.totalPaise),
+    timeline: buildTimeline(o),
+    fulfilment: {
+      carrier: o.carrier,
+      trackingNumber: o.trackingNumber,
+      trackingUrl: o.trackingUrl,
+    },
+    addressLine: formatAddress(o.shippingAddress),
+    shippingAddress: o.shippingAddress,
+    items: o.items.map((i) => ({
+      productName: i.productName,
+      sku: i.sku,
+      pack: i.pack,
+      qty: i.qty,
+      lineTotalPaise: i.lineTotalPaise,
+      lineTotal: toRupees(i.lineTotalPaise),
+    })),
+  };
+}
+
 accountRouter.get(
   '/orders',
   asyncHandler(async (req, res) => {
     const orders = await prisma.order.findMany({
-      where: {
-        OR: [{ customerId: req.customer!.id }, { email: req.customer!.email }],
-      },
+      where: ownedBy(req.customer!),
       orderBy: { placedAt: 'desc' },
-      select: {
-        orderNo: true,
-        placedAt: true,
-        acceptedAt: true,
-        shippedAt: true,
-        deliveredAt: true,
-        cancelledAt: true,
-        status: true,
-        paymentStatus: true,
-        paymentMethod: true,
-        totalPaise: true,
-        carrier: true,
-        trackingNumber: true,
-        trackingUrl: true,
-        shippingAddress: true,
-        items: {
-          select: { productName: true, pack: true, qty: true, lineTotalPaise: true, sku: true },
-        },
-      },
+      select: orderSelect,
     });
 
-    res.json({
-      data: orders.map((o) => ({
-        orderNo: o.orderNo,
-        placedAt: o.placedAt,
-        status: o.status,
-        statusLabel: ORDER_STATUS_LABELS[o.status],
-        paymentStatus: o.paymentStatus,
-        paymentLabel: PAYMENT_STATUS_LABELS[o.paymentStatus],
-        paymentMethod: o.paymentMethod,
-        totalPaise: o.totalPaise,
-        total: toRupees(o.totalPaise),
-        timeline: buildTimeline(o),
-        fulfilment: {
-          carrier: o.carrier,
-          trackingNumber: o.trackingNumber,
-          trackingUrl: o.trackingUrl,
-        },
-        addressLine: formatAddress(o.shippingAddress),
-        items: o.items.map((i) => ({
-          productName: i.productName,
-          sku: i.sku,
-          pack: i.pack,
-          qty: i.qty,
-          lineTotal: toRupees(i.lineTotalPaise),
-        })),
-      })),
+    res.json({ data: orders.map(serialiseOrder) });
+  }),
+);
+
+/**
+ * One order.
+ *
+ * The ownership clause is part of the QUERY, not a check after the fetch: an
+ * order belonging to someone else is simply not found, so guessing an order
+ * number reveals nothing about whether it exists.
+ */
+accountRouter.get(
+  '/orders/:orderNo',
+  validate({ params: z.object({ orderNo: z.string().trim().min(3).max(40) }) }),
+  asyncHandler(async (req, res) => {
+    const order = await prisma.order.findFirst({
+      where: { orderNo: req.params.orderNo as string, ...ownedBy(req.customer!) },
+      select: orderSelect,
     });
+    if (!order) throw notFound('Order');
+
+    res.json({ data: serialiseOrder(order) });
   }),
 );
 

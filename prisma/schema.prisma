@@ -512,11 +512,36 @@ model Customer {
   registeredAt    DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  addresses Address[]
-  orders    Order[]
-  reviews   Review[]
+  addresses      Address[]
+  orders         Order[]
+  reviews        Review[]
+  passwordResets CustomerPasswordReset[]
 
   @@index([status])
+}
+
+/// Password reset tokens for storefront customers.
+///
+/// The token is emailed in plaintext and stored only as a sha256 hash, so a
+/// leaked database dump cannot be used to reset anyone's password. Rows are
+/// single-use (`usedAt`) and short-lived (`expiresAt`).
+///
+/// Separate from the staff flow deliberately: staff have 2FA and a different
+/// threat model, and reusing one table would blur which surface a token grants.
+model CustomerPasswordReset {
+  id         String    @id @default(uuid())
+  customerId String
+  /// sha256 of the emailed token. Unique so a lookup is a single indexed hit.
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  /// Set the moment the token is spent, which is what makes it single-use.
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([expiresAt])
 }
 
 model Address {

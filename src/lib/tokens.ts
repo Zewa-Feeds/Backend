@@ -80,10 +80,13 @@ const TTLS: Record<TokenType, string> = {
   customer: env.REFRESH_TOKEN_TTL,
 };
 
-function sign(claims: BaseClaims & Record<string, unknown>): string {
+function sign(claims: BaseClaims & Record<string, unknown>, ttl?: string): string {
   const { typ } = claims;
   const options: SignOptions = {
-    expiresIn: TTLS[typ] as SignOptions['expiresIn'],
+    // An explicit ttl only ever comes from a caller that owns the decision —
+    // today that is "remember me" on customer login. Everything else uses the
+    // configured default for its token type.
+    expiresIn: (ttl ?? TTLS[typ]) as SignOptions['expiresIn'],
     issuer: ISSUER,
     algorithm: 'HS256',
   };
@@ -143,8 +146,19 @@ export const verifyPreviewToken = (token: string): PreviewClaims =>
 
 // ---- Customer --------------------------------------------------------------
 
-export const signCustomerToken = (c: Omit<CustomerClaims, 'typ'>): string =>
-  sign({ ...c, typ: 'customer' });
+/**
+ * Storefront session token.
+ *
+ * `remember` swaps the short default TTL for the longer one, which is what backs
+ * the "keep me signed in" tick on the login form. The choice lives in the token's
+ * own expiry rather than in how long the browser keeps it, so a copied token
+ * cannot outlive the session the customer actually agreed to.
+ */
+export const signCustomerToken = (
+  c: Omit<CustomerClaims, 'typ'>,
+  { remember = false }: { remember?: boolean } = {},
+): string =>
+  sign({ ...c, typ: 'customer' }, remember ? env.REFRESH_TOKEN_TTL_REMEMBER : undefined);
 
 export const verifyCustomerToken = (token: string): CustomerClaims =>
   verify<CustomerClaims>(token, 'customer');
