@@ -35,6 +35,19 @@ export interface TransitionField {
   label: string;
   required: boolean;
   maxLength?: number;
+  /**
+   * Must parse as an http(s) URL when present.
+   *
+   * The value is staff-entered free text that ends up in an href on the
+   * customer's order page, so a typo would either render a dead link or, worse,
+   * a `javascript:` one. Rejecting it here tells the person who typed it, while
+   * they still have the box open.
+   */
+  url?: boolean;
+  /** Shown greyed inside the input in the CMS. */
+  placeholder?: string;
+  /** Shown under the input in the CMS. */
+  hint?: string;
 }
 
 export interface TransitionSpec {
@@ -74,9 +87,31 @@ export const TRANSITIONS: Record<Exclude<OrderStatus, 'PENDING'>, TransitionSpec
   [OrderStatus.SHIPPED]: {
     verb: 'Mark shipped',
     fields: [
-      { key: 'carrier', label: 'Shipping Carrier', required: true, maxLength: 60 },
-      { key: 'trackingNumber', label: 'Tracking Number', required: true, maxLength: 60 },
-      { key: 'trackingUrl', label: 'Tracking URL', required: false, maxLength: 500 },
+      {
+        key: 'carrier',
+        label: 'Shipping Carrier',
+        required: true,
+        maxLength: 60,
+        placeholder: 'DTDC, Blue Dart, India Post…',
+        hint: 'Shown to the customer on their order page.',
+      },
+      {
+        key: 'trackingNumber',
+        label: 'Tracking Number',
+        required: true,
+        maxLength: 60,
+        placeholder: 'D77219845611',
+        hint: 'The customer can copy this from their account.',
+      },
+      {
+        key: 'trackingUrl',
+        label: 'Tracking URL',
+        required: false,
+        maxLength: 500,
+        url: true,
+        placeholder: 'https://www.dtdc.in/tracking?ref=D77219845611',
+        hint: 'Optional. Paste the direct tracking link and the customer gets a "Track shipment" button on their order page and in the dispatch email. Leave blank and they only see the number to copy.',
+      },
     ],
     email: {
       subject: 'Your order has shipped',
@@ -151,6 +186,20 @@ export function validateTransitionFields(
       value.length > field.maxLength
     ) {
       errors[field.key] = `${field.label} must be ${field.maxLength} characters or fewer.`;
+      continue;
+    }
+
+    // Optional-but-present URLs still have to be real ones.
+    if (field.url && typeof value === 'string' && value !== '') {
+      let parsed: URL | null = null;
+      try {
+        parsed = new URL(value);
+      } catch {
+        parsed = null;
+      }
+      if (!parsed || (parsed.protocol !== 'https:' && parsed.protocol !== 'http:')) {
+        errors[field.key] = `${field.label} must be a full link starting with https://`;
+      }
     }
   }
 
