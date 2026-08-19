@@ -58,6 +58,19 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
       body: JSON.stringify({
         from: { address: env.ZEPTOMAIL_FROM, name: env.ZEPTOMAIL_FROM_NAME },
         to: input.to.map((t) => ({ email_address: { address: t.email, name: t.name } })),
+        /*
+         * Replies go to a mailbox a human reads, not to the sending address.
+         * Every one of these emails invites a reply ("something wrong with your
+         * order? just reply"), and that promise is only true if the address on
+         * the way back is monitored.
+         */
+        ...(env.ZEPTOMAIL_REPLY_TO
+          ? {
+              reply_to: [
+                { address: env.ZEPTOMAIL_REPLY_TO, name: env.ZEPTOMAIL_REPLY_TO_NAME },
+              ],
+            }
+          : {}),
         subject: input.subject,
         htmlbody: input.htmlBody,
         ...(input.textBody ? { textbody: input.textBody } : {}),

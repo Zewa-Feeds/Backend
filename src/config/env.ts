@@ -115,8 +115,19 @@ const schema = z.object({
   CLOUDINARY_API_SECRET: optionalStr,
 
   ZEPTOMAIL_TOKEN: optionalStr,
+  /** Envelope sender. Must be an address on a domain verified in ZeptoMail. */
   ZEPTOMAIL_FROM: optionalEmail,
   ZEPTOMAIL_FROM_NAME: z.string().default('Zewa Feeds'),
+  /**
+   * Where replies go, when it differs from the sender.
+   *
+   * Order mail is sent from a no-reply-ish `orders@` address so the transactional
+   * stream stays separate, but a customer hitting Reply is asking a human a
+   * question — that has to land in a mailbox someone reads. Optional: leave it
+   * unset and replies go back to ZEPTOMAIL_FROM.
+   */
+  ZEPTOMAIL_REPLY_TO: optionalEmail,
+  ZEPTOMAIL_REPLY_TO_NAME: z.string().default('Zewa Feeds Support'),
 
   SENTRY_DSN: optionalUrl,
 
