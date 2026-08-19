@@ -19,6 +19,7 @@ import { generateInvoicePdf } from '@/integrations/pdf/invoice';
 import * as settingsService from '@/modules/settings/settings.service';
 import { formatAddress } from '@/modules/orders/orders.serializer';
 import { QUEUE_NAMES, type EmailJob } from '@/jobs/queues';
+import { guardWorker } from '@/jobs/workers/guard';
 
 const log = logger.child({ module: 'worker.email' });
 
@@ -206,6 +207,9 @@ export function startEmailWorker(): Worker<EmailJob> {
         .catch(() => undefined);
     }
   });
+
+  // Without this, a Redis outage prints a raw ReplyError several times a second.
+  guardWorker(worker, 'email');
 
   return worker;
 }

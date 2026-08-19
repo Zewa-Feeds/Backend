@@ -18,6 +18,7 @@ import { MockPaymentProvider } from '@/integrations/razorpay/mock.provider';
 import { confirmPayment } from '@/modules/checkout/checkout.service';
 import { transition } from '@/modules/orders/orders.service';
 import { QUEUE_NAMES, type PaymentJob } from '@/jobs/queues';
+import { guardWorker } from '@/jobs/workers/guard';
 
 const log = logger.child({ module: 'worker.payment' });
 
@@ -135,6 +136,9 @@ export function startPaymentWorker(): Worker<PaymentJob> {
   worker.on('failed', (job, err) => {
     log.error({ jobId: job?.id, name: job?.name, err }, 'payment job failed');
   });
+
+  // Without this, a Redis outage prints a raw ReplyError several times a second.
+  guardWorker(worker, 'payment');
 
   return worker;
 }
