@@ -33,6 +33,27 @@ export interface SendEmailResult {
   skipped?: boolean;
 }
 
+/**
+ * Build the Authorization header from whatever form the token was pasted in.
+ *
+ * ZeptoMail's header is `Zoho-enczapikey <token>`, but their dashboard shows the
+ * key on its own in some panels and with the prefix in others. Pasting the bare
+ * key gets a 401 whose message — "Invalid API Token found" — points at the token
+ * being wrong rather than at a missing prefix, which is a long way to go for a
+ * copy-paste. Accept either form and normalise here.
+ *
+ * The comparison is case-insensitive because the docs spell it both
+ * "Zoho-enczapikey" and "zoho-enczapikey".
+ */
+const AUTH_PREFIX = 'Zoho-enczapikey ';
+
+function authHeader(token: string): string {
+  const trimmed = token.trim();
+  return trimmed.toLowerCase().startsWith(AUTH_PREFIX.trim().toLowerCase())
+    ? trimmed
+    : `${AUTH_PREFIX}${trimmed}`;
+}
+
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
   if (!env.ZEPTOMAIL_TOKEN || !env.ZEPTOMAIL_FROM) {
     log.warn(
@@ -50,8 +71,7 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     const response = await fetch(API_URL, {
       method: 'POST',
       headers: {
-        // ZeptoMail expects the token verbatim, including its "Zoho-enczapikey" prefix.
-        Authorization: env.ZEPTOMAIL_TOKEN,
+        Authorization: authHeader(env.ZEPTOMAIL_TOKEN),
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
