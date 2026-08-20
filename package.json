@@ -2,7 +2,7 @@
   "name": "zewa-feeds-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "Zewa Feeds API — one backend serving the storefront (/api/v1) and the CMS (/api/v1/admin).",
+  "description": "Zewa Feeds API \u2014 one backend serving the storefront (/api/v1) and the CMS (/api/v1/admin).",
   "engines": {
     "node": ">=20.0.0"
   },
@@ -27,7 +27,9 @@
     "docker:up": "docker compose -f docker/docker-compose.yml up -d",
     "docker:down": "docker compose -f docker/docker-compose.yml down",
     "docker:logs": "docker compose -f docker/docker-compose.yml logs -f",
-    "docker:nuke": "docker compose -f docker/docker-compose.yml down -v"
+    "docker:nuke": "docker compose -f docker/docker-compose.yml down -v",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@prisma/client": "^6.2.1",
@@ -73,6 +75,7 @@
     "tsc-alias": "^1.9.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.3",
-    "typescript-eslint": "^8.65.0"
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^2.1.9"
   }
 }

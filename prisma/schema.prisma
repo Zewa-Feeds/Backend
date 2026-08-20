@@ -244,6 +244,25 @@ model ProductVariant {
   position Int     @default(0)
   isActive Boolean @default(true)
 
+  /// Which pack this one borrows photography from, when it has none of its own.
+  ///
+  /// A multipack is physically the same item repeated — "45g x 2" is two of the
+  /// 45g bottle — so it legitimately shows the base pack's photos rather than
+  /// needing its own shoot.
+  ///
+  /// This USED to be inferred at render time by stripping an "X2" suffix off the
+  /// SKU. That made a merchandising rule depend on a naming convention: renaming
+  /// G2-45GX2 silently changed which photographs a customer saw. The relationship
+  /// is now data, so a SKU is free to be anything.
+  ///
+  /// SetNull rather than Cascade: retiring the base pack must not delete the
+  /// multipack. It leaves a dangling inheritance the CMS can surface and the
+  /// resolver treats as "no source", which is visible rather than silent.
+  baseVariantId String?
+  /// How many base units this pack contains. 2 for "45g x 2". Display only —
+  /// the resolver keys on baseVariantId, never on this.
+  packMultiplier Int @default(1)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -252,8 +271,13 @@ model ProductVariant {
   /// Pack-specific photography. Shared assets have variantId = NULL instead.
   media      ProductMedia[]
 
+  /// Self-relation for multipack inheritance.
+  baseVariant   ProductVariant?  @relation("PackInheritance", fields: [baseVariantId], references: [id], onDelete: SetNull)
+  derivedPacks  ProductVariant[] @relation("PackInheritance")
+
   @@index([familyId])
   @@index([stock])
+  @@index([baseVariantId])
 }
 
 /// What a ProductMedia row holds. Drives which Cloudinary resource type the

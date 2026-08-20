@@ -15,6 +15,7 @@
  */
 import { Badge, Category, MediaType, ProductStatus, type Prisma } from '@prisma/client';
 import { isEditorOnly } from '@/rbac/permissions';
+import { resolveGallery, type ResolvedItem } from '@/modules/products/media.resolver';
 import type { Role } from '@prisma/client';
 
 // ---- Enum ↔ display string -------------------------------------------------
@@ -115,6 +116,9 @@ export const VARIANT_SELECT = {
   weightGrams: true,
   position: true,
   isActive: true,
+  /** Whose photography this pack borrows when it has none. See media.resolver.ts. */
+  baseVariantId: true,
+  packMultiplier: true,
 } satisfies Prisma.ProductVariantSelect;
 
 export const FAMILY_SELECT = {
@@ -326,6 +330,9 @@ export function serializePublic(family: FamilyRow) {
      * element by `type`, so "photo, video, photo, photo" needs no special case.
      */
     media: family.media.map((m) => ({
+      /* Stable identifier. The client keys the hero and de-duplication on this
+         rather than on the URL, since two records can legitimately share a file. */
+      id: m.id,
       type: m.type,
       url: m.url,
       alt: m.alt,
@@ -353,6 +360,39 @@ export function serializePublic(family: FamilyRow) {
     packs: variants.map((v) => ({
       sku: v.sku,
       pack: v.pack,
+      /*
+       * The gallery this pack actually shows, resolved on the server.
+       *
+       * The storefront used to work this out itself — filtering by SKU, deriving
+       * multipack inheritance from an "X2" suffix, and falling back to the whole
+       * gallery when a pack had no photography of its own. That last rule showed
+       * customers a 1kg pouch when they had selected a 45g bottle.
+       *
+       * Sending the resolved result means one implementation of the rules, shared
+       * by the storefront, SSR and the CMS preview. `coverage` says WHY this
+       * gallery is what it is, which is what lets the CMS report gaps instead of
+       * hiding them.
+       */
+      gallery: (() => {
+        const r = resolveGallery(family.media, v);
+        return {
+          coverage: r.coverage,
+          inheritedFromSku:
+            variants.find((x) => x.id === r.inheritedFromVariantId)?.sku ?? null,
+          heroMediaId: r.heroMediaId,
+          items: r.items.map((m: ResolvedItem) => ({
+            id: m.id,
+            type: m.type,
+            url: m.url,
+            alt: m.alt,
+            width: m.width ?? null,
+            height: m.height ?? null,
+            posterUrl: m.posterUrl ?? null,
+            source: m.source,
+            isPrimary: m.isPrimary,
+          })),
+        };
+      })(),
       pricePaise: v.pricePaise,
       mrpPaise: v.mrpPaise,
       price: toRupees(v.pricePaise),
