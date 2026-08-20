@@ -39,7 +39,14 @@ async function inRollback<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): 
  * commit a namespaced product and delete it afterwards, which is the only way to
  * exercise the real function rather than a copy of it.
  */
-async function withProduct<T>(fn: (slug: string, ids: Record<string, string>) => Promise<T>): Promise<T> {
+interface SeedIds {
+  familyId: string;
+  base: string;
+  twin: string;
+  kilo: string;
+}
+
+async function withProduct<T>(fn: (slug: string, ids: SeedIds) => Promise<T>): Promise<T> {
   const ns = `${TAG}-${Math.random().toString(36).slice(2, 8)}`;
   const family = await prisma.productFamily.create({
     data: { slug: ns, name: 'Preview Test', shortDesc: 'x', category: 'BETTA', status: 'DRAFT' },
