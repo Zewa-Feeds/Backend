@@ -9,7 +9,10 @@
  * Client-supplied prices are never trusted. The request says *what* and *how many*;
  * everything monetary is looked up server-side.
  */
-import { MediaType, ProductStatus } from '@prisma/client';
+import { MediaStatus, ProductStatus } from '@prisma/client';
+import { resolveGallery } from '@/modules/products/media.resolver';
+import { toResolvable, type TargetableMediaRow } from '@/modules/products/media.integrity';
+import { pickHero } from '@/modules/products/media.presentation';
 import { prisma } from '@/lib/prisma';
 import { AppError, ErrorCode } from '@/lib/errors';
 import * as settingsService from '@/modules/settings/settings.service';
@@ -90,6 +93,10 @@ export async function priceCart(input: {
       mrpPaise: true,
       stock: true,
       hsn: true,
+      /* Inheritance and the chosen main image, so the thumbnail is resolved for
+         THIS pack rather than for the product as a whole. */
+      baseVariantId: true,
+      heroMediaId: true,
       family: {
         select: {
           id: true,
@@ -97,13 +104,33 @@ export async function priceCart(input: {
           slug: true,
           status: true,
           deletedAt: true,
-          // Cart thumbnail: the first IMAGE, never the video — a video URL in an
-          // <img> renders as a broken thumbnail.
+          /*
+           * The whole live gallery, resolved per pack below.
+           *
+           * This used to take the family's first IMAGE by position — the same
+           * picture for every pack of a product. Someone adding Cichlid C4's
+           * 45g bottle to their basket saw a 1kg pouch in the cart, at
+           * checkout, and in the confirmation, after a listing and a product
+           * page that both correctly showed the 45g.
+           *
+           * ARCHIVED is excluded: an asset an operator removed must not
+           * reappear as a cart thumbnail.
+           */
           media: {
-            where: { type: MediaType.IMAGE },
-            select: { url: true },
+            where: { status: { not: MediaStatus.ARCHIVED } },
+            select: {
+              id: true,
+              type: true,
+              url: true,
+              alt: true,
+              position: true,
+              variantId: true,
+              posterUrl: true,
+              width: true,
+              height: true,
+              variantLinks: { select: { variantId: true } },
+            },
             orderBy: { position: 'asc' },
-            take: 1,
           },
         },
       },
@@ -169,7 +196,7 @@ export async function priceCart(input: {
       hsn: variant.hsn,
       taxRatePct: taxSettings.gstRatePct,
       availableStock: variant.stock,
-      imageUrl: variant.family.media[0]?.url ?? null,
+      imageUrl: packThumbnail(variant),
     });
   }
 
@@ -260,4 +287,29 @@ export function assertFulfillable(cart: PricedCart): void {
   if (cart.lines.length === 0) {
     throw new AppError(400, ErrorCode.CART_EMPTY, 'Your cart is empty.');
   }
+}
+
+
+/**
+ * The thumbnail for one cart line.
+ *
+ * Goes through the canonical resolver and the presentation layer, exactly as the
+ * listing card and the product page do, so all three agree about what a shopper
+ * is buying. An IMAGE or nothing: a video URL in an <img> renders as a broken
+ * thumbnail, and a pack with no suitable photography is better represented by a
+ * gap the storefront fills with a placeholder than by another pack's photo.
+ */
+function packThumbnail(variant: {
+  id: string;
+  sku: string;
+  baseVariantId: string | null;
+  heroMediaId: string | null;
+  family: { media: TargetableMediaRow[] };
+}): string | null {
+  const gallery = resolveGallery(toResolvable(variant.family.media), {
+    id: variant.id,
+    sku: variant.sku,
+    baseVariantId: variant.baseVariantId,
+  });
+  return pickHero(gallery, { heroMediaId: variant.heroMediaId })?.url ?? null;
 }

@@ -19,7 +19,7 @@ import { AppError } from '@/lib/errors';
 import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
 import { checkHero, reconcileMedia } from '@/modules/products/media.integrity';
 import { resolveGallery, type ResolvableMedia } from '@/modules/products/media.resolver';
-import { presentListing } from '@/modules/products/media.presentation';
+import { presentDetail, presentListing } from '@/modules/products/media.presentation';
 import { listMeta, toSkipTake } from '@/middleware/validate';
 import { destroyAssets } from '@/integrations/cloudinary/cloudinary.service';
 import type { Role } from '@prisma/client';
@@ -327,7 +327,16 @@ export async function previewMedia(
        */
       const chosen =
         v.heroMediaId && r.items.some((m) => m.id === v.heroMediaId) ? v.heroMediaId : null;
-      const heroMediaId = chosen ?? r.heroMediaId;
+
+      /*
+       * Order and hero from the SAME function the product page uses, so the
+       * panel is what a customer would actually see rather than the raw gallery
+       * in CMS order. `items` deliberately stays in CMS order — that is the
+       * operator's arrangement and what the rest of the editor reads — and the
+       * presentation view sits alongside it.
+       */
+      const presentation = presentDetail(r, v);
+      const heroMediaId = presentation.heroId;
 
       return {
         sku: v.sku,
@@ -338,7 +347,13 @@ export async function previewMedia(
           : null,
         heroMediaId,
         /** Whether that is the operator's pick or the resolver's default. */
-        heroIsExplicit: Boolean(chosen),
+        heroIsExplicit: Boolean(chosen) && chosen === heroMediaId,
+        presentation: {
+          orderedIds: presentation.orderedIds,
+          heroId: presentation.heroId,
+          videoId: presentation.videoId,
+          videoSource: presentation.videoSource,
+        },
         items: r.items.map((m) => ({
           id: m.id,
           type: m.type,
