@@ -12,7 +12,7 @@
  */
 import { afterAll, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { MediaType, PrismaClient, ProductStatus } from '@prisma/client';
-import { saveDraft, publish } from './products.service';
+import { saveDraft, publish, setStatus } from './products.service';
 import { productBodySchema } from './products.schemas';
 import * as revalidate from '@/integrations/storefront/revalidate';
 import type { Role } from '@prisma/client';
@@ -190,6 +190,100 @@ describe('publish', () => {
       await publish(b.slug, id, ctxFor(id), ADMIN);
       expect(purge).toHaveBeenCalledWith(b.slug);
     });
+  });
+});
+
+describe('publishedAt has one meaning', () => {
+  /*
+   * "The moment this product's content first became customer-visible."
+   *
+   * Three paths used to disagree: setStatus() and applyToLive() stamped it when
+   * a product went ACTIVE, and saveDraft()'s status branch stamped nothing — so
+   * the same operator action left different rows behind depending on which
+   * button was used, and a product could be on sale with publishedAt NULL while
+   * its slug was still rewritable.
+   */
+  it('is stamped when Save Draft makes a product visible', async () => {
+    await withProduct({ published: false }, async (b) => {
+      const id = await actor();
+      await prisma.productFamily.update({ where: { id: b.familyId }, data: { status: ProductStatus.DRAFT } });
+
+      await saveDraft(b.slug, body(b, { status: 'Active' }), id, ctxFor(id), ADMIN);
+
+      const after = await state(b.familyId);
+      expect(after.status).toBe(ProductStatus.ACTIVE);
+      expect(after.publishedAt).not.toBeNull();
+    });
+  });
+
+  it('counts COMING_SOON as visible — it is a public, linkable page', async () => {
+    await withProduct({ published: false }, async (b) => {
+      const id = await actor();
+      await prisma.productFamily.update({ where: { id: b.familyId }, data: { status: ProductStatus.DRAFT } });
+
+      await saveDraft(b.slug, body(b, { status: 'Coming Soon' }), id, ctxFor(id), ADMIN);
+
+      const after = await state(b.familyId);
+      expect(after.status).toBe(ProductStatus.COMING_SOON);
+      expect(after.publishedAt).not.toBeNull();
+    });
+  });
+
+  it('is NOT stamped by a status that hides the product', async () => {
+    await withProduct({ published: false }, async (b) => {
+      const id = await actor();
+      await prisma.productFamily.update({ where: { id: b.familyId }, data: { status: ProductStatus.DRAFT } });
+
+      await saveDraft(b.slug, body(b, { status: 'Inactive' }), id, ctxFor(id), ADMIN);
+
+      const after = await state(b.familyId);
+      expect(after.status).toBe(ProductStatus.INACTIVE);
+      expect(after.publishedAt).toBeNull();
+    });
+  });
+
+  it('never moves once set — it is a first-publication timestamp', async () => {
+    await withProduct({ published: true }, async (b) => {
+      const id = await actor();
+      const before = await state(b.familyId);
+
+      await saveDraft(b.slug, body(b, { status: 'Inactive' }), id, ctxFor(id), ADMIN);
+      await saveDraft(b.slug, body(b, { status: 'Active' }), id, ctxFor(id), ADMIN);
+      await publish(b.slug, id, ctxFor(id), ADMIN);
+
+      expect((await state(b.familyId)).publishedAt).toEqual(before.publishedAt);
+    });
+  });
+
+  it('making a product visible publishes the PRODUCT, never the pending draft', async () => {
+    await withProduct({ published: false }, async (b) => {
+      const id = await actor();
+      await prisma.productFamily.update({ where: { id: b.familyId }, data: { status: ProductStatus.DRAFT } });
+
+      // Edited copy and a gallery sit in the overlay; the status flips to visible.
+      await saveDraft(b.slug, body(b, { status: 'Active' }), id, ctxFor(id), ADMIN);
+
+      const after = await state(b.familyId);
+      expect(after.status).toBe(ProductStatus.ACTIVE);
+      // Live content is untouched: the draft still has to be published.
+      expect(after.shortDesc).toBe('original');
+      expect(after._count.media).toBe(0);
+      expect(after.draft).not.toBeNull();
+    });
+  });
+
+  it('setStatus and Save Draft agree', async () => {
+    const stamp = async (useSetStatus: boolean) =>
+      withProduct({ published: false }, async (b) => {
+        const id = await actor();
+        await prisma.productFamily.update({ where: { id: b.familyId }, data: { status: ProductStatus.DRAFT } });
+        if (useSetStatus) await setStatus(b.slug, ProductStatus.ACTIVE, id, ctxFor(id), ADMIN);
+        else await saveDraft(b.slug, body(b, { status: 'Active' }), id, ctxFor(id), ADMIN);
+        const after = await state(b.familyId);
+        return { status: after.status, stamped: after.publishedAt !== null };
+      });
+
+    expect(await stamp(true)).toEqual(await stamp(false));
   });
 });
 

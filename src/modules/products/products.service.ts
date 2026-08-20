@@ -492,6 +492,42 @@ export async function create(body: ProductBody, actorId: string, ctx: AuditConte
 }
 
 /**
+ * Statuses a customer can actually see.
+ *
+ * The storefront filters on status alone — `publishedAt` has never gated
+ * visibility — so these two are what "live" means. DRAFT, INACTIVE and
+ * DISCONTINUED are invisible.
+ */
+const CUSTOMER_VISIBLE: ProductStatus[] = [ProductStatus.ACTIVE, ProductStatus.COMING_SOON];
+
+/**
+ * `publishedAt` has exactly one meaning: the moment this product's content
+ * FIRST became customer-visible.
+ *
+ * It used to mean three things depending on which path you took. `setStatus()`
+ * stamped it when a product went ACTIVE; `applyToLive()` stamped it on the same
+ * condition; the status branch of `saveDraft()` stamped nothing at all. So the
+ * same operator action — choosing "Active" in the editor versus through the
+ * status endpoint — left different rows behind, and a product could be on sale
+ * with `publishedAt` still NULL. That mattered beyond tidiness: the slug lock
+ * ("editable only before first publish") reads this column, so a product could
+ * be public and still have a rewritable URL.
+ *
+ * COMING_SOON counts. It is a listed, linkable, indexable page; treating only
+ * ACTIVE as publication meant a teased product had a mutable slug.
+ *
+ * Stamped once and never moved: it is a first-publication timestamp, not a
+ * last-modified one.
+ */
+function firstPublishStamp(
+  next: ProductStatus | undefined,
+  current: Date | null,
+): { publishedAt?: Date } {
+  if (!next || current) return {};
+  return CUSTOMER_VISIBLE.includes(next) ? { publishedAt: new Date() } : {};
+}
+
+/**
  * Save an edit (§5.2).
  *
  * Always writes the draft overlay, whatever the product's state. Live content
@@ -567,7 +603,20 @@ export async function saveDraft(
     if (statusChanged) {
       await tx.productFamily.update({
         where: { id: existing.id },
-        data: { status: body.status, updatedById: actorId },
+        data: {
+          status: body.status,
+          /*
+           * Making a product visible IS its first publication, so the timestamp
+           * is stamped here too — the same rule `setStatus()` applies.
+           *
+           * This publishes the product, NOT the pending draft: customers see the
+           * live rows, and the operator's unsaved-to-live edits stay in the
+           * overlay until Publish. Those are different things and only one of
+           * them happens here.
+           */
+          ...firstPublishStamp(body.status, existing.publishedAt),
+          updatedById: actorId,
+        },
       });
       await writeAudit(
         ctx,
@@ -729,10 +778,8 @@ export async function setStatus(
       where: { id: family.id },
       data: {
         status,
-        // Going ACTIVE for the first time counts as publishing.
-        ...(status === ProductStatus.ACTIVE && !family.publishedAt
-          ? { publishedAt: new Date() }
-          : {}),
+        // One rule, shared with saveDraft() and applyToLive(). See firstPublishStamp.
+        ...firstPublishStamp(status, family.publishedAt),
         updatedById: actorId,
       },
       select: FAMILY_SELECT,
@@ -889,9 +936,7 @@ async function applyToLive(
     data: {
       ...familyData(body),
       ...(body.status ? { status: body.status } : {}),
-      ...(body.status === ProductStatus.ACTIVE && !current.publishedAt
-        ? { publishedAt: new Date() }
-        : {}),
+      ...firstPublishStamp(body.status, current.publishedAt),
       updatedById: actorId,
     },
   });
@@ -904,19 +949,49 @@ async function applyToLive(
   const existingBySku = new Map(existing.map((v) => [v.sku, v]));
 
   /**
-   * Which pack each payload entry refers to.
+   * Which existing pack each payload entry refers to.
    *
-   * IDENTITY FIRST, SKU ONLY AS A FALLBACK.
+   * IDENTITY FIRST, SKU ONLY AS A FALLBACK, AND EACH ROW CLAIMED ONCE.
    *
    * Matching on SKU alone meant renaming a pack created a second variant and
    * deactivated the first, stranding every photograph on the deactivated row.
    * The id says which pack this IS; the SKU is a label operators may correct.
    *
-   * The id is trusted only when it belongs to THIS family — a payload naming
-   * another product's variant must never reach an update.
+   * TWO PASSES, not one, and this is the whole subtlety. Consider a single save
+   * that renames A to B and adds a new pack reusing the freed name A. With one
+   * pass the outcome depended on payload order: the new entry could match A's
+   * row through the pre-loop SKU map — a map that no longer describes the
+   * database — and either undo the rename or steal the renamed row's identity
+   * along with all of its photography. Resolving every id first, then filling in
+   * by SKU from what is left, makes the result the same in either order.
+   *
+   * `claimed` is what stops two entries resolving to one row. The same guard
+   * exists in `matchExisting` for media, for the same reason.
+   *
+   * An id is honoured only when it belongs to THIS family: `existingById` is
+   * built from `where: { familyId }`, so a payload naming another product's
+   * variant simply misses and falls through to SKU.
    */
-  const match = (v: ProductBody['variants'][number]) =>
-    (v.id ? existingById.get(v.id) : undefined) ?? existingBySku.get(v.sku);
+  const resolved = new Map<number, { id: string; sku: string }>();
+  const claimed = new Set<string>();
+
+  body.variants.forEach((v, i) => {
+    if (!v.id) return;
+    const row = existingById.get(v.id);
+    if (row && !claimed.has(row.id)) {
+      resolved.set(i, row);
+      claimed.add(row.id);
+    }
+  });
+
+  body.variants.forEach((v, i) => {
+    if (resolved.has(i)) return;
+    const row = existingBySku.get(v.sku);
+    if (row && !claimed.has(row.id)) {
+      resolved.set(i, row);
+      claimed.add(row.id);
+    }
+  });
 
   /**
    * Old SKU -> new SKU for anything renamed in this save.
@@ -925,36 +1000,56 @@ async function applyToLive(
    * pointing at a name that no longer exists — and `targetVariantIds` drops
    * unknown names, which would silently turn pack photography into shared
    * photography. The alias keeps those references resolvable.
+   *
+   * A freed name that another pack takes over in the same save is NOT aliased:
+   * `renamedFrom` is only consulted for names that no live variant answers to,
+   * so the new owner wins and the alias never competes with it.
    */
   const renamedFrom = new Map<string, string>();
 
   const keptIds = new Set<string>();
 
-  for (const [i, v] of body.variants.entries()) {
-    const data = {
-      pack: v.pack,
-      mrpPaise: toPaise(v.mrp),
-      pricePaise: toPaise(v.price),
-      stock: v.stock,
-      hsn: v.hsn,
-      weightGrams: v.weightGrams ?? null,
-      position: i,
-      isActive: v.isActive,
-    };
+  const fields = (v: ProductBody['variants'][number], i: number) => ({
+    pack: v.pack,
+    mrpPaise: toPaise(v.mrp),
+    pricePaise: toPaise(v.price),
+    stock: v.stock,
+    hsn: v.hsn,
+    weightGrams: v.weightGrams ?? null,
+    position: i,
+    isActive: v.isActive,
+  });
 
-    const row = match(v);
-    if (row) {
-      keptIds.add(row.id);
-      if (row.sku !== v.sku) renamedFrom.set(row.sku, v.sku);
-      // `sku` is written too: this is the rename.
-      await tx.productVariant.update({ where: { id: row.id }, data: { ...data, sku: v.sku } });
-    } else {
-      const created = await tx.productVariant.create({
-        data: { ...data, familyId, sku: v.sku },
-        select: { id: true },
-      });
-      keptIds.add(created.id);
-    }
+  /*
+   * UPDATES BEFORE CREATES, and this ordering is load-bearing.
+   *
+   * SKU is unique. If one save renames A to B while a new pack takes over the
+   * freed name A, creating the new row first collides with the row that still
+   * holds A — the insert fails and the whole save is rejected. Applying the
+   * rename first frees the name, and the create then succeeds.
+   *
+   * `position` comes from the payload index, so the two phases cannot disturb
+   * the operator's ordering.
+   */
+  for (const [i, v] of body.variants.entries()) {
+    const row = resolved.get(i);
+    if (!row) continue;
+    keptIds.add(row.id);
+    if (row.sku !== v.sku) renamedFrom.set(row.sku, v.sku);
+    // `sku` is written too: this is the rename.
+    await tx.productVariant.update({
+      where: { id: row.id },
+      data: { ...fields(v, i), sku: v.sku },
+    });
+  }
+
+  for (const [i, v] of body.variants.entries()) {
+    if (resolved.has(i)) continue;
+    const created = await tx.productVariant.create({
+      data: { ...fields(v, i), familyId, sku: v.sku },
+      select: { id: true },
+    });
+    keptIds.add(created.id);
   }
 
   /*
@@ -1116,6 +1211,9 @@ async function applyMediaToLive(
    * another product.
    */
   for (const [oldSku, newSku] of renamedFrom) {
+    // Never shadow a live pack: if another variant now answers to the freed
+    // name, that variant owns it and the alias must not steal it back.
+    if (skuToId.has(oldSku.toUpperCase())) continue;
     const id = skuToId.get(newSku.toUpperCase());
     if (id) skuToId.set(oldSku.toUpperCase(), id);
   }

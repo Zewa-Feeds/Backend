@@ -103,6 +103,29 @@ const live = (familyId: string) => prisma.productFamily.findUniqueOrThrow({
   },
 });
 
+/**
+ * Attach a photograph to a pack directly.
+ *
+ * Setup only. These tests are about what a RENAME does to existing
+ * relationships, so getting a photograph in place does not need to go through
+ * saveDraft + publish — two multi-query transactions against a remote database,
+ * per test, to arrange a state Prisma can write in two statements. The rename
+ * itself still goes through the real service path, which is the thing under
+ * test. `media.integrity.test.ts` covers the assignment machinery.
+ */
+async function seedMedia(familyId: string, url: string, variantId: string | null, position = 0) {
+  const row = await prisma.productMedia.create({
+    data: {
+      familyId, type: MediaType.IMAGE, url, alt: 'a', position,
+      // Both mechanisms, exactly as reconcileMedia writes them during dual-read.
+      variantId,
+      ...(variantId ? { variantLinks: { create: { variantId } } } : {}),
+    },
+    select: { id: true },
+  });
+  return row.id;
+}
+
 /** Save then publish, so the payload reaches the live rows. */
 async function saveAndPublish(slug: string, payload: never) {
   const id = await actor();
@@ -157,13 +180,11 @@ describe('renaming a SKU', () => {
 
   it('keeps the ProductMediaVariant assignments', async () => {
     await withProduct(async (b) => {
-      // Photograph the base pack first.
-      await saveAndPublish(b.slug, body(b,
-        [{ sku: b.base, pack: '45g Bottle' }, { sku: b.twin, pack: '45g x 2' }, { sku: b.kilo, pack: '1kg Pouch' }],
-        [{ url: `${CDN}/bottle.jpg`, skus: [b.base] }]));
+      const before = await live(b.familyId);
+      const baseRow = before.variants.find((v) => v.sku === b.base)!;
+      await seedMedia(b.familyId, `${CDN}/bottle.jpg`, baseRow.id);
 
       const mid = await live(b.familyId);
-      const baseRow = mid.variants.find((v) => v.sku === b.base)!;
       const asset = mid.media[0]!;
       expect(asset.variantLinks.map((l) => l.variantId)).toEqual([baseRow.id]);
 
@@ -182,13 +203,10 @@ describe('renaming a SKU', () => {
 
   it('keeps the legacy variantId in step', async () => {
     await withProduct(async (b) => {
-      await saveAndPublish(b.slug, body(b,
-        [{ sku: b.base, pack: '45g Bottle' }, { sku: b.twin, pack: '45g x 2' }, { sku: b.kilo, pack: '1kg Pouch' }],
-        [{ url: `${CDN}/bottle.jpg`, skus: [b.base] }]));
-
-      const mid = await live(b.familyId);
-      const baseRow = mid.variants.find((v) => v.sku === b.base)!;
-      const asset = mid.media[0]!;
+      const before = await live(b.familyId);
+      const baseRow = before.variants.find((v) => v.sku === b.base)!;
+      await seedMedia(b.familyId, `${CDN}/bottle.jpg`, baseRow.id);
+      const asset = (await live(b.familyId)).media[0]!;
 
       await saveAndPublish(b.slug, body(b,
         [{ id: baseRow.id, sku: `${b.base}NEW`, pack: '45g Bottle' },
@@ -202,12 +220,11 @@ describe('renaming a SKU', () => {
 
   it('keeps the chosen main image', async () => {
     await withProduct(async (b) => {
-      await saveAndPublish(b.slug, body(b,
-        [{ sku: b.base, pack: '45g Bottle' }, { sku: b.twin, pack: '45g x 2' }, { sku: b.kilo, pack: '1kg Pouch' }],
-        [{ url: `${CDN}/a.jpg`, skus: [b.base] }, { url: `${CDN}/b.jpg`, skus: [b.base] }]));
+      const baseRow = (await live(b.familyId)).variants.find((v) => v.sku === b.base)!;
+      await seedMedia(b.familyId, `${CDN}/a.jpg`, baseRow.id, 0);
+      await seedMedia(b.familyId, `${CDN}/b.jpg`, baseRow.id, 1);
 
       const mid = await live(b.familyId);
-      const baseRow = mid.variants.find((v) => v.sku === b.base)!;
       const starred = mid.media.find((m) => m.url.endsWith('b.jpg'))!;
 
       await saveAndPublish(b.slug, body(b,
@@ -239,9 +256,10 @@ describe('renaming a SKU', () => {
 
   it('leaves the resolved gallery identical — the whole point', async () => {
     await withProduct(async (b) => {
-      await saveAndPublish(b.slug, body(b,
-        [{ sku: b.base, pack: '45g Bottle' }, { sku: b.twin, pack: '45g x 2' }, { sku: b.kilo, pack: '1kg Pouch' }],
-        [{ url: `${CDN}/bottle.jpg`, skus: [b.base] }, { url: `${CDN}/fish.jpg`, skus: [] }]));
+      const seed = await live(b.familyId);
+      const baseRow0 = seed.variants.find((v) => v.sku === b.base)!;
+      await seedMedia(b.familyId, `${CDN}/bottle.jpg`, baseRow0.id, 0);
+      await seedMedia(b.familyId, `${CDN}/fish.jpg`, null, 1);
 
       const mid = await live(b.familyId);
       const baseRow = mid.variants.find((v) => v.sku === b.base)!;
@@ -265,6 +283,74 @@ describe('renaming a SKU', () => {
       expect(afterBase.items.map((m) => m.url)).toEqual(beforeBase.items.map((m) => m.url));
       expect(afterTwin.coverage).toBe(beforeTwin.coverage);
       expect(afterTwin.items.map((m) => m.url)).toEqual(beforeTwin.items.map((m) => m.url));
+    });
+  });
+
+  it('handles a rename AND a new pack reusing the freed SKU in one save', async () => {
+    /*
+     * The collision case. A -> B, and a brand-new pack takes over the name A.
+     *
+     * Both payload entries used to resolve to the SAME existing row, because the
+     * SKU map was built before the loop and nothing stopped a second claim: the
+     * rename was either undone or its identity — and all of its photography —
+     * was handed to what should have been a new pack. The outcome even depended
+     * on payload order.
+     */
+    await withProduct(async (b) => {
+      const before = await live(b.familyId);
+      const baseRow = before.variants.find((v) => v.sku === b.base)!;
+
+      // Photograph the pack first, so we can prove the photo follows identity.
+      await seedMedia(b.familyId, `${CDN}/original.jpg`, baseRow.id);
+
+      const withPhoto = await live(b.familyId);
+      const asset = withPhoto.media.find((m) => m.url.endsWith('original.jpg'))!;
+      expect(asset.variantLinks.map((l) => l.variantId)).toEqual([baseRow.id]);
+
+      // Rename A -> B, and introduce a NEW pack that reuses A.
+      await saveAndPublish(b.slug, body(b,
+        [{ id: baseRow.id, sku: `${b.base}B`, pack: '45g Bottle' },
+         { sku: b.base, pack: 'New pack reusing the old name' },
+         { sku: b.twin, pack: '45g x 2' }, { sku: b.kilo, pack: '1kg Pouch' }],
+        [{ id: asset.id, url: `${CDN}/original.jpg`, skus: [`${b.base}B`] }]));
+
+      const after = await live(b.familyId);
+      const renamed = after.variants.find((v) => v.sku === `${b.base}B`)!;
+      const reused = after.variants.find((v) => v.sku === b.base)!;
+
+      // The original row IS the renamed pack.
+      expect(renamed.id).toBe(baseRow.id);
+      // The reused name belongs to a genuinely new row.
+      expect(reused.id).not.toBe(baseRow.id);
+      // Four packs, four distinct identities.
+      expect(after.variants).toHaveLength(4);
+      expect(new Set(after.variants.map((v) => v.id)).size).toBe(4);
+      // Neither was deactivated.
+      expect(renamed.isActive).toBe(true);
+      expect(reused.isActive).toBe(true);
+      // The photograph followed identity, not the name.
+      const still = after.media.find((m) => m.id === asset.id)!;
+      expect(still.variantLinks.map((l) => l.variantId)).toEqual([baseRow.id]);
+      expect(still.variantId).toBe(baseRow.id);
+    });
+  });
+
+  it('gives the same answer whichever order the two entries arrive in', async () => {
+    await withProduct(async (b) => {
+      const baseRow = (await live(b.familyId)).variants.find((v) => v.sku === b.base)!;
+
+      // New pack listed FIRST, rename second — the order that used to lose.
+      await saveAndPublish(b.slug, body(b,
+        [{ sku: b.base, pack: 'New pack reusing the old name' },
+         { id: baseRow.id, sku: `${b.base}B`, pack: '45g Bottle' },
+         { sku: b.twin, pack: '45g x 2' }, { sku: b.kilo, pack: '1kg Pouch' }],
+        []));
+
+      const after = await live(b.familyId);
+      expect(after.variants.find((v) => v.sku === `${b.base}B`)!.id).toBe(baseRow.id);
+      expect(after.variants.find((v) => v.sku === b.base)!.id).not.toBe(baseRow.id);
+      expect(after.variants).toHaveLength(4);
+      expect(after.variants.every((v) => v.isActive)).toBe(true);
     });
   });
 
