@@ -62,6 +62,14 @@ const schema = z.object({
 
   // ---- CORS ---------------------------------------------------------------
   STOREFRONT_ORIGIN: z.string().url(),
+  /**
+   * Shared secret for the storefront's /api/revalidate route.
+   *
+   * Optional: without it the hook is skipped and caches expire on their own
+   * timers, which is the behaviour before this existed. Setting it is what makes
+   * a publish visible to customers immediately.
+   */
+  REVALIDATE_SECRET: optionalStr,
   CMS_ORIGIN: z.string().url(),
   /** Extra allowed origins (local dev ports, preview deploys). Optional. */
   EXTRA_CORS_ORIGINS: csv.optional().default(''),

@@ -71,6 +71,19 @@ const rupees = z.coerce
 
 export const variantSchema = z
   .object({
+    /**
+     * Stable identity, so a pack survives being renamed.
+     *
+     * Variants used to be reconciled by SKU alone: renaming one created a NEW
+     * variant and deactivated the old, and every photograph stayed attached to
+     * the deactivated row — a pack's whole gallery vanished from the storefront
+     * and from the editor, silently. The id is what the pack IS; the SKU is a
+     * label on it that operators are allowed to correct.
+     *
+     * Optional: a variant added in the editor has no id until it is saved, and
+     * an older client may not send one. Both fall back to matching by SKU.
+     */
+    id: z.string().uuid().optional().nullable(),
     sku: skuSchema,
     pack: z.string().trim().min(1, 'Pack size is required.').max(40).transform(plainText),
     mrp: rupees,

@@ -22,6 +22,7 @@ import { resolveGallery, type ResolvableMedia } from '@/modules/products/media.r
 import { presentDetail, presentListing } from '@/modules/products/media.presentation';
 import { listMeta, toSkipTake } from '@/middleware/validate';
 import { destroyAssets } from '@/integrations/cloudinary/cloudinary.service';
+import { revalidateStorefront } from '@/integrations/storefront/revalidate';
 import type { Role } from '@prisma/client';
 import {
   FAMILY_SELECT,
@@ -483,15 +484,23 @@ export async function create(body: ProductBody, actorId: string, ctx: AuditConte
     return family;
   });
 
+  /* create() writes live rows, so a new product must appear on the grid without
+     waiting out the hour. Slug-less: the listing and homepage are what change. */
+  await revalidateStorefront();
+
   return serializeFamily(created, role);
 }
 
 /**
  * Save an edit (§5.2).
  *
- * Routing depends on whether the product is live:
- *   - never published → write through to the live rows
- *   - published       → write to the draft overlay, leaving live untouched
+ * Always writes the draft overlay, whatever the product's state. Live content
+ * and `publishedAt` change in exactly one place — `publish()`.
+ *
+ * The one exception is `status`, which applies immediately and deliberately;
+ * see the comment inside. It decides whether the product is listed at all, not
+ * what the listing says, and taking something off sale must not require
+ * publishing unrelated draft edits.
  */
 export async function saveDraft(
   slug: string,
@@ -517,9 +526,27 @@ export async function saveDraft(
     );
   }
 
-  const isLive = Boolean(existing.publishedAt);
+  /*
+   * SAVE NEVER PUBLISHES.
+   *
+   * This used to branch on `publishedAt`: a product that had never been
+   * published was treated as "safe to write through", so Save Draft applied the
+   * whole payload to the live rows AND stamped publishedAt — publishing it. The
+   * editor says "Nothing goes live on save alone" directly above the button,
+   * and for nine of the thirteen products in the catalogue that was untrue.
+   *
+   * Every save now writes the overlay and nothing else. `publish()` is the only
+   * path that touches live content or publishedAt.
+   */
+  await assertSkusAvailable(
+    body.variants.map((v) => v.sku),
+    existing.id,
+  );
 
-  if (isLive) {
+  /** Set inside the transaction; acted on after it commits. */
+  let purge = false;
+
+  await prisma.$transaction(async (tx) => {
     /*
      * STATUS IS NOT EDITORIAL CONTENT — it applies IMMEDIATELY, even on a live
      * product, and is never held in the overlay.
@@ -531,85 +558,62 @@ export async function saveDraft(
      * the dropdown snapped back and the product stayed on sale. Taking something
      * off sale must not require publishing unrelated draft edits.
      *
-     * This matches the dedicated setStatus() endpoint, which always wrote live.
+     * It no longer sets publishedAt as a side effect. Making a product visible
+     * and publishing pending edits are separate acts, and conflating them is
+     * what let a save go live.
      */
     const statusChanged = Boolean(body.status) && body.status !== existing.status;
 
-    await prisma.$transaction(async (tx) => {
-      if (statusChanged) {
-        await tx.productFamily.update({
-          where: { id: existing.id },
-          data: {
-            status: body.status,
-            // First time going ACTIVE counts as publishing.
-            ...(body.status === ProductStatus.ACTIVE && !existing.publishedAt
-              ? { publishedAt: new Date() }
-              : {}),
-            updatedById: actorId,
-          },
-        });
-        await writeAudit(
-          ctx,
-          {
-            module: AuditModule.PRODUCTS,
-            action: `Changed status of "${existing.name}" to ${body.status}`,
-            recordId: slug,
-          },
-          tx,
-        );
-      }
-
-      await tx.productDraft.upsert({
-        where: { familyId: existing.id },
-        create: {
-          familyId: existing.id,
-          payload: body as unknown as Prisma.InputJsonValue,
-          updatedById: actorId,
-        },
-        update: { payload: body as unknown as Prisma.InputJsonValue, updatedById: actorId },
+    if (statusChanged) {
+      await tx.productFamily.update({
+        where: { id: existing.id },
+        data: { status: body.status, updatedById: actorId },
       });
       await writeAudit(
         ctx,
         {
           module: AuditModule.PRODUCTS,
-          action: `Saved draft changes to "${existing.name}"`,
+          action: `Changed status of "${existing.name}" to ${body.status}`,
           recordId: slug,
         },
         tx,
       );
-    });
+    }
 
-    return bySlug(slug, role);
-  }
-
-  // Not yet live — safe to write through.
-  await assertSkusAvailable(
-    body.variants.map((v) => v.sku),
-    existing.id,
-  );
-
-  // Per-request, so concurrent saves cannot destroy each other's assets.
-  const orphaned: string[] = [];
-
-  const updated = await prisma.$transaction(async (tx) => {
-    await applyToLive(tx, existing.id, body, actorId, orphaned);
-    const family = await tx.productFamily.findUniqueOrThrow({
-      where: { id: existing.id },
-      select: FAMILY_SELECT,
+    await tx.productDraft.upsert({
+      where: { familyId: existing.id },
+      create: {
+        familyId: existing.id,
+        payload: body as unknown as Prisma.InputJsonValue,
+        updatedById: actorId,
+      },
+      update: { payload: body as unknown as Prisma.InputJsonValue, updatedById: actorId },
     });
     await writeAudit(
       ctx,
-      { module: AuditModule.PRODUCTS, action: `Updated draft product "${body.name}"`, recordId: slug },
+      {
+        module: AuditModule.PRODUCTS,
+        action: `Saved draft changes to "${existing.name}"`,
+        recordId: slug,
+      },
       tx,
     );
-    return family;
+
+    purge = statusChanged;
   });
 
-  // After commit: a destroy cannot be rolled back, so it must not run for a
-  // transaction that aborted. Best-effort — never fails the save.
-  await destroyAssets(orphaned);
+  /*
+   * A draft-only save changes nothing a customer can see, so it must NOT purge:
+   * evicting the catalogue cache on every keystroke-triggered save would make
+   * the invalidation hook the most expensive thing in the system, and would
+   * refill the cache with identical data.
+   *
+   * A status change is the exception — it decides whether the product is listed
+   * at all, and it applies immediately.
+   */
+  if (purge) await revalidateStorefront(slug);
 
-  return serializeFamily(updated, role);
+  return bySlug(slug, role);
 }
 
 /**
@@ -680,6 +684,8 @@ export async function publish(slug: string, actorId: string, ctx: AuditContext, 
 
   // See saveDraft: after commit only, best-effort.
   await destroyAssets(orphaned);
+  /* The only path that changes live content, so the only one that must purge. */
+  await revalidateStorefront(slug);
 
   return serializeFamily(published, role);
 }
@@ -742,6 +748,10 @@ export async function setStatus(
     );
     return row;
   });
+
+  /* Status decides whether the product is listed at all — the most visible
+     change there is, and the one most likely to be made in a hurry. */
+  await revalidateStorefront(slug);
 
   return serializeFamily(updated, role);
 }
@@ -836,6 +846,9 @@ export async function remove(slug: string, ctx: AuditContext): Promise<void> {
       tx,
     );
   });
+
+  /* A deleted product must leave the grid now, not within the hour. */
+  await revalidateStorefront(slug);
 }
 
 // ============================================================================
@@ -887,8 +900,35 @@ async function applyToLive(
     where: { familyId },
     select: { id: true, sku: true },
   });
-  const existingBySku = new Map(existing.map((v) => [v.sku, v.id]));
-  const incomingSkus = new Set(body.variants.map((v) => v.sku));
+  const existingById = new Map(existing.map((v) => [v.id, v]));
+  const existingBySku = new Map(existing.map((v) => [v.sku, v]));
+
+  /**
+   * Which pack each payload entry refers to.
+   *
+   * IDENTITY FIRST, SKU ONLY AS A FALLBACK.
+   *
+   * Matching on SKU alone meant renaming a pack created a second variant and
+   * deactivated the first, stranding every photograph on the deactivated row.
+   * The id says which pack this IS; the SKU is a label operators may correct.
+   *
+   * The id is trusted only when it belongs to THIS family — a payload naming
+   * another product's variant must never reach an update.
+   */
+  const match = (v: ProductBody['variants'][number]) =>
+    (v.id ? existingById.get(v.id) : undefined) ?? existingBySku.get(v.sku);
+
+  /**
+   * Old SKU -> new SKU for anything renamed in this save.
+   *
+   * Media rows carry SKU strings, so a rename would otherwise leave them
+   * pointing at a name that no longer exists — and `targetVariantIds` drops
+   * unknown names, which would silently turn pack photography into shared
+   * photography. The alias keeps those references resolvable.
+   */
+  const renamedFrom = new Map<string, string>();
+
+  const keptIds = new Set<string>();
 
   for (const [i, v] of body.variants.entries()) {
     const data = {
@@ -902,16 +942,29 @@ async function applyToLive(
       isActive: v.isActive,
     };
 
-    const id = existingBySku.get(v.sku);
-    if (id) {
-      await tx.productVariant.update({ where: { id }, data });
+    const row = match(v);
+    if (row) {
+      keptIds.add(row.id);
+      if (row.sku !== v.sku) renamedFrom.set(row.sku, v.sku);
+      // `sku` is written too: this is the rename.
+      await tx.productVariant.update({ where: { id: row.id }, data: { ...data, sku: v.sku } });
     } else {
-      await tx.productVariant.create({ data: { ...data, familyId, sku: v.sku } });
+      const created = await tx.productVariant.create({
+        data: { ...data, familyId, sku: v.sku },
+        select: { id: true },
+      });
+      keptIds.add(created.id);
     }
   }
 
-  // Removed from the editor => deactivate, preserving order history.
-  const removed = existing.filter((v) => !incomingSkus.has(v.sku));
+  /*
+   * Removed from the editor => deactivate, preserving order history.
+   *
+   * Keyed on the ids actually matched above, not on SKUs. With SKU matching a
+   * renamed pack appeared in neither set and was deactivated as a side effect
+   * of its own rename.
+   */
+  const removed = existing.filter((v) => !keptIds.has(v.id));
   if (removed.length > 0) {
     await tx.productVariant.updateMany({
       where: { id: { in: removed.map((v) => v.id) } },
@@ -919,7 +972,7 @@ async function applyToLive(
     });
   }
 
-  await applyMediaToLive(tx, familyId, body, orphanSink);
+  await applyMediaToLive(tx, familyId, body, orphanSink, renamedFrom);
   await applyHeroes(tx, familyId, body);
   await applyRepresentative(tx, familyId, body);
 }
@@ -1026,6 +1079,8 @@ async function applyMediaToLive(
    * other's pending deletions and destroy assets belonging to the other request.
    */
   orphanSink: string[],
+  /** Old SKU -> new SKU for packs renamed in this same save. See below. */
+  renamedFrom: Map<string, string> = new Map(),
 ): Promise<void> {
   // Absent `media` means "not editing the gallery" — leave it alone.
   if (!body.media) return;
@@ -1047,6 +1102,23 @@ async function applyMediaToLive(
     select: { id: true, sku: true },
   });
   const skuToId = new Map(variants.map((v) => [v.sku.toUpperCase(), v.id]));
+
+  /*
+   * Let a rename resolve under its OLD name too.
+   *
+   * The gallery in the payload was built before the rename, so its rows still
+   * say "G2-45G" while the variant now says "G2-45GNEW". Unknown names are
+   * dropped by `targetVariantIds`, which would have quietly turned that pack's
+   * photography into shared photography shown on every pack. Aliasing the old
+   * name onto the same variant keeps the assignment exactly where it was.
+   *
+   * Scoped to this family's own variants, so an alias can never point at
+   * another product.
+   */
+  for (const [oldSku, newSku] of renamedFrom) {
+    const id = skuToId.get(newSku.toUpperCase());
+    if (id) skuToId.set(oldSku.toUpperCase(), id);
+  }
 
   const result = await reconcileMedia(tx, familyId, body.media, skuToId);
   orphanSink.push(...result.archivedPublicIds);
