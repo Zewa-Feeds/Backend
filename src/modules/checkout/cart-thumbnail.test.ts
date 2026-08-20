@@ -6,11 +6,31 @@
  * throughout the shop and a 1kg pouch in their basket. These pin that all three
  * surfaces answer the same way.
  */
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MediaStatus, MediaType, PrismaClient } from '@prisma/client';
 import { priceCart } from './pricing.service';
+import * as settingsService from '@/modules/settings/settings.service';
 
 const prisma = new PrismaClient();
+
+/*
+ * Warm Redis before the timer starts.
+ *
+ * `priceCart` reads tax and shipping settings, which are cached in Redis — a
+ * remote instance, ~260ms per round trip warm and ~3.9s on a cold connect. This
+ * is the only test file that touches Redis at all, and it runs last, by which
+ * point the client has been idle for the length of the suite. Paying the
+ * connect here means a reconnect cannot land inside a test's 45s budget and be
+ * reported as a failure of media resolution, which is what these tests actually
+ * cover.
+ *
+ * Nothing is mocked: the tests still exercise the real priceCart path.
+ */
+beforeAll(async () => {
+  await settingsService.getAll();
+}, 60_000);
+
+// Redis is closed by the shared vitest.setup.ts teardown, for every file.
 afterAll(async () => prisma.$disconnect());
 
 const CDN = 'https://res.cloudinary.com/test';

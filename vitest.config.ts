@@ -26,6 +26,12 @@ export default defineConfig({
     testTimeout: 45_000,
     hookTimeout: 45_000,
     fileParallelism: false,
+    /*
+     * Closes the Redis clients each isolated file opens. See vitest.setup.ts:
+     * without it a run accumulated ten connections against a remote free-tier
+     * instance and ioredis's retry backoff stalled unrelated tests.
+     */
+    setupFiles: ['./vitest.setup.ts'],
   },
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
