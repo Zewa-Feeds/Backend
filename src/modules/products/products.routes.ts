@@ -19,6 +19,7 @@ import { signPreviewToken } from '@/lib/tokens';
 import { forbidden } from '@/lib/errors';
 import { env } from '@/config/env';
 import {
+  mediaPreviewSchema,
   productBodySchema,
   productListQuerySchema,
   slugParamSchema,
@@ -54,6 +55,25 @@ productsRouter.get(
 );
 
 // ---- Writes: Ops + Admin ---------------------------------------------------
+
+/**
+ * Resolved galleries for the CMS media manager.
+ *
+ * POST rather than GET because the editor previews UNSAVED work: the gallery on
+ * screen is sent up, resolved server-side, and returned per pack. Resolution
+ * therefore has exactly one implementation, shared with the storefront — the CMS
+ * never recreates the rules, which is how they drifted apart before.
+ *
+ * Read-only. Nothing here writes.
+ */
+productsRouter.post(
+  '/:slug/media-preview',
+  validate({ params: slugParamSchema, body: mediaPreviewSchema }),
+  asyncHandler(async (req, res) => {
+    const data = await productsService.previewMedia(req.params.slug as string, req.body);
+    res.json({ data });
+  }),
+);
 
 productsRouter.post(
   '/',

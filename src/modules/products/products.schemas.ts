@@ -116,7 +116,14 @@ const cloudinaryUrl = (label: string) =>
  * assigned from the array index on write, so the client cannot send a sparse or
  * conflicting sequence.
  */
-const mediaSchema = z.object({
+export const mediaSchema = z.object({
+  /**
+   * The asset's own id, round-tripped by the editor.
+   *
+   * This is what makes a save UPDATE an existing row rather than replace it, so
+   * hero pointers and pack assignments survive editing. Absent means "new".
+   */
+  id: z.string().uuid().optional().nullable(),
   type: z.nativeEnum(MediaType).default(MediaType.IMAGE),
   /**
    * Which pack this asset shows, by SKU. Null/omitted = SHARED, shown for every
@@ -126,6 +133,14 @@ const mediaSchema = z.object({
    * product's variant ids do not exist until after they are inserted.
    */
   sku: z.string().trim().max(40).optional().nullable(),
+  /**
+   * Every pack this asset is shown for.
+   *
+   * Supersedes `sku`, which can only ever name one. A photo of the 45g bottle is
+   * equally correct for "45g x 2" and "45g x 3", and duplicating the file three
+   * times to say so was the thing the join table removed.
+   */
+  skus: z.array(z.string().trim().max(40)).max(50).optional().nullable(),
   url: cloudinaryUrl('Media URL'),
   /** Needed to destroy the asset when it is removed; absent on legacy rows. */
   publicId: z.string().trim().max(200).optional().nullable(),
@@ -135,6 +150,33 @@ const mediaSchema = z.object({
   width: z.coerce.number().int().positive().max(20_000).optional().nullable(),
   height: z.coerce.number().int().positive().max(20_000).optional().nullable(),
   durationSec: z.coerce.number().positive().max(3600).optional().nullable(),
+});
+
+/**
+ * Payload for the CMS media preview.
+ *
+ * The editor sends the gallery as it stands on screen — including edits that have
+ * not been saved — and the server resolves it with the SAME function the
+ * storefront uses. That is the whole point: an operator sees what a customer
+ * would get, without the CMS reimplementing any of the rules.
+ */
+export const mediaPreviewSchema = z.object({
+  media: z.array(mediaSchema).max(50),
+  /**
+   * Pack ordering and inheritance as staged in the editor. Optional — omitted,
+   * the saved variants are used, which is what a preview before any variant edit
+   * should show.
+   */
+  variants: z
+    .array(
+      z.object({
+        sku: z.string().trim().max(40),
+        /** SKU of the pack this one borrows photography from. */
+        baseSku: z.string().trim().max(40).optional().nullable(),
+      }),
+    )
+    .max(50)
+    .optional(),
 });
 
 export const productBodySchema = z.object({

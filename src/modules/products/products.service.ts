@@ -18,6 +18,7 @@ import { conflict, ErrorCode, notFound } from '@/lib/errors';
 import { AppError } from '@/lib/errors';
 import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
 import { reconcileMedia } from '@/modules/products/media.integrity';
+import { resolveGallery, type ResolvableMedia } from '@/modules/products/media.resolver';
 import { listMeta, toSkipTake } from '@/middleware/validate';
 import { destroyAssets } from '@/integrations/cloudinary/cloudinary.service';
 import type { Role } from '@prisma/client';
@@ -173,6 +174,113 @@ function mediaRows(
     height: m.height ?? null,
     durationSec: m.type === MediaType.VIDEO ? (m.durationSec ?? null) : null,
   }));
+}
+
+/**
+ * Resolve galleries for the CMS media manager.
+ *
+ * Takes the gallery as the editor currently has it — unsaved edits included —
+ * and runs it through the SAME resolver the storefront uses, so the preview is
+ * the storefront's answer rather than a second implementation of the rules.
+ *
+ * Read-only: nothing is written, so an operator can preview freely.
+ */
+export async function previewMedia(
+  slug: string,
+  input: { media: ProductBody['media']; variants?: { sku: string; baseSku?: string | null }[] },
+) {
+  const family = await prisma.productFamily.findUnique({
+    where: { slug },
+    select: {
+      id: true,
+      variants: {
+        where: { isActive: true },
+        select: { id: true, sku: true, pack: true, baseVariantId: true, heroMediaId: true },
+        orderBy: { position: 'asc' },
+      },
+    },
+  });
+  if (!family) throw notFound('Product');
+
+  const bySku = new Map(family.variants.map((v) => [v.sku.toUpperCase(), v.id]));
+
+  /*
+   * Inheritance as STAGED, when the editor sent it. A pack whose base was just
+   * changed on screen should preview with the new source, not the saved one.
+   */
+  const stagedBase = new Map<string, string | null>();
+  for (const v of input.variants ?? []) {
+    const id = bySku.get(v.sku.toUpperCase());
+    if (!id) continue;
+    stagedBase.set(id, v.baseSku ? (bySku.get(v.baseSku.toUpperCase()) ?? null) : null);
+  }
+
+  const variants = family.variants.map((v) => ({
+    ...v,
+    baseVariantId: stagedBase.has(v.id) ? (stagedBase.get(v.id) ?? null) : v.baseVariantId,
+  }));
+
+  /*
+   * The staged gallery in the resolver's shape. Items are keyed by their own id
+   * where they have one; a freshly uploaded asset has none yet, so it gets a
+   * temporary key that is stable for this request only — enough for ordering,
+   * de-duplication and hero selection to behave exactly as they will once saved.
+   */
+  const resolvable = (input.media ?? []).flatMap((m, i): ResolvableMedia[] => {
+    const id = m.id ?? `staged-${i}`;
+    const targets = m.skus?.length
+      ? m.skus.map((sku) => bySku.get(sku.toUpperCase()) ?? null).filter((x): x is string => Boolean(x))
+      : m.sku
+        ? [bySku.get(m.sku.toUpperCase()) ?? null].filter((x): x is string => Boolean(x))
+        : [];
+
+    const base = {
+      id,
+      type: m.type,
+      url: m.url,
+      alt: m.alt ?? null,
+      position: i,
+      posterUrl: m.posterUrl ?? null,
+      width: m.width ?? null,
+      height: m.height ?? null,
+      durationSec: m.durationSec ?? null,
+    };
+
+    return targets.length > 0
+      ? targets.map((variantId) => ({ ...base, variantId }))
+      : [{ ...base, variantId: null }];
+  });
+
+  const skuById = new Map(family.variants.map((v) => [v.id, v.sku]));
+
+  return {
+    packs: variants.map((v) => {
+      const r = resolveGallery(resolvable, v);
+      return {
+        sku: v.sku,
+        pack: v.pack,
+        coverage: r.coverage,
+        inheritedFromSku: r.inheritedFromVariantId
+          ? (skuById.get(r.inheritedFromVariantId) ?? null)
+          : null,
+        heroMediaId: r.heroMediaId,
+        /** The operator's explicit choice, when it survives validation. */
+        chosenHeroMediaId:
+          v.heroMediaId && r.items.some((m) => m.id === v.heroMediaId) ? v.heroMediaId : null,
+        items: r.items.map((m) => ({
+          id: m.id,
+          type: m.type,
+          url: m.url,
+          alt: m.alt,
+          source: m.source,
+          isPrimary: m.isPrimary,
+          width: m.width ?? null,
+          height: m.height ?? null,
+          posterUrl: m.posterUrl ?? null,
+        })),
+      };
+    }),
+  };
 }
 
 /**

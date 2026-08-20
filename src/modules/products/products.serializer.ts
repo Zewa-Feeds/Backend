@@ -158,6 +158,9 @@ export const FAMILY_SELECT = {
       publicId: true,
       variantId: true,
       variant: { select: { sku: true } },
+      /* Every pack this asset targets, so the editor can round-trip a
+         multi-pack assignment instead of flattening it to the first one. */
+      variantLinks: { select: { variant: { select: { sku: true } } } },
     },
     orderBy: { position: 'asc' },
   },
@@ -226,10 +229,20 @@ export function serializeFamily(family: FamilyRow, role?: Role) {
      * which pack it belongs to. Without this the editor cannot round-trip the
      * assignment and every save would reset it to shared.
      */
-    media: family.media.map((m) => ({
-      ...m,
-      sku: (m as { variant?: { sku: string } | null }).variant?.sku ?? null,
-    })),
+    media: family.media.map((m) => {
+      const row = m as typeof m & {
+        variant?: { sku: string } | null;
+        variantLinks?: { variant: { sku: string } }[];
+      };
+      const skus = (row.variantLinks ?? []).map((l) => l.variant.sku);
+      return {
+        ...m,
+        /** Legacy single-pack field, kept so older editor builds keep working. */
+        sku: row.variant?.sku ?? skus[0] ?? null,
+        /** Every pack this asset is shown for. */
+        skus,
+      };
+    }),
     publishedAt: family.publishedAt,
     updatedAt: family.updatedAt,
     // §5.1 shows who last changed the product.
