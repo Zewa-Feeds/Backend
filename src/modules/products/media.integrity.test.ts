@@ -10,7 +10,7 @@
  * live catalogue is never touched and the suite can run repeatedly.
  */
 import { afterAll, describe, expect, it } from 'vitest';
-import { MediaStatus, MediaType, Prisma, PrismaClient } from '@prisma/client';
+import { MediaStatus, MediaType, PrismaClient, type Prisma } from '@prisma/client';
 import {
   HeroRejection,
   MediaDisposition,

@@ -4,7 +4,18 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'prisma/migrations/**', 'coverage/**'],
+    /*
+      vitest.config.ts sits outside the tsconfig project the typed rules use, so
+      linting it fails at parse time rather than finding anything. It is build
+      configuration, not application code.
+    */
+    ignores: [
+      'dist/**',
+      'node_modules/**',
+      'prisma/migrations/**',
+      'coverage/**',
+      'vitest.config.ts',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

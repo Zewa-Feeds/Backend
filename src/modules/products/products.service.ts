@@ -17,7 +17,7 @@ import { prisma } from '@/lib/prisma';
 import { conflict, ErrorCode, notFound } from '@/lib/errors';
 import { AppError } from '@/lib/errors';
 import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
-import { reconcileMedia } from '@/modules/products/media.integrity';
+import { checkHero, reconcileMedia } from '@/modules/products/media.integrity';
 import { resolveGallery, type ResolvableMedia } from '@/modules/products/media.resolver';
 import { listMeta, toSkipTake } from '@/middleware/validate';
 import { destroyAssets } from '@/integrations/cloudinary/cloudinary.service';
@@ -187,7 +187,10 @@ function mediaRows(
  */
 export async function previewMedia(
   slug: string,
-  input: { media: ProductBody['media']; variants?: { sku: string; baseSku?: string | null }[] },
+  input: {
+    media: ProductBody['media'];
+    variants?: { sku: string; baseSku?: string | null; heroMediaId?: string | null }[];
+  },
 ) {
   const family = await prisma.productFamily.findUnique({
     where: { slug },
@@ -215,9 +218,17 @@ export async function previewMedia(
     stagedBase.set(id, v.baseSku ? (bySku.get(v.baseSku.toUpperCase()) ?? null) : null);
   }
 
+  /** Main image chosen on screen but not yet saved. */
+  const stagedHero = new Map<string, string | null>();
+  for (const v of input.variants ?? []) {
+    const id = bySku.get(v.sku.toUpperCase());
+    if (id && v.heroMediaId !== undefined) stagedHero.set(id, v.heroMediaId ?? null);
+  }
+
   const variants = family.variants.map((v) => ({
     ...v,
     baseVariantId: stagedBase.has(v.id) ? (stagedBase.get(v.id) ?? null) : v.baseVariantId,
+    heroMediaId: stagedHero.has(v.id) ? (stagedHero.get(v.id) ?? null) : v.heroMediaId,
   }));
 
   /*
@@ -256,6 +267,16 @@ export async function previewMedia(
   return {
     packs: variants.map((v) => {
       const r = resolveGallery(resolvable, v);
+
+      /*
+       * An operator's explicit choice outranks the resolver's default, but only
+       * while it names something this pack actually shows. A hero that has since
+       * been un-assigned or removed falls back rather than pointing at nothing.
+       */
+      const chosen =
+        v.heroMediaId && r.items.some((m) => m.id === v.heroMediaId) ? v.heroMediaId : null;
+      const heroMediaId = chosen ?? r.heroMediaId;
+
       return {
         sku: v.sku,
         pack: v.pack,
@@ -263,23 +284,73 @@ export async function previewMedia(
         inheritedFromSku: r.inheritedFromVariantId
           ? (skuById.get(r.inheritedFromVariantId) ?? null)
           : null,
-        heroMediaId: r.heroMediaId,
-        /** The operator's explicit choice, when it survives validation. */
-        chosenHeroMediaId:
-          v.heroMediaId && r.items.some((m) => m.id === v.heroMediaId) ? v.heroMediaId : null,
+        heroMediaId,
+        /** Whether that is the operator's pick or the resolver's default. */
+        heroIsExplicit: Boolean(chosen),
         items: r.items.map((m) => ({
           id: m.id,
           type: m.type,
           url: m.url,
           alt: m.alt,
           source: m.source,
-          isPrimary: m.isPrimary,
+          isPrimary: m.id === heroMediaId,
           width: m.width ?? null,
           height: m.height ?? null,
           posterUrl: m.posterUrl ?? null,
         })),
       };
     }),
+  };
+}
+
+/**
+ * What removing one asset would do.
+ *
+ * Answers from the staged gallery and the canonical resolver, so the numbers
+ * match what the operator is looking at and what a customer would get. The
+ * before/after coverage per pack is the part that matters: the old behaviour let
+ * someone delete the last photograph of a pack with no warning at all.
+ *
+ * Read-only.
+ */
+export async function mediaRemovalImpact(
+  slug: string,
+  input: { media: ProductBody['media']; mediaId: string },
+) {
+  const before = await previewMedia(slug, { media: input.media });
+  const after = await previewMedia(slug, {
+    media: (input.media ?? []).filter((m, i) => (m.id ?? `staged-${i}`) !== input.mediaId),
+  });
+
+  const target = (input.media ?? []).find((m, i) => (m.id ?? `staged-${i}`) === input.mediaId);
+
+  const usedBy = before.packs
+    .filter((p) => p.items.some((m) => m.id === input.mediaId))
+    .map((p) => ({
+      sku: p.sku,
+      pack: p.pack,
+      /** How this pack gets it: its own, inherited, or shared. */
+      source: p.items.find((m) => m.id === input.mediaId)?.source ?? 'SHARED',
+      isPrimary: p.heroMediaId === input.mediaId,
+    }));
+
+  const changes = before.packs
+    .map((b) => {
+      const a = after.packs.find((x) => x.sku === b.sku);
+      if (!a || a.coverage === b.coverage) return null;
+      return { sku: b.sku, pack: b.pack, from: b.coverage, to: a.coverage };
+    })
+    .filter((c): c is NonNullable<typeof c> => c !== null);
+
+  return {
+    /** True when the asset is not tied to any pack. */
+    isShared: !(target?.skus?.length || target?.sku),
+    usedBy,
+    primaryFor: usedBy.filter((u) => u.isPrimary).map((u) => u.pack),
+    /** Packs whose coverage would change, e.g. EXACT -> EMPTY. */
+    coverageChanges: changes,
+    /** Packs left with nothing at all. The loudest case. */
+    leavesEmpty: changes.filter((c) => c.to === 'EMPTY').map((c) => c.pack),
   };
 }
 
@@ -782,6 +853,50 @@ async function applyToLive(
   }
 
   await applyMediaToLive(tx, familyId, body, orphanSink);
+  await applyHeroes(tx, familyId, body);
+}
+
+/**
+ * Persist each pack's chosen main image.
+ *
+ * Runs AFTER the gallery is reconciled, because a hero is only valid against the
+ * gallery that now exists — validating it against the previous one would accept
+ * a pointer the resolver immediately ignores.
+ *
+ * Uses the Phase 1 checker rather than repeating its rules: same product, not
+ * archived, and actually present in that pack's resolved gallery. An invalid
+ * choice clears the hero instead of failing the whole save; the resolver then
+ * falls back to its default pick and the CMS shows which image won.
+ */
+async function applyHeroes(
+  tx: Prisma.TransactionClient,
+  familyId: string,
+  body: ProductBody,
+): Promise<void> {
+  if (!body.variants) return;
+
+  const variants = await tx.productVariant.findMany({
+    where: { familyId },
+    select: { id: true, sku: true, heroMediaId: true },
+  });
+  const byId = new Map(variants.map((v) => [v.sku.toUpperCase(), v]));
+
+  for (const incoming of body.variants) {
+    const row = byId.get(incoming.sku.toUpperCase());
+    if (!row) continue;
+
+    // Absent means "not editing the main image" — leave whatever is stored.
+    if (incoming.heroMediaId === undefined) continue;
+
+    const wanted = incoming.heroMediaId ?? null;
+    if (wanted === row.heroMediaId) continue;
+
+    const valid = wanted ? (await checkHero(tx, row.id, wanted)).ok : true;
+    await tx.productVariant.update({
+      where: { id: row.id },
+      data: { heroMediaId: valid ? wanted : null },
+    });
+  }
 }
 
 /**

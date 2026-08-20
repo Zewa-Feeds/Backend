@@ -19,6 +19,7 @@ import { signPreviewToken } from '@/lib/tokens';
 import { forbidden } from '@/lib/errors';
 import { env } from '@/config/env';
 import {
+  mediaImpactSchema,
   mediaPreviewSchema,
   productBodySchema,
   productListQuerySchema,
@@ -71,6 +72,18 @@ productsRouter.post(
   validate({ params: slugParamSchema, body: mediaPreviewSchema }),
   asyncHandler(async (req, res) => {
     const data = await productsService.previewMedia(req.params.slug as string, req.body);
+    res.json({ data });
+  }),
+);
+
+/**
+ * What removing one asset would do. Read-only; nothing is removed here.
+ */
+productsRouter.post(
+  '/:slug/media-impact',
+  validate({ params: slugParamSchema, body: mediaImpactSchema }),
+  asyncHandler(async (req, res) => {
+    const data = await productsService.mediaRemovalImpact(req.params.slug as string, req.body);
     res.json({ data });
   }),
 );

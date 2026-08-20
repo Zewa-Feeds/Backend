@@ -9,7 +9,7 @@
  * untouched.
  */
 import { afterAll, describe, expect, it } from 'vitest';
-import { MediaType, Prisma, PrismaClient } from '@prisma/client';
+import { MediaType, PrismaClient } from '@prisma/client';
 import { previewMedia } from './products.service';
 import { loadResolvable } from './media.integrity';
 import { resolveGallery } from './media.resolver';
@@ -18,21 +18,6 @@ const prisma = new PrismaClient();
 afterAll(async () => prisma.$disconnect());
 
 const TAG = `zz-preview-${Date.now()}`;
-class Rollback extends Error {}
-
-async function inRollback<T>(fn: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
-  let captured: T;
-  try {
-    await prisma.$transaction(async (tx) => {
-      captured = await fn(tx);
-      throw new Rollback();
-    });
-  } catch (err) {
-    if (!(err instanceof Rollback)) throw err;
-  }
-  return captured!;
-}
-
 /**
  * previewMedia reads through the module-level prisma client, so a product built
  * inside a rolled-back transaction is invisible to it. These tests therefore

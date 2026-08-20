@@ -119,6 +119,8 @@ export const VARIANT_SELECT = {
   /** Whose photography this pack borrows when it has none. See media.resolver.ts. */
   baseVariantId: true,
   packMultiplier: true,
+  /** The pack's chosen main image, so the CMS can show and keep the star. */
+  heroMediaId: true,
 } satisfies Prisma.ProductVariantSelect;
 
 export const FAMILY_SELECT = {

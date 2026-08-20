@@ -79,6 +79,15 @@ export const variantSchema = z
     hsn: hsnSchema,
     weightGrams: z.coerce.number().int().positive().max(100_000).optional().nullable(),
     isActive: z.boolean().optional().default(true),
+    /**
+     * The asset this pack leads with.
+     *
+     * Carried on the variant so choosing a main image persists through the
+     * ordinary save rather than needing its own endpoint. Validated server-side
+     * against the pack's RESOLVED gallery — a pointer the resolver would ignore
+     * is rejected rather than stored.
+     */
+    heroMediaId: z.string().uuid().optional().nullable(),
   })
   // A selling price above MRP is a data-entry error, and the PDP renders MRP as a
   // strikethrough — it would display a negative discount.
@@ -173,10 +182,24 @@ export const mediaPreviewSchema = z.object({
         sku: z.string().trim().max(40),
         /** SKU of the pack this one borrows photography from. */
         baseSku: z.string().trim().max(40).optional().nullable(),
+        /** Main image chosen on screen but not yet saved. */
+        heroMediaId: z.string().uuid().optional().nullable(),
       }),
     )
     .max(50)
     .optional(),
+});
+
+/**
+ * Payload for the "what happens if I remove this" check.
+ *
+ * Takes the staged gallery so the answer reflects what is on screen, and the
+ * asset in question. Read-only — it reports, it does not remove.
+ */
+export const mediaImpactSchema = z.object({
+  media: z.array(mediaSchema).max(50),
+  /** The asset being considered for removal. */
+  mediaId: z.string().min(1).max(200),
 });
 
 export const productBodySchema = z.object({
