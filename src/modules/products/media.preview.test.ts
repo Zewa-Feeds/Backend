@@ -167,6 +167,50 @@ describe('media preview', () => {
     });
   });
 
+  it('returns the listing card, defaulting to the first pack', async () => {
+    await withProduct(async (slug, id) => {
+      const r = await previewMedia(slug, {
+        media: [img('bottle.jpg', [id.base]), img('pouch.jpg', [id.kilo])] as never,
+      });
+      expect(r.listing.sku).toBe(id.base);
+      expect(r.listing.heroUrl).toBe('bottle.jpg');
+      expect(r.listing.isExplicit).toBe(false);
+      expect(r.listing.coverage).toBe('EXACT');
+    });
+  });
+
+  it('follows a representative staged in the editor but not yet saved', async () => {
+    await withProduct(async (slug, id) => {
+      const r = await previewMedia(slug, {
+        media: [img('bottle.jpg', [id.base]), img('pouch.jpg', [id.kilo])] as never,
+        representativeSku: id.kilo,
+      });
+      expect(r.listing.sku).toBe(id.kilo);
+      expect(r.listing.heroUrl).toBe('pouch.jpg');
+      expect(r.listing.isExplicit).toBe(true);
+    });
+  });
+
+  it('shows no listing image rather than another pack’s', async () => {
+    await withProduct(async (slug, id) => {
+      // Only the 1kg is photographed; the card represents the 45g.
+      const r = await previewMedia(slug, { media: [img('pouch.jpg', [id.kilo])] as never });
+      expect(r.listing.sku).toBe(id.base);
+      expect(r.listing.heroUrl).toBeNull();
+      expect(r.listing.coverage).toBe('EMPTY');
+    });
+  });
+
+  it('counts the further images the card can step through', async () => {
+    await withProduct(async (slug, id) => {
+      const r = await previewMedia(slug, {
+        media: [img('a.jpg', [id.base]), img('b.jpg', [id.base]), img('c.jpg')] as never,
+      });
+      // Three images resolve for the pack; one of them is the hero.
+      expect(r.listing.extraImageCount).toBe(2);
+    });
+  });
+
   it('agrees with the storefront for the same saved gallery', async () => {
     await withProduct(async (slug, id) => {
       const variants = await prisma.productVariant.findMany({
