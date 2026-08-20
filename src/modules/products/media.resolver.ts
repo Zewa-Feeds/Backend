@@ -182,10 +182,17 @@ function tag(m: ResolvableMedia, source: MediaSource): ResolvedItem {
  * Precedence, in order:
  *   1. the first IMAGE belonging to the pack (or inherited from its base)
  *   2. the first IMAGE of any kind
- *   3. the first item at all
+ *   3. nothing
  *
- * Images outrank video deliberately: a video URL in an <img> renders broken, and
- * the hero is used as a thumbnail and as the Open Graph image.
+ * A VIDEO is never the hero, and there is no longer a "first item at all"
+ * fallback that could make one. The hero is consumed as an <img> — a card
+ * photograph, the opening frame of a product page, an Open Graph image — so a
+ * video URL there renders as a broken thumbnail. A gallery holding only a video
+ * has no hero, which the presentation layer handles by showing the poster frame
+ * or a placeholder and keeping the film as secondary media.
+ *
+ * This is the ONLY thing about resolution the presentation work changed: which
+ * assets a pack may show, their coverage and their order are all untouched.
  */
 function finish(
   rawItems: ResolvedItem[],
@@ -207,7 +214,6 @@ function finish(
   const hero =
     items.find((m) => m.type === MediaType.IMAGE && m.source !== MediaSource.SHARED) ??
     items.find((m) => m.type === MediaType.IMAGE) ??
-    items[0] ??
     null;
 
   return {

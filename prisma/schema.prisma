@@ -212,6 +212,25 @@ model ProductFamily {
   updatedById String?
   updatedBy   CmsUser? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
 
+  /// The pack whose photography represents this product on listing surfaces.
+  ///
+  /// IMAGERY ONLY. Price, stock and the Add-to-Cart SKU still follow the first
+  /// purchasable pack — those are different questions with deliberately
+  /// different answers, and tying them together would either offer a sold-out
+  /// SKU or let a stock count change the catalogue's photography.
+  ///
+  /// The card previously led with "the first pack that is in stock", so a pack
+  /// selling out silently changed which photograph a product was shown by. This
+  /// makes the choice explicit and stock-independent. NULL falls back to the
+  /// first ACTIVE variant by `position`, which is the operator's own ordering
+  /// rather than an accident of array order.
+  ///
+  /// SetNull rather than Cascade: deleting a variant must not delete the
+  /// product. A dangling choice falls back to the default, and the presentation
+  /// layer re-checks that the pack is still active regardless.
+  representativeVariantId String?
+  representativeVariant   ProductVariant? @relation("FamilyRepresentative", fields: [representativeVariantId], references: [id], onDelete: SetNull)
+
   variants   ProductVariant[]
   draft      ProductDraft?
   reviews    Review[]
@@ -282,6 +301,10 @@ model ProductVariant {
 
   /// Assets explicitly shown for this pack.
   mediaLinks ProductMediaVariant[]
+
+  /// Products this pack is the listing representative for. At most one in
+  /// practice — the column lives on ProductFamily and is single-valued.
+  representativeFor ProductFamily[] @relation("FamilyRepresentative")
 
   /// Self-relation for multipack inheritance.
   baseVariant   ProductVariant?  @relation("PackInheritance", fields: [baseVariantId], references: [id], onDelete: SetNull)

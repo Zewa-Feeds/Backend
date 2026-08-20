@@ -184,10 +184,17 @@ describe('hero', () => {
     expect(r.items.filter((i) => i.isPrimary)).toHaveLength(1);
   });
 
-  it('falls back to a video when that is genuinely all there is', () => {
+  it('leaves no hero when the gallery is a video and nothing else', () => {
+    /*
+     * This used to fall back to the video itself. A hero is rendered as an
+     * <img> — card photograph, opening frame, Open Graph image — so promoting a
+     * film there produced a broken thumbnail. No hero is the honest answer; the
+     * presentation layer shows the poster frame instead.
+     */
     const media = [vid(null, 0)];
     const r = resolveGallery(media, V45);
-    expect(r.heroMediaId).toBe(media[0]?.id);
+    expect(r.heroMediaId).toBeNull();
+    expect(r.items.filter((i) => i.isPrimary)).toHaveLength(0);
   });
 });
 

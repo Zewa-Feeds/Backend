@@ -109,3 +109,49 @@ export function videoPosterUrl(publicId: string): string | null {
   if (!env.CLOUDINARY_CLOUD_NAME) return null;
   return `https://res.cloudinary.com/${env.CLOUDINARY_CLOUD_NAME}/video/upload/so_0,q_auto,f_jpg/${publicId}.jpg`;
 }
+
+/**
+ * The transformation a hover clip is delivered with.
+ *
+ * The stored `secure_url` is the master upload, and the masters in this
+ * catalogue are 1920x1080 and between 4 and 19 MB — 108 MB across ten products.
+ * The product card plays one inside a ~440px square well on hover, so sending
+ * the master is between 10x and 40x more bytes than the surface can even show,
+ * on a page that may hold thirteen cards.
+ *
+ * `w_640,c_limit` caps the width without ever upscaling a smaller clip;
+ * `q_auto` and `f_auto` let Cloudinary pick the codec and quality per browser.
+ * Product pages keep the master — there the clip is the content, not a hover
+ * flourish.
+ */
+const HOVER_VIDEO_TRANSFORM = 'f_auto,q_auto,w_640,c_limit';
+
+/**
+ * Rewrite a stored video URL to its lightweight hover derivative.
+ *
+ * Best-effort and total: anything that is not a recognisable Cloudinary video
+ * delivery URL is returned untouched. A self-hosted or third-party URL must
+ * still play rather than be mangled into a 404, and an already-transformed URL
+ * must not have a second chain stapled on.
+ *
+ * Cloudinary generates the derivative on first request and caches it at the
+ * edge, so no upload-time work or webhook is involved.
+ */
+export function hoverVideoUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  if (url.includes(HOVER_VIDEO_TRANSFORM)) return url;
+
+  const marker = '/video/upload/';
+  const at = url.indexOf(marker);
+  if (at === -1) return url;
+
+  const rest = url.slice(at + marker.length);
+  /*
+   * Only a bare version segment ("v1785741937/…") or a plain public id is safe
+   * to prefix. Anything else already carries a transformation chain that was
+   * put there on purpose, and chaining ours in front of it could fight with it.
+   */
+  if (!/^(v\d+\/|[^/,]+\.\w+$|[^/,]+\/)/.test(rest)) return url;
+
+  return `${url.slice(0, at + marker.length)}${HOVER_VIDEO_TRANSFORM}/${rest}`;
+}

@@ -13,9 +13,19 @@
  *   - `stockStatus` is computed server-side from §5.1 thresholds, so the CMS and
  *     the low-stock dashboard counter cannot disagree.
  */
-import { Badge, Category, MediaType, ProductStatus, type Prisma } from '@prisma/client';
+import {
+  Badge,
+  Category,
+  MediaStatus,
+  MediaType,
+  ProductStatus,
+  type Prisma,
+} from '@prisma/client';
 import { isEditorOnly } from '@/rbac/permissions';
 import { resolveGallery, type ResolvedItem } from '@/modules/products/media.resolver';
+import { toResolvable } from '@/modules/products/media.integrity';
+import { presentDetail, presentListing } from '@/modules/products/media.presentation';
+import { hoverVideoUrl } from '@/integrations/cloudinary/cloudinary.service';
 import type { Role } from '@prisma/client';
 
 // ---- Enum ↔ display string -------------------------------------------------
@@ -145,8 +155,19 @@ export const FAMILY_SELECT = {
   publishedAt: true,
   createdAt: true,
   updatedAt: true,
+  /** The pack whose photography represents this product on listing surfaces. */
+  representativeVariantId: true,
   variants: { select: VARIANT_SELECT, orderBy: { position: 'asc' } },
   media: {
+    /*
+     * ARCHIVED is a soft delete. The row and its publicId survive so the
+     * Cloudinary asset can be destroyed deliberately rather than orphaned — but
+     * an archived asset has been REMOVED from the gallery by an operator and
+     * must not reach a customer or reappear in the editor. There was no filter
+     * here at all, which was harmless only because nothing had been archived
+     * yet; the Phase 3 media manager makes archiving a one-click action.
+     */
+    where: { status: { not: MediaStatus.ARCHIVED } },
     select: {
       id: true,
       type: true,
@@ -161,8 +182,10 @@ export const FAMILY_SELECT = {
       variantId: true,
       variant: { select: { sku: true } },
       /* Every pack this asset targets, so the editor can round-trip a
-         multi-pack assignment instead of flattening it to the first one. */
-      variantLinks: { select: { variant: { select: { sku: true } } } },
+         multi-pack assignment instead of flattening it to the first one, and so
+         the storefront resolves against the authoritative targeting rather than
+         the legacy single-value column. */
+      variantLinks: { select: { variantId: true, variant: { select: { sku: true } } } },
     },
     orderBy: { position: 'asc' },
   },
@@ -245,6 +268,15 @@ export function serializeFamily(family: FamilyRow, role?: Role) {
         skus,
       };
     }),
+    /**
+     * The pack whose photography represents this product on listing surfaces.
+     *
+     * Sent as a SKU, not an id: the editor identifies packs by SKU everywhere
+     * else, and a variant added but not yet saved has no id to refer to. The
+     * service maps it back on write.
+     */
+    representativeSku:
+      family.variants.find((v) => v.id === family.representativeVariantId)?.sku ?? null,
     publishedAt: family.publishedAt,
     updatedAt: family.updatedAt,
     // §5.1 shows who last changed the product.
@@ -313,6 +345,34 @@ export function serializePublic(family: FamilyRow) {
   const variants = family.variants.filter((v) => v.isActive);
   const totalStock = variants.reduce((sum, v) => sum + v.stock, 0);
 
+  /*
+   * Targeting, dual-read, in the resolver's shape.
+   *
+   * This used to pass `family.media` straight in, so the storefront resolved
+   * against the LEGACY `variantId` column and every multi-pack assignment made
+   * through the media manager was invisible to customers — an asset an operator
+   * put on three packs appeared on one. The CMS preview read the join table via
+   * `loadResolvable` and therefore disagreed with the storefront it was
+   * previewing. Both now go through the same function.
+   */
+  const resolvable = toResolvable(family.media);
+
+  /*
+   * The card's imagery, decided here rather than on the storefront.
+   *
+   * The card used to pick its own: filter the raw media by the first IN-STOCK
+   * pack, take the first image, and fall back to the product's first image of
+   * any pack when that came up empty. Two bugs followed — a pack selling out
+   * changed which photograph the catalogue showed, and Cichlid C4's card, which
+   * sells the 45g, showed the 1kg pouch. There is no cross-pack fallback here.
+   */
+  const listing = presentListing(
+    resolvable,
+    variants,
+    family.representativeVariantId,
+    (url) => hoverVideoUrl(url) ?? url,
+  );
+
   return {
     slug: family.slug,
     name: family.name,
@@ -371,6 +431,14 @@ export function serializePublic(family: FamilyRow) {
     images: family.media
       .filter((m) => m.type === MediaType.IMAGE)
       .map((m) => ({ url: m.url, alt: m.alt })),
+    /**
+     * What listing surfaces show: the shop grid card and the homepage range.
+     *
+     * IMAGERY ONLY. Price, availability and the Add-to-Cart SKU still follow the
+     * first purchasable pack — a shopper must never be offered a sold-out SKU
+     * because it happens to be the photogenic one.
+     */
+    listing,
     inStock: totalStock > 0,
     packs: variants.map((v) => ({
       sku: v.sku,
@@ -389,12 +457,21 @@ export function serializePublic(family: FamilyRow) {
        * hiding them.
        */
       gallery: (() => {
-        const r = resolveGallery(family.media, v);
+        const r = resolveGallery(resolvable, v);
+        /*
+         * `heroMediaId` and `isPrimary` now honour the operator's star.
+         *
+         * The column has existed and been written by the CMS since Phase 3, and
+         * only the CMS PREVIEW applied it — the storefront sent the resolver's
+         * default instead, so choosing a main image changed what the operator
+         * saw and nothing a customer saw. Same input, same answer, both sides.
+         */
+        const presentation = presentDetail(r, v);
         return {
           coverage: r.coverage,
           inheritedFromSku:
             variants.find((x) => x.id === r.inheritedFromVariantId)?.sku ?? null,
-          heroMediaId: r.heroMediaId,
+          heroMediaId: presentation.heroId,
           items: r.items.map((m: ResolvedItem) => ({
             id: m.id,
             type: m.type,
@@ -404,8 +481,22 @@ export function serializePublic(family: FamilyRow) {
             height: m.height ?? null,
             posterUrl: m.posterUrl ?? null,
             source: m.source,
-            isPrimary: m.isPrimary,
+            isPrimary: m.id === presentation.heroId,
           })),
+          /*
+           * Presentation order, kept separate from `items`.
+           *
+           * `items` stays in CMS gallery order because that is what the operator
+           * arranged and what existing consumers already read. This says what to
+           * LEAD with — a different question about the same list, which is why it
+           * is a derived view and not a second position column.
+           */
+          presentation: {
+            orderedIds: presentation.orderedIds,
+            heroId: presentation.heroId,
+            videoId: presentation.videoId,
+            videoSource: presentation.videoSource,
+          },
         };
       })(),
       pricePaise: v.pricePaise,

@@ -19,6 +19,7 @@ import { AppError } from '@/lib/errors';
 import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
 import { checkHero, reconcileMedia } from '@/modules/products/media.integrity';
 import { resolveGallery, type ResolvableMedia } from '@/modules/products/media.resolver';
+import { presentListing } from '@/modules/products/media.presentation';
 import { listMeta, toSkipTake } from '@/middleware/validate';
 import { destroyAssets } from '@/integrations/cloudinary/cloudinary.service';
 import type { Role } from '@prisma/client';
@@ -190,15 +191,24 @@ export async function previewMedia(
   input: {
     media: ProductBody['media'];
     variants?: { sku: string; baseSku?: string | null; heroMediaId?: string | null }[];
+    representativeSku?: string | null;
   },
 ) {
   const family = await prisma.productFamily.findUnique({
     where: { slug },
     select: {
       id: true,
+      representativeVariantId: true,
       variants: {
         where: { isActive: true },
-        select: { id: true, sku: true, pack: true, baseVariantId: true, heroMediaId: true },
+        select: {
+          id: true,
+          sku: true,
+          pack: true,
+          position: true,
+          baseVariantId: true,
+          heroMediaId: true,
+        },
         orderBy: { position: 'asc' },
       },
     },
@@ -264,7 +274,49 @@ export async function previewMedia(
 
   const skuById = new Map(family.variants.map((v) => [v.id, v.sku]));
 
+  /*
+   * The listing card, from the SAME payload the storefront gets.
+   *
+   * `presentListing` is the storefront's own function, so the "Listing card"
+   * panel in the media manager is not a second implementation that can drift —
+   * it is the answer, computed against the gallery as the operator currently
+   * has it on screen.
+   *
+   * Hover-video optimisation is deliberately NOT applied: the preview plays the
+   * asset the operator uploaded, and a Cloudinary derivative can lag the master
+   * by a few seconds on first request.
+   */
+  const stagedRepresentative =
+    input.representativeSku === undefined
+      ? family.representativeVariantId
+      : (bySku.get((input.representativeSku ?? '').toUpperCase()) ?? null);
+
+  const listing = presentListing(resolvable, variants, stagedRepresentative);
+
   return {
+    listing: {
+      ...listing,
+      /** The dropdown shows SKUs, not ids. */
+      representativeSku: listing.representativeVariantId
+        ? (skuById.get(listing.representativeVariantId) ?? null)
+        : null,
+      /** True when the operator picked it; false when it is the position fallback. */
+      isExplicit: Boolean(
+        listing.representativeVariantId &&
+          stagedRepresentative === listing.representativeVariantId,
+      ),
+      /** How many further images the card can cycle after the hero. */
+      extraImageCount: Math.max(
+        0,
+        (() => {
+          const rep = variants.find((v) => v.id === listing.representativeVariantId);
+          if (!rep) return 0;
+          const g = resolveGallery(resolvable, rep);
+          const images = g.items.filter((m) => m.type === MediaType.IMAGE);
+          return images.length - (listing.heroUrl ? 1 : 0);
+        })(),
+      ),
+    },
     packs: variants.map((v) => {
       const r = resolveGallery(resolvable, v);
 
@@ -854,6 +906,44 @@ async function applyToLive(
 
   await applyMediaToLive(tx, familyId, body, orphanSink);
   await applyHeroes(tx, familyId, body);
+  await applyRepresentative(tx, familyId, body);
+}
+
+/**
+ * Persist the product's listing representative.
+ *
+ * Runs after the variants are written, so a pack created in this same save can
+ * be chosen as the representative immediately.
+ *
+ * Two invariants the database cannot express are enforced here: the pack must
+ * belong to THIS family (a foreign key would happily accept another product's
+ * variant, which would put a stranger's photograph on the card), and it must be
+ * active (a retired pack must not represent a live product). A choice failing
+ * either is cleared rather than rejected — the same forgiving treatment a hero
+ * gets, because the fallback is well defined and losing an entire product save
+ * over a stale dropdown value would be worse.
+ */
+async function applyRepresentative(
+  tx: Prisma.TransactionClient,
+  familyId: string,
+  body: ProductBody,
+): Promise<void> {
+  // Absent means "not editing it" — leave whatever is stored.
+  if (body.representativeSku === undefined) return;
+
+  const wantedSku = body.representativeSku?.trim().toUpperCase() || null;
+
+  const chosen = wantedSku
+    ? await tx.productVariant.findFirst({
+        where: { familyId, sku: wantedSku, isActive: true },
+        select: { id: true },
+      })
+    : null;
+
+  await tx.productFamily.update({
+    where: { id: familyId },
+    data: { representativeVariantId: chosen?.id ?? null },
+  });
 }
 
 /**

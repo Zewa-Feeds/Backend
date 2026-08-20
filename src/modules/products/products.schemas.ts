@@ -188,6 +188,12 @@ export const mediaPreviewSchema = z.object({
     )
     .max(50)
     .optional(),
+  /**
+   * Listing representative as staged in the editor, so the "Listing card"
+   * preview updates the moment the operator changes the dropdown rather than
+   * only after a save.
+   */
+  representativeSku: z.string().trim().max(40).optional().nullable(),
 });
 
 /**
@@ -271,6 +277,18 @@ export const productBodySchema = z.object({
   // Meta tags must be plain: markup would corrupt them (§5.2).
   seoTitle: z.string().trim().max(70).transform(plainText).optional().nullable(),
   seoDesc: z.string().trim().max(180).transform(plainText).optional().nullable(),
+
+  /**
+   * The pack whose photography represents this product on listing surfaces.
+   *
+   * A SKU rather than an id, matching how the editor identifies packs
+   * everywhere else and letting a variant created in the same save be chosen.
+   * Validated server-side against the family's own active packs; anything else
+   * clears the choice rather than failing the save, exactly as a hero does.
+   *
+   * Absent means "not editing it". Explicit null means "back to the default".
+   */
+  representativeSku: z.string().trim().max(40).optional().nullable(),
 
   variants: z
     .array(variantSchema)

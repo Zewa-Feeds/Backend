@@ -317,15 +317,39 @@ export async function loadResolvable(tx: Tx, familyId: string): Promise<Resolvab
     orderBy: { position: 'asc' },
   });
 
-  /*
-   * Dual-read.
-   *
-   * The join table is authoritative where it has rows; the legacy column is the
-   * fallback for anything not yet backfilled. Because the resolver takes a single
-   * `variantId`, a multi-target asset is expanded into one resolvable entry per
-   * target — same id, so the resolver's own de-duplication collapses it back to a
-   * single gallery item.
-   */
+  return toResolvable(rows);
+}
+
+/** A media row carrying both targeting mechanisms, as every caller selects it. */
+export interface TargetableMediaRow {
+  id: string;
+  type: MediaType;
+  url: string;
+  alt: string | null;
+  position: number;
+  variantId: string | null;
+  posterUrl?: string | null;
+  width?: number | null;
+  height?: number | null;
+  durationSec?: number | null;
+  variantLinks: { variantId: string }[];
+}
+
+/**
+ * Media rows -> the resolver's shape. Dual-read, and the only implementation of it.
+ *
+ * The join table is authoritative where it has rows; the legacy column is the
+ * fallback for anything not yet backfilled. Because the resolver takes a single
+ * `variantId`, a multi-target asset is expanded into one resolvable entry per
+ * target — same id, so the resolver's own de-duplication collapses it back to a
+ * single gallery item.
+ *
+ * Pure, and shared with the public serializer. It was inlined in `loadResolvable`
+ * while the CMS was the only caller; the storefront then read the legacy column
+ * directly and silently ignored every multi-pack assignment an operator made.
+ * One implementation means the two cannot drift again.
+ */
+export function toResolvable(rows: TargetableMediaRow[]): ResolvableMedia[] {
   return rows.flatMap((r) => {
     const targets = r.variantLinks.length > 0
       ? r.variantLinks.map((l) => l.variantId)
@@ -340,10 +364,10 @@ export async function loadResolvable(tx: Tx, familyId: string): Promise<Resolvab
       alt: r.alt,
       position: r.position,
       variantId,
-      posterUrl: r.posterUrl,
-      width: r.width,
-      height: r.height,
-      durationSec: r.durationSec,
+      posterUrl: r.posterUrl ?? null,
+      width: r.width ?? null,
+      height: r.height ?? null,
+      durationSec: r.durationSec ?? null,
     }));
   });
 }
