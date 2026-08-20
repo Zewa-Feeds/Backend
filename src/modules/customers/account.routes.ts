@@ -31,6 +31,8 @@ import { logger } from '@/lib/logger';
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, formatAddress } from '@/modules/orders/orders.serializer';
 import { toRupees } from '@/modules/products/products.serializer';
 import { buildTimeline } from '@/modules/orders/lifecycle';
+import { generateInvoicePdf } from '@/integrations/pdf/invoice';
+import { getTaxConfig } from '@/modules/settings/settings.service';
 import type { RequestHandler } from 'express';
 
 const log = logger.child({ module: 'customer.auth' });
@@ -523,6 +525,76 @@ accountRouter.get(
  * order belonging to someone else is simply not found, so guessing an order
  * number reveals nothing about whether it exists.
  */
+/**
+ * The customer's own tax invoice, as a PDF.
+ *
+ * The PDF is NOT stored anywhere — it is rendered on demand from the order row
+ * each time. That is safe because every field an invoice needs (product name,
+ * HSN, unit price, tax rate, address) is snapshot onto the order at purchase
+ * time, so regenerating it in five years reproduces the same document rather
+ * than one reflecting today's catalogue.
+ *
+ * Ownership is part of the WHERE clause, exactly as in the order detail route:
+ * another customer's invoice is not found rather than found-and-refused.
+ */
+accountRouter.get(
+  '/orders/:orderNo/invoice',
+  validate({ params: z.object({ orderNo: z.string().trim().min(3).max(40) }) }),
+  asyncHandler(async (req, res) => {
+    const order = await prisma.order.findFirst({
+      where: { orderNo: req.params.orderNo as string, ...ownedBy(req.customer!) },
+      select: {
+        orderNo: true,
+        invoiceNumber: true,
+        placedAt: true,
+        email: true,
+        phone: true,
+        shippingAddress: true,
+        subtotalPaise: true,
+        discountPaise: true,
+        shippingPaise: true,
+        totalPaise: true,
+        couponCode: true,
+        items: {
+          select: {
+            productName: true,
+            sku: true,
+            pack: true,
+            qty: true,
+            unitPricePaise: true,
+            lineTotalPaise: true,
+            hsn: true,
+            taxRatePct: true,
+          },
+        },
+      },
+    });
+    if (!order) throw notFound('Order');
+
+    /*
+     * The invoice number is issued when staff ACCEPT the order, not at
+     * checkout, so a freshly placed order legitimately has none yet. 409 rather
+     * than 404 — the order exists, the document just does not yet.
+     */
+    if (!order.invoiceNumber) {
+      throw new AppError(
+        409,
+        ErrorCode.CONFLICT,
+        'Your invoice will be available once we have accepted this order.',
+      );
+    }
+
+    const pdf = await generateInvoicePdf(order, await getTaxConfig());
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="invoice-${order.invoiceNumber.replace(/[^\w.-]/g, '-')}.pdf"`,
+    );
+    res.send(Buffer.from(pdf));
+  }),
+);
+
 accountRouter.get(
   '/orders/:orderNo',
   validate({ params: z.object({ orderNo: z.string().trim().min(3).max(40) }) }),
