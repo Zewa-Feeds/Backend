@@ -12,11 +12,12 @@
  *
  * Preview renders from the overlay; Publish applies it and deletes it.
  */
-import { AuditModule, MediaType, ProductStatus, type Prisma } from '@prisma/client';
+import { AuditModule, MediaType, ProductStatus, type Prisma, MediaStatus} from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { conflict, ErrorCode, notFound } from '@/lib/errors';
 import { AppError } from '@/lib/errors';
 import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
+import { reconcileMedia } from '@/modules/products/media.integrity';
 import { listMeta, toSkipTake } from '@/middleware/validate';
 import { destroyAssets } from '@/integrations/cloudinary/cloudinary.service';
 import type { Role } from '@prisma/client';
@@ -701,25 +702,64 @@ async function applyMediaToLive(
   // Absent `media` means "not editing the gallery" — leave it alone.
   if (!body.media) return;
 
-  const before = await tx.productMedia.findMany({
+  /*
+   * Reconciled by identity, not rebuilt.
+   *
+   * This used to delete every row for the product and re-create the payload,
+   * which handed each asset a NEW primary key on every save. Anything holding a
+   * media id — a hero pointer, a targeting row, an audit entry — was pointing at
+   * something that ceased to exist the next time anyone pressed Save.
+   *
+   * Rows now keep their ids: existing assets are updated in place, genuinely new
+   * ones are created, and departed ones are ARCHIVED rather than deleted so their
+   * publicId survives for a deliberate Cloudinary sweep.
+   */
+  const variants = await tx.productVariant.findMany({
     where: { familyId },
-    select: { publicId: true, url: true },
+    select: { id: true, sku: true },
   });
+  const skuToId = new Map(variants.map((v) => [v.sku.toUpperCase(), v.id]));
 
-  await tx.productMedia.deleteMany({ where: { familyId } });
-  if (body.media.length > 0) {
-    const variants = await tx.productVariant.findMany({
-      where: { familyId }, select: { id: true, sku: true },
-    });
-    const skuToId = new Map(variants.map((v) => [v.sku.toUpperCase(), v.id]));
-    await tx.productMedia.createMany({
-      data: mediaRows(body.media, skuToId).map((row) => ({ ...row, familyId })),
-    });
-  }
+  const result = await reconcileMedia(tx, familyId, body.media, skuToId);
+  orphanSink.push(...result.archivedPublicIds);
 
-  const keptUrls = new Set(body.media.map((m) => m.url));
-  for (const m of before) {
-    if (m.publicId && !keptUrls.has(m.url)) orphanSink.push(m.publicId);
+  /*
+   * A hero can be invalidated by the very save that archived its target. Clearing
+   * it here keeps the invariant "a hero is always something this pack shows"
+   * true at rest, rather than leaving a pointer the resolver would ignore.
+   */
+  await clearInvalidHeroes(tx, familyId);
+}
+
+/**
+ * Drop hero pointers that no longer name a visible asset.
+ *
+ * Runs after every gallery save. The foreign key already nulls a hero whose row
+ * is deleted, but archiving is not deletion — and an archived asset is exactly as
+ * unusable as a deleted one from a customer's point of view.
+ */
+async function clearInvalidHeroes(tx: Prisma.TransactionClient, familyId: string): Promise<void> {
+  const withHero = await tx.productVariant.findMany({
+    where: { familyId, heroMediaId: { not: null } },
+    select: { id: true, heroMediaId: true },
+  });
+  if (withHero.length === 0) return;
+
+  const live = await tx.productMedia.findMany({
+    where: {
+      id: { in: withHero.map((v) => v.heroMediaId).filter((id): id is string => Boolean(id)) },
+      status: { not: MediaStatus.ARCHIVED },
+    },
+    select: { id: true },
+  });
+  const liveIds = new Set(live.map((m) => m.id));
+
+  const stale = withHero.filter((v) => !v.heroMediaId || !liveIds.has(v.heroMediaId));
+  if (stale.length > 0) {
+    await tx.productVariant.updateMany({
+      where: { id: { in: stale.map((v) => v.id) } },
+      data: { heroMediaId: null },
+    });
   }
 }
 

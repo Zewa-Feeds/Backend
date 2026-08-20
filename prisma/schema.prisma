@@ -271,6 +271,18 @@ model ProductVariant {
   /// Pack-specific photography. Shared assets have variantId = NULL instead.
   media      ProductMedia[]
 
+  /// The asset this pack leads with.
+  ///
+  /// SetNull so a removed asset leaves "no hero" rather than a dangling id. The
+  /// database only guarantees the pointer is valid; that the asset belongs to the
+  /// same product and appears in this pack's resolved gallery is enforced in the
+  /// service, because neither is expressible as a foreign key.
+  heroMediaId String?
+  heroMedia   ProductMedia? @relation("VariantHero", fields: [heroMediaId], references: [id], onDelete: SetNull)
+
+  /// Assets explicitly shown for this pack.
+  mediaLinks ProductMediaVariant[]
+
   /// Self-relation for multipack inheritance.
   baseVariant   ProductVariant?  @relation("PackInheritance", fields: [baseVariantId], references: [id], onDelete: SetNull)
   derivedPacks  ProductVariant[] @relation("PackInheritance")
@@ -285,6 +297,19 @@ model ProductVariant {
 enum MediaType {
   IMAGE
   VIDEO
+}
+
+/// Lifecycle of the underlying Cloudinary asset.
+///
+/// Defaults to READY because every row that existed when this was introduced was
+/// already being served — marking them PENDING would have emptied the storefront.
+/// PENDING/FAILED become meaningful when two-phase upload lands; ARCHIVED is the
+/// soft delete, and is the only state the resolver excludes.
+enum MediaStatus {
+  PENDING
+  READY
+  FAILED
+  ARCHIVED
 }
 
 /// One ordered gallery per product: photos and (at most one) video interleaved.
@@ -338,12 +363,56 @@ model ProductMedia {
   /// VIDEO only — surfaced in the CMS so an accidental 10-minute upload is obvious.
   durationSec Float?
 
+  /// Where this asset is in its life. ARCHIVED is a soft delete — the row and its
+  /// publicId survive so the Cloudinary asset can be destroyed deliberately later
+  /// rather than orphaned and billed forever.
+  status     MediaStatus @default(READY)
+  archivedAt DateTime?
+
   family  ProductFamily   @relation(fields: [familyId], references: [id], onDelete: Cascade)
-  /// SetNull, not Cascade: retiring a pack size must not delete its photography,
-  /// which is still useful as a shared asset.
+  /// LEGACY targeting, kept during dual-read. `variantLinks` is the new home for
+  /// this relationship; both are read until the join table is fully verified, and
+  /// only then is this column retired.
+  ///
+  /// SetNull stays deliberately: a hard delete of a variant only happens as part
+  /// of deleting the whole product family, where this row is cascaded away
+  /// anyway. Normal CMS removal deactivates a variant rather than deleting it, so
+  /// this column keeps pointing at the inactive pack — which is the correct
+  /// outcome, and is what stops pack media silently becoming shared.
   variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
 
+  /// Explicit targeting. One asset, many packs.
+  variantLinks    ProductMediaVariant[]
+  /// Packs that lead with this asset. SetNull on the other side.
+  heroForVariants ProductVariant[]      @relation("VariantHero")
+
   @@index([familyId, position])
+  @@index([variantId])
+  @@index([status])
+}
+
+/// Which packs an asset is shown for.
+///
+/// Replaces the single nullable `ProductMedia.variantId`, which could only ever
+/// name one pack — so a photo valid for "45g", "45g x 2" and "45g x 3" needed
+/// three rows, three Cloudinary uploads, and three things to keep in step.
+///
+/// The composite primary key is the whole duplicate-prevention story: assigning
+/// the same asset to the same pack twice is impossible at the database level, not
+/// merely guarded in code. That also makes assignment idempotent — a retried
+/// request lands on the same row instead of creating a second one.
+model ProductMediaVariant {
+  productMediaId String
+  variantId      String
+
+  createdAt DateTime @default(now())
+
+  /// Cascade removes the ASSOCIATION only. The ProductMedia row survives with its
+  /// publicId intact, so un-assigning an asset never destroys the file.
+  media   ProductMedia   @relation(fields: [productMediaId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@id([productMediaId, variantId])
   @@index([variantId])
 }
 
