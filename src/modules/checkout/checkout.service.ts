@@ -60,6 +60,8 @@ export interface CheckoutInput {
   /** Guards against double-submit; a repeat returns the original order. */
   idempotencyKey?: string;
   customerId?: string | null;
+  /** Keep this address in the customer's address book for next time. */
+  saveAddress?: boolean;
 }
 
 export interface CheckoutResult {
@@ -82,6 +84,28 @@ export interface CheckoutResult {
   };
 }
 
+
+/**
+ * Enqueue without letting a queue outage fail the caller.
+ *
+ * Only for jobs scheduled AFTER the order is committed, where the request has
+ * already done the part that matters. Anything the order's correctness depends
+ * on must not use this.
+ */
+async function enqueueQuietly(
+  jobName: string,
+  orderNo: string,
+  add: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    await add();
+  } catch (err) {
+    log.error(
+      { err, jobName, orderNo },
+      'could not queue a post-order job — the order stands, but this job will not run',
+    );
+  }
+}
 
 export async function checkout(
   input: CheckoutInput,
@@ -259,6 +283,52 @@ export async function checkout(
         }
       }
 
+      /*
+       * Save the delivery address to the address book, when asked.
+       *
+       * Runs for guests too, and that is the point: checkout already links a
+       * guest to a Customer row by email above, so the address hangs off that
+       * row. When the same person later registers with that email, registration
+       * claims the existing row rather than creating a second one — so the
+       * address is simply already there, with no migration step and no token to
+       * email them.
+       *
+       * Deduplicated on the fields that make an address distinct. Re-ordering
+       * the same address three times should not leave three identical entries.
+       */
+      if (input.saveAddress && customerId) {
+        const a = input.shippingAddress;
+        const duplicate = await tx.address.findFirst({
+          where: {
+            customerId,
+            line1: a.line1,
+            city: a.city,
+            state: a.state,
+            pincode: a.pincode,
+          },
+          select: { id: true },
+        });
+
+        if (!duplicate) {
+          const existingCount = await tx.address.count({ where: { customerId } });
+          await tx.address.create({
+            data: {
+              customerId,
+              name: a.name,
+              phone: input.phone,
+              line1: a.line1,
+              line2: a.line2 ?? null,
+              city: a.city,
+              state: a.state,
+              pincode: a.pincode,
+              // The first address saved becomes the default, matching the
+              // account address book's own rule.
+              isDefault: existingCount === 0,
+            },
+          });
+        }
+      }
+
       // 5b. COD orders are UNPAID and immediately actionable by ops. Online orders
       // stay UNPAID until the gateway confirms.
       const order = await tx.order.create({
@@ -408,11 +478,25 @@ export async function checkout(
     data: { razorpayOrderId: gatewayOrder.gatewayOrderId },
   });
 
-  // Stock-release sweep: an abandoned online order must not hold inventory.
-  await paymentQueue.add(
-    'release-unpaid',
-    { kind: 'release-unpaid', orderNo: created.orderNo },
-    { delay: env.UNPAID_ORDER_TTL_MINUTES * 60_000, jobId: `release-${created.orderNo}` },
+  /*
+   * Stock-release sweep: an abandoned online order must not hold inventory.
+   *
+   * Deliberately not allowed to fail the request. The order is ALREADY
+   * committed by this point — the transaction closed above — so throwing here
+   * returned a 500 to someone whose order genuinely exists, inviting them to
+   * retry an order they had already placed.
+   *
+   * The queue is a safety net, not a precondition. If it is unreachable the
+   * cost is an unpaid order sitting on its stock until someone cancels it by
+   * hand, which is a far smaller problem than telling a paying customer their
+   * checkout failed when it did not. The log line is what makes it findable.
+   */
+  await enqueueQuietly('release-unpaid', created.orderNo, () =>
+    paymentQueue.add(
+      'release-unpaid',
+      { kind: 'release-unpaid', orderNo: created.orderNo },
+      { delay: env.UNPAID_ORDER_TTL_MINUTES * 60_000, jobId: `release-${created.orderNo}` },
+    ),
   );
 
   // ╔════════════════════════════════════════════════════════════════════════╗
@@ -423,10 +507,16 @@ export async function checkout(
   // ║ POST /checkout/:orderNo/confirm plus the signed webhook instead.       ║
   // ╚════════════════════════════════════════════════════════════════════════╝
   if (gatewayOrder.isSimulated) {
-    await paymentQueue.add(
-      'auto-confirm',
-      { kind: 'auto-confirm', orderNo: created.orderNo, gatewayOrderId: gatewayOrder.gatewayOrderId },
-      { delay: MOCK_CONFIRM_DELAY_MS, jobId: `autoconfirm-${created.orderNo}` },
+    await enqueueQuietly('auto-confirm', created.orderNo, () =>
+      paymentQueue.add(
+        'auto-confirm',
+        {
+          kind: 'auto-confirm',
+          orderNo: created.orderNo,
+          gatewayOrderId: gatewayOrder.gatewayOrderId,
+        },
+        { delay: MOCK_CONFIRM_DELAY_MS, jobId: `autoconfirm-${created.orderNo}` },
+      ),
     );
   }
 

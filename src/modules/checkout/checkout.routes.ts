@@ -48,6 +48,8 @@ const checkoutSchema = z.object({
   paymentMethod: z.nativeEnum(PaymentMethod),
   couponCode: z.string().trim().max(30).optional().nullable(),
   customerNote: z.string().trim().max(1000).transform(plainText).optional(),
+  /** "Save this address for next time" on the checkout form. */
+  saveAddress: z.boolean().optional().default(false),
 });
 
 const orderNoSchema = z
