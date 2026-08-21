@@ -11,9 +11,10 @@
  */
 import { startEmailWorker } from './workers/email.worker';
 import { startPaymentWorker } from './workers/payment.worker';
+import { startMaintenanceWorker } from './workers/maintenance.worker';
 import { checkDatabase, disconnectPrisma } from '@/lib/prisma';
 import { checkRedis, disconnectRedis } from '@/lib/redis';
-import { closeQueues } from './queues';
+import { closeQueues, scheduleMaintenance } from './queues';
 import { logger } from '@/lib/logger';
 import { env } from '@/config/env';
 
@@ -28,7 +29,22 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const workers = [startEmailWorker(), startPaymentWorker()];
+  const workers = [startEmailWorker(), startPaymentWorker(), startMaintenanceWorker()];
+
+  /*
+   * Register the recurring sweeps.
+   *
+   * Idempotent, so every worker boot re-asserting the schedule leaves exactly
+   * one — which is what makes this safe to run on several instances. A failure
+   * here must not stop the worker: the queues still work, and the next boot
+   * registers it.
+   */
+  try {
+    await scheduleMaintenance();
+    log.info('maintenance schedule registered');
+  } catch (err) {
+    log.error({ err }, 'could not register the maintenance schedule');
+  }
 
   log.info(
     { env: env.NODE_ENV, workers: workers.length, autoConfirm: env.RAZORPAY_AUTO_CONFIRM },

@@ -76,6 +76,21 @@ export interface ReleaseStockJob {
 
 export type PaymentJob = AutoConfirmJob | ReleaseStockJob;
 
+export interface ReconcileMediaJob {
+  /**
+   * Make Cloudinary and the database agree: resolve media stuck PENDING because
+   * a notification never arrived, and destroy assets that were uploaded and
+   * never attached to anything.
+   *
+   * The webhook is the fast path; this is what makes a MISSED webhook
+   * survivable. Without it a video sits PENDING forever and an abandoned upload
+   * bills forever.
+   */
+  kind: 'reconcile-media';
+}
+
+export type MaintenanceJob = ReconcileMediaJob;
+
 // ---- Queues ----------------------------------------------------------------
 
 export const emailQueue = new Queue<EmailJob>(QUEUE_NAMES.email, {
@@ -92,10 +107,59 @@ export const paymentQueue = new Queue<PaymentJob>(QUEUE_NAMES.payment, {
   },
 });
 
-export const maintenanceQueue = new Queue(QUEUE_NAMES.maintenance, {
+export const maintenanceQueue = new Queue<MaintenanceJob>(QUEUE_NAMES.maintenance, {
   connection: queueRedis,
-  defaultJobOptions,
+  defaultJobOptions: {
+    ...defaultJobOptions,
+    /*
+     * Housekeeping does not deserve five attempts.
+     *
+     * Every sweep is idempotent and runs again on the next tick, so a failure
+     * costs at most one interval. Retrying hard would instead stack overlapping
+     * sweeps against Cloudinary during exactly the outage that caused the
+     * failure.
+     */
+    attempts: 2,
+    backoff: { type: 'fixed', delay: 60_000 },
+  },
 });
+
+/**
+ * How often reconciliation runs.
+ *
+ * Chosen against what it is waiting for, not for tidiness. The orphan sweep only
+ * acts on uploads older than six hours, so running more often than hourly finds
+ * nothing new; and a video whose webhook was lost should not wait a whole day to
+ * appear. Hourly is comfortably inside both.
+ */
+const RECONCILE_EVERY_MS = 60 * 60 * 1000;
+
+/**
+ * Register the recurring reconciliation sweep.
+ *
+ * Idempotent by construction. BullMQ keys a repeatable job on its name plus its
+ * repeat options, so calling this on every worker boot — including several
+ * workers booting at once — leaves exactly one schedule rather than one per
+ * process. The explicit `jobId` makes that guarantee legible rather than
+ * incidental.
+ */
+export async function scheduleMaintenance(): Promise<void> {
+  await maintenanceQueue.add(
+    'reconcile-media',
+    { kind: 'reconcile-media' },
+    {
+      repeat: { every: RECONCILE_EVERY_MS },
+      jobId: 'reconcile-media',
+      /*
+       * A missed window is not worth catching up on. If the worker was down for
+       * six hours, running six sweeps back to back would hammer Cloudinary to
+       * reach the same state one sweep reaches.
+       */
+      removeOnComplete: { count: 24 },
+      removeOnFail: { count: 24 },
+    },
+  );
+}
 
 /** Close producers on shutdown so Redis connections drain cleanly. */
 export async function closeQueues(): Promise<void> {
