@@ -1,12 +1,20 @@
 # Render blueprint for the Zewa Feeds backend.
 #
-# FREE-TIER LAYOUT: one web service, with the BullMQ workers running inside it
-# (RUN_WORKERS_IN_API). Render has no free worker or Redis tier, so the
-# separate worker process this app prefers is not available here.
+# TWO SERVICES, which is the layout this app was written for:
 #
-# Known limitation: a free web service sleeps after ~15 minutes idle and takes
-# ~50s to wake. Inbound Razorpay webhooks can time out against a sleeping
-# service, so this layout is for demos and staging — NOT for live payments.
+#   zewa-api     the HTTP API
+#   zewa-worker  the BullMQ consumers — email, payment, maintenance
+#
+# The split is not decoration. A slow ZeptoMail send, a PDF render or a
+# reconciliation sweep that talks to Cloudinary for a hundred assets must not sit
+# in the same event loop as a checkout request, and a crash in a job handler must
+# not take the API down with it. The two also scale and restart independently.
+#
+# The API previously hosted the consumers via RUN_WORKERS_IN_API because Render
+# has no free background-worker tier. That was a free-plan workaround with a
+# known hole: the maintenance worker and its schedule live only in the worker
+# entry point, so media reconciliation never ran at all. RUN_WORKERS_IN_API is
+# now false and the worker service owns every queue.
 #
 # Deploy with: Render Dashboard -> New -> Blueprint -> point at this repo.
 # This repo's root IS the backend (package.json sits beside this file), so no
@@ -17,13 +25,17 @@ services:
   - type: web
     name: zewa-api
     runtime: node
-    plan: free
+    plan: starter
     # `--include=dev` is required, not optional. NODE_ENV=production (set below)
     # makes npm skip devDependencies, but typescript, tsc-alias, prisma and the
     # @types packages all live there — without them `tsc` fails with hundreds of
     # "Cannot find name 'process'" and "Could not find a declaration file for
     # module 'express'" errors. Runtime is unaffected: `start` runs plain JS
     # from dist/, so the dev packages are only needed during the build.
+    #
+    # Migrations run HERE and only here. Two services applying them
+    # concurrently would race for the advisory lock, and one would fail its
+    # deploy for no reason.
     buildCommand: npm ci --include=dev && npm run build && npx prisma migrate deploy
     startCommand: npm run start
     healthCheckPath: /health
@@ -33,9 +45,9 @@ services:
       - key: NODE_VERSION
         value: "20"
 
-      # Managed infra — wired automatically from the definitions below.
+      # Managed infra — set in the dashboard.
       # External free tiers: Render has no free Redis, and its free Postgres
-      # expires after 30 days. Set both in the dashboard.
+      # expires after 30 days.
       #   DATABASE_URL -> Neon      (postgresql://...)
       #   REDIS_URL    -> Upstash   (rediss://...)
       - key: DATABASE_URL
@@ -43,8 +55,9 @@ services:
       - key: REDIS_URL
         sync: false
 
-      # Generated once by Render, then shared with the worker via envVarGroup
-      # so both processes verify the same tokens.
+      # Generated once by Render. The worker reads these back via fromService
+      # below, so both processes verify the same tokens — if they diverged, a
+      # token minted by the API would be rejected everywhere else.
       - key: JWT_ACCESS_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET
@@ -86,6 +99,18 @@ services:
       - key: CLOUDINARY_API_SECRET
         sync: false
 
+      # This service's own public origin. Signed into every upload signature as
+      # Cloudinary's notification_url — without it no webhook is ever requested
+      # and media state is resolved only by the hourly reconciliation sweep.
+      - key: PUBLIC_API_ORIGIN
+        sync: false
+
+      # Shared with the storefront's /api/revalidate route. Must match the value
+      # set on Vercel exactly, or a publish leaves the shop grid stale for an
+      # hour. Fail-closed on the storefront side, so a mismatch is silent.
+      - key: REVALIDATE_SECRET
+        sync: false
+
       # Production refuses to boot with this true — it would confirm payments
       # without charging. Stated explicitly rather than relying on the default.
       - key: RAZORPAY_AUTO_CONFIRM
@@ -97,16 +122,100 @@ services:
       # orders were placed with it, and dropping the enum value would break
       # their invoices and order history. The storefront offers Razorpay
       # exclusively; the COD branches that remain only render past orders.
-      #
-      # Requires RAZORPAY_KEY_ID, _KEY_SECRET and _WEBHOOK_SECRET in the
-      # dashboard — the production guardrail refuses to boot without them.
       - key: PAYMENT_RAZORPAY_ENABLED
         value: "true"
       - key: PAYMENT_COD_ENABLED
         value: "false"
 
-      # No separate worker service on the free plan, so the API hosts the
-      # queue consumers. Without this nothing drains the payment and email
-      # queues: orders are taken but never confirmed.
+      # The worker service owns every queue. Hosting consumers here as well
+      # would double-process each job and, worse, would still miss the
+      # maintenance worker — server.ts only ever started email and payment.
       - key: RUN_WORKERS_IN_API
+        value: "false"
+
+  # ---- Queue consumers -----------------------------------------------------
+  - type: worker
+    name: zewa-worker
+    runtime: node
+    plan: starter
+    # No migrate deploy here: the API's build applies migrations, and two
+    # services racing for the advisory lock would fail one deploy arbitrarily.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm run worker:prod
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+
+      # Same database and Redis as the API. The queues ARE Redis, so a worker
+      # pointed at a different instance would consume nothing and look healthy.
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+
+      # Read back from the API rather than generated again. Independently
+      # generated secrets would verify nothing the API minted.
+      - key: JWT_ACCESS_SECRET
+        fromService:
+          type: web
+          name: zewa-api
+          envVarKey: JWT_ACCESS_SECRET
+      - key: JWT_REFRESH_SECRET
+        fromService:
+          type: web
+          name: zewa-api
+          envVarKey: JWT_REFRESH_SECRET
+      - key: JWT_PREVIEW_SECRET
+        fromService:
+          type: web
+          name: zewa-api
+          envVarKey: JWT_PREVIEW_SECRET
+
+      # The env schema validates the whole config on boot regardless of which
+      # entry point runs, so the worker needs every required variable even for
+      # the ones its jobs never touch. A missing origin exits the process.
+      - key: TWOFA_ENCRYPTION_KEY
+        sync: false
+      - key: STOREFRONT_ORIGIN
+        sync: false
+      - key: CMS_ORIGIN
+        sync: false
+
+      # Order confirmations and invoices are sent from here — this is the
+      # service that actually needs the mail token.
+      - key: ZEPTOMAIL_TOKEN
+        value: "placeholder-not-configured"
+      - key: ZEPTOMAIL_FROM
+        sync: false
+
+      # The reconciliation sweep probes and destroys Cloudinary assets, so the
+      # worker needs the full credential set, not just the cloud name.
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+
+      # Payment jobs verify gateway signatures, so the same keys are required
+      # here as on the API — and the production guardrail refuses to boot
+      # without them while Razorpay is enabled.
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: RAZORPAY_AUTO_CONFIRM
+        value: "false"
+      - key: PAYMENT_RAZORPAY_ENABLED
         value: "true"
+      - key: PAYMENT_COD_ENABLED
+        value: "false"
+
+      # Irrelevant to a process that serves no HTTP, but the schema requires it
+      # and a missing value exits before any job runs.
+      - key: RUN_WORKERS_IN_API
+        value: "false"
