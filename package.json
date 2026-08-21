@@ -29,7 +29,8 @@
     "docker:logs": "docker compose -f docker/docker-compose.yml logs -f",
     "docker:nuke": "docker compose -f docker/docker-compose.yml down -v",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:setup": "npm run docker:up && node scripts/test-setup.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.2.1",

@@ -12,8 +12,9 @@
  * deactivated, and what survives on the join table. Each builds and deletes its
  * own namespaced product.
  */
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MediaType, PrismaClient } from '@prisma/client';
+import { createForeignProduct, dropFamily, ns, sweepFixtures, testActor, testCtx } from '@/test/fixtures';
 import { saveDraft, publish } from './products.service';
 import { productBodySchema } from './products.schemas';
 import { resolveGallery } from './media.resolver';
@@ -25,31 +26,26 @@ afterAll(async () => prisma.$disconnect());
 
 const ADMIN = 'ADMIN' as Role;
 const CDN = 'https://res.cloudinary.com/test';
-/** A real audit context: writeAudit stores actorName/actorRole, which are NOT NULL. */
-const ctx = {
-  actorId: null,
-  actorName: 'vitest',
-  actorRole: 'Admin',
-  ip: '127.0.0.1',
-  userAgent: 'vitest',
-} as never;
 
 let actorId: string;
-async function actor(): Promise<string> {
-  if (actorId) return actorId;
-  const u = await prisma.cmsUser.findFirstOrThrow({ select: { id: true } });
-  actorId = u.id;
-  return actorId;
-}
+const actor = async () => (actorId ??= await testActor(prisma));
+
+/*
+ * Clear anything an earlier crashed run left behind. A test that times out never
+ * reaches its own cleanup, and without this those rows accumulate.
+ */
+beforeAll(async () => {
+  await sweepFixtures(prisma);
+});
 
 interface Built { slug: string; familyId: string; base: string; twin: string; kilo: string }
 
 /** A published product, so saves land in the draft and publish applies them. */
 async function withProduct<T>(fn: (b: Built) => Promise<T>): Promise<T> {
-  const ns = `zzident${Date.now()}${Math.floor(Math.random() * 1000)}`;
+  const slug = ns('ident');
   const family = await prisma.productFamily.create({
     data: {
-      slug: ns, name: 'Identity Test', shortDesc: 'x', category: 'BETTA',
+      slug, name: 'Identity Test', shortDesc: 'x', category: 'BETTA',
       status: 'ACTIVE', publishedAt: new Date(),
     },
     select: { id: true },
@@ -58,7 +54,7 @@ async function withProduct<T>(fn: (b: Built) => Promise<T>): Promise<T> {
     const mk = (sku: string, pack: string, position: number, baseVariantId?: string) =>
       prisma.productVariant.create({
         data: {
-          familyId: family.id, sku: `${ns.toUpperCase()}-${sku}`, pack, position,
+          familyId: family.id, sku: `${slug.toUpperCase()}-${sku}`, pack, position,
           mrpPaise: 10000, pricePaise: 10000, stock: 5, baseVariantId,
         },
         select: { id: true, sku: true },
@@ -66,9 +62,9 @@ async function withProduct<T>(fn: (b: Built) => Promise<T>): Promise<T> {
     const base = await mk('45G', '45g Bottle', 0);
     const twin = await mk('45GX2', '45g x 2', 1, base.id);
     const kilo = await mk('1KG', '1kg Pouch', 2);
-    return await fn({ slug: ns, familyId: family.id, base: base.sku, twin: twin.sku, kilo: kilo.sku });
+    return await fn({ slug, familyId: family.id, base: base.sku, twin: twin.sku, kilo: kilo.sku });
   } finally {
-    await prisma.productFamily.delete({ where: { id: family.id } }).catch(() => {});
+    await dropFamily(prisma, family.id);
   }
 }
 
@@ -129,9 +125,8 @@ async function seedMedia(familyId: string, url: string, variantId: string | null
 /** Save then publish, so the payload reaches the live rows. */
 async function saveAndPublish(slug: string, payload: never) {
   const id = await actor();
-  const withActor = { ...(ctx as object), actorId: id } as never;
-  await saveDraft(slug, payload, id, withActor, ADMIN);
-  await publish(slug, id, withActor, ADMIN);
+  await saveDraft(slug, payload, id, testCtx(id), ADMIN);
+  await publish(slug, id, testCtx(id), ADMIN);
 }
 
 describe('renaming a SKU', () => {
@@ -354,6 +349,102 @@ describe('renaming a SKU', () => {
     });
   });
 
+  it('swaps two SKUs in one save without a constraint error', async () => {
+    /*
+     * A becomes B while B becomes A. Whichever is written first claims a name
+     * the other still holds, so a plain update order fails the unique index and
+     * the operator sees a raw database error for a legal correction. Both rows
+     * are parked on a temporary value first.
+     *
+     * The packs keep their identities: swapping the labels does not move the
+     * physical packs, their photography or their inheritance.
+     */
+    await withProduct(async (b) => {
+      const before = await live(b.familyId);
+      const baseRow = before.variants.find((v) => v.sku === b.base)!;
+      const kiloRow = before.variants.find((v) => v.sku === b.kilo)!;
+
+      await seedMedia(b.familyId, `${CDN}/bottle.jpg`, baseRow.id, 0);
+      await seedMedia(b.familyId, `${CDN}/pouch.jpg`, kiloRow.id, 1);
+      const seeded = await live(b.familyId);
+      const bottle = seeded.media.find((m) => m.url.endsWith('bottle.jpg'))!;
+      const pouch = seeded.media.find((m) => m.url.endsWith('pouch.jpg'))!;
+
+      await prisma.productVariant.update({
+        where: { id: baseRow.id }, data: { heroMediaId: bottle.id },
+      });
+
+      /*
+       * The gallery names each pack by the SKU it will hold AFTER the swap,
+       * which is what the editor sends: it moves SKU-held references at the
+       * moment of the rename.
+       */
+      await saveAndPublish(b.slug, body(b,
+        [{ id: baseRow.id, sku: b.kilo, pack: '45g Bottle', heroMediaId: bottle.id },
+         { sku: b.twin, pack: '45g x 2' },
+         { id: kiloRow.id, sku: b.base, pack: '1kg Pouch' }],
+        [{ id: bottle.id, url: `${CDN}/bottle.jpg`, skus: [b.kilo] },
+         { id: pouch.id, url: `${CDN}/pouch.jpg`, skus: [b.base] }]));
+
+      const after = await live(b.familyId);
+
+      // Both identities survive; the labels changed places.
+      expect(after.variants.find((v) => v.id === baseRow.id)!.sku).toBe(b.kilo);
+      expect(after.variants.find((v) => v.id === kiloRow.id)!.sku).toBe(b.base);
+      expect(after.variants).toHaveLength(3);
+      expect(new Set(after.variants.map((v) => v.id)).size).toBe(3);
+      expect(after.variants.every((v) => v.isActive)).toBe(true);
+
+      // No parked value survived the transaction.
+      expect(after.variants.some((v) => v.sku.startsWith('PARK-'))).toBe(false);
+
+      // Photography stayed with the physical packs, not the labels.
+      const stillBottle = after.media.find((m) => m.id === bottle.id)!;
+      const stillPouch = after.media.find((m) => m.id === pouch.id)!;
+      expect(stillBottle.variantLinks.map((l) => l.variantId)).toEqual([baseRow.id]);
+      expect(stillPouch.variantLinks.map((l) => l.variantId)).toEqual([kiloRow.id]);
+      expect(stillBottle.variantId).toBe(baseRow.id);
+
+      // Hero and inheritance untouched.
+      expect(after.variants.find((v) => v.id === baseRow.id)!.heroMediaId).toBe(bottle.id);
+      const twinRow = after.variants.find((v) => v.sku === b.twin)!;
+      expect(twinRow.baseVariantId).toBe(baseRow.id);
+    });
+  });
+
+  it('rolls back cleanly when a swap is rejected for another reason', async () => {
+    /*
+     * A swap that also claims a SKU another product owns must fail as a normal
+     * validation error and leave nothing behind — not a half-applied rename, and
+     * certainly not a row still sitting on its parked value.
+     */
+    await withProduct(async (b) => {
+      const before = await live(b.familyId);
+      const baseRow = before.variants.find((v) => v.sku === b.base)!;
+      const kiloRow = before.variants.find((v) => v.sku === b.kilo)!;
+      const foreign = await createForeignProduct(prisma);
+
+      try {
+        const id = await actor();
+        await expect(
+          saveDraft(b.slug, body(b,
+            [{ id: baseRow.id, sku: b.kilo, pack: '45g Bottle' },
+             { id: kiloRow.id, sku: b.base, pack: '1kg Pouch' },
+             { sku: foreign.sku, pack: 'steals another product\u2019s SKU' }],
+            []), id, testCtx(id), ADMIN),
+        ).rejects.toThrow();
+
+        const after = await live(b.familyId);
+        expect(after.variants.find((v) => v.id === baseRow.id)!.sku).toBe(b.base);
+        expect(after.variants.find((v) => v.id === kiloRow.id)!.sku).toBe(b.kilo);
+        expect(after.variants.some((v) => v.sku.startsWith('PARK-'))).toBe(false);
+        expect(after.variants).toHaveLength(3);
+      } finally {
+        await dropFamily(prisma, foreign.familyId);
+      }
+    });
+  });
+
   it('still deactivates a pack genuinely removed from the editor', async () => {
     await withProduct(async (b) => {
       const before = await live(b.familyId);
@@ -369,21 +460,24 @@ describe('renaming a SKU', () => {
 
   it('ignores an id belonging to another product', async () => {
     await withProduct(async (b) => {
-      const foreign = await prisma.productVariant.findFirstOrThrow({
-        where: { family: { slug: 'guppy-bites' } }, select: { id: true },
-      });
-      await saveAndPublish(b.slug, body(b,
-        [{ id: foreign.id, sku: b.base, pack: '45g Bottle' },
-         { sku: b.twin, pack: '45g x 2' }, { sku: b.kilo, pack: '1kg Pouch' }],
-        []));
+      const foreign = await createForeignProduct(prisma);
+      try {
+        await saveAndPublish(b.slug, body(b,
+          [{ id: foreign.variantId, sku: b.base, pack: '45g Bottle' },
+           { sku: b.twin, pack: '45g x 2' }, { sku: b.kilo, pack: '1kg Pouch' }],
+          []));
 
-      // Matched by SKU instead; the other product is untouched.
-      const after = await live(b.familyId);
-      expect(after.variants.map((v) => v.id)).not.toContain(foreign.id);
-      const stillTheirs = await prisma.productVariant.findUniqueOrThrow({
-        where: { id: foreign.id }, select: { family: { select: { slug: true } } },
-      });
-      expect(stillTheirs.family.slug).toBe('guppy-bites');
+        // Matched by SKU instead; the other product is untouched.
+        const after = await live(b.familyId);
+        expect(after.variants.map((v) => v.id)).not.toContain(foreign.variantId);
+        const stillTheirs = await prisma.productVariant.findUniqueOrThrow({
+          where: { id: foreign.variantId }, select: { sku: true, family: { select: { slug: true } } },
+        });
+        expect(stillTheirs.family.slug).toBe(foreign.slug);
+        expect(stillTheirs.sku).toBe(foreign.sku);
+      } finally {
+        await dropFamily(prisma, foreign.familyId);
+      }
     });
   });
 });

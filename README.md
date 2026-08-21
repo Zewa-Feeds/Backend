@@ -370,3 +370,38 @@ Three content decisions, flagged rather than guessed (design doc §10):
    `GET /settings/public`.
 3. **Razorpay or COD first** — the spec assumes Razorpay; the storefront checkout
    is COD-only. The schema supports both.
+
+## Running the backend tests
+
+The integration suites talk to a real database — composite keys, cascade
+direction, unique constraints and transaction behaviour are what they check, and
+a mock would only prove the mock was called. That database is **local**, not the
+shared hosted one:
+
+```bash
+npm run test:setup   # start Postgres + Redis containers, wait, apply migrations
+npm test             # run the suite against them
+```
+
+`test:setup` is idempotent — run it whenever the containers have been stopped.
+
+`.env.test` points `DATABASE_URL` and `REDIS_URL` at the containers from
+`docker/docker-compose.yml` (ports 5433 and 6380, deliberately non-default so
+they cannot collide with anything already installed). `vitest.setup.ts` loads it
+with `override: true`, so a developer's `.env` cannot leak a hosted URL into a
+test run.
+
+Two things follow from being local, and both matter:
+
+- **Tests cannot touch the shared catalogue.** They used to, and a test that
+  timed out mid-way left fixtures behind in data other people were using.
+- **The suite is deterministic.** Against the hosted services it took ~200s and
+  failed intermittently with 45s timeouts in whichever file happened to be
+  running. Locally it is ~3.5s.
+
+Every fixture lives under a reserved `zz` slug/SKU namespace and each suite
+sweeps that namespace in `beforeAll`, so a crashed run cannot cost the next one
+anything. See `src/test/fixtures.ts`.
+
+Stop the containers with `npm run docker:down` (keeps data) or `npm run
+docker:nuke` (deletes it).

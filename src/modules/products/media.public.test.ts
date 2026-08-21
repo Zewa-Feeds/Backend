@@ -9,12 +9,18 @@
  * Each test builds and deletes its own namespaced product, so the live
  * catalogue is untouched.
  */
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MediaStatus, MediaType, PrismaClient } from '@prisma/client';
+import { sweepFixtures } from '@/test/fixtures';
 import { FAMILY_SELECT, serializePublic } from './products.serializer';
 import { hoverVideoUrl } from '@/integrations/cloudinary/cloudinary.service';
 
 const prisma = new PrismaClient();
+
+/* Clear anything an earlier crashed run left behind. */
+beforeAll(async () => {
+  await sweepFixtures(prisma);
+});
 afterAll(async () => prisma.$disconnect());
 
 const CDN = 'https://res.cloudinary.com/test';

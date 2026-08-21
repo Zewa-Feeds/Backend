@@ -10,11 +10,12 @@
  * Also covers applyRepresentative, which is the one write path guarding a
  * cross-product boundary the database cannot express.
  */
-import { afterAll, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { MediaType, PrismaClient, ProductStatus } from '@prisma/client';
 import { saveDraft, publish, setStatus } from './products.service';
 import { productBodySchema } from './products.schemas';
 import * as revalidate from '@/integrations/storefront/revalidate';
+import { createForeignProduct, dropFamily, ns, sweepFixtures, testActor, testCtx } from '@/test/fixtures';
 import type { Role } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -24,10 +25,13 @@ const ADMIN = 'ADMIN' as Role;
 const CDN = 'https://res.cloudinary.com/test';
 
 let actorId: string;
-const actor = async () => (actorId ??= (await prisma.cmsUser.findFirstOrThrow({ select: { id: true } })).id);
-const ctxFor = (id: string) => ({
-  actorId: id, actorName: 'vitest', actorRole: 'Admin', ip: '127.0.0.1', userAgent: 'vitest',
-}) as never;
+const actor = async () => (actorId ??= await testActor(prisma));
+const ctxFor = testCtx;
+
+/* Clear anything an earlier crashed run left behind. See fixtures.sweepFixtures. */
+beforeAll(async () => {
+  await sweepFixtures(prisma);
+});
 
 interface Built { slug: string; familyId: string; base: string; kilo: string }
 
@@ -35,10 +39,10 @@ async function withProduct<T>(
   opts: { published: boolean },
   fn: (b: Built) => Promise<T>,
 ): Promise<T> {
-  const ns = `zzdraft${Date.now()}${Math.floor(Math.random() * 1000)}`;
+  const slug = ns('draft');
   const family = await prisma.productFamily.create({
     data: {
-      slug: ns, name: 'Draft Test', shortDesc: 'original', category: 'BETTA',
+      slug, name: 'Draft Test', shortDesc: 'original', category: 'BETTA',
       status: ProductStatus.ACTIVE,
       publishedAt: opts.published ? new Date() : null,
     },
@@ -47,15 +51,15 @@ async function withProduct<T>(
   try {
     const mk = (sku: string, pack: string, position: number) =>
       prisma.productVariant.create({
-        data: { familyId: family.id, sku: `${ns.toUpperCase()}-${sku}`, pack, position,
+        data: { familyId: family.id, sku: `${slug.toUpperCase()}-${sku}`, pack, position,
           mrpPaise: 10000, pricePaise: 10000, stock: 5 },
         select: { sku: true },
       });
     const base = await mk('45G', '45g Bottle', 0);
     const kilo = await mk('1KG', '1kg Pouch', 1);
-    return await fn({ slug: ns, familyId: family.id, base: base.sku, kilo: kilo.sku });
+    return await fn({ slug, familyId: family.id, base: base.sku, kilo: kilo.sku });
   } finally {
-    await prisma.productFamily.delete({ where: { id: family.id } }).catch(() => {});
+    await dropFamily(prisma, family.id);
   }
 }
 
@@ -149,20 +153,22 @@ describe('save draft', () => {
     await withProduct({ published: false }, async (b) => {
       const id = await actor();
       // A SKU already owned by another product fails the uniqueness assertion.
-      const clash = await prisma.productVariant.findFirstOrThrow({
-        where: { family: { slug: 'guppy-bites' } }, select: { sku: true },
-      });
-      const bad = body(b, {
-        variants: [{ sku: clash.sku, pack: 'x', mrp: 100, price: 100, stock: 1, hsn: '23099090', isActive: true }],
-      });
+      const foreign = await createForeignProduct(prisma);
+      try {
+        const bad = body(b, {
+          variants: [{ sku: foreign.sku, pack: 'x', mrp: 100, price: 100, stock: 1, hsn: '23099090', isActive: true }],
+        });
 
-      await expect(saveDraft(b.slug, bad, id, ctxFor(id), ADMIN)).rejects.toThrow();
+        await expect(saveDraft(b.slug, bad, id, ctxFor(id), ADMIN)).rejects.toThrow();
 
-      const after = await state(b.familyId);
-      expect(after.draft).toBeNull();
-      expect(after.publishedAt).toBeNull();
-      expect(after._count.media).toBe(0);
-      expect(purge).not.toHaveBeenCalled();
+        const after = await state(b.familyId);
+        expect(after.draft).toBeNull();
+        expect(after.publishedAt).toBeNull();
+        expect(after._count.media).toBe(0);
+        expect(purge).not.toHaveBeenCalled();
+      } finally {
+        await dropFamily(prisma, foreign.familyId);
+      }
     });
   });
 });
@@ -303,19 +309,21 @@ describe('listing representative', () => {
   it('clears a SKU belonging to another product', async () => {
     await withProduct({ published: false }, async (b) => {
       const id = await actor();
-      const foreign = await prisma.productVariant.findFirstOrThrow({
-        where: { family: { slug: 'guppy-bites' } }, select: { sku: true, id: true },
-      });
-      await saveDraft(b.slug, body(b, { representativeSku: foreign.sku }), id, ctxFor(id), ADMIN);
-      await publish(b.slug, id, ctxFor(id), ADMIN);
+      const foreign = await createForeignProduct(prisma);
+      try {
+        await saveDraft(b.slug, body(b, { representativeSku: foreign.sku }), id, ctxFor(id), ADMIN);
+        await publish(b.slug, id, ctxFor(id), ADMIN);
 
-      const after = await state(b.familyId);
-      expect(after.representativeVariantId).toBeNull();
-      // And the other product is untouched.
-      const theirs = await prisma.productFamily.findUniqueOrThrow({
-        where: { slug: 'guppy-bites' }, select: { representativeVariantId: true },
-      });
-      expect(theirs.representativeVariantId).not.toBe(foreign.id);
+        const after = await state(b.familyId);
+        expect(after.representativeVariantId).toBeNull();
+        // And the other product is untouched.
+        const theirs = await prisma.productFamily.findUniqueOrThrow({
+          where: { id: foreign.familyId }, select: { representativeVariantId: true },
+        });
+        expect(theirs.representativeVariantId).toBeNull();
+      } finally {
+        await dropFamily(prisma, foreign.familyId);
+      }
     });
   });
 

@@ -6,13 +6,19 @@
  * order. All three are decided on the server, so these are the tests that prove
  * the CMS is not quietly making its own rules.
  */
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MediaStatus, MediaType, PrismaClient } from '@prisma/client';
+import { sweepFixtures } from '@/test/fixtures';
 import { mediaRemovalImpact, previewMedia } from './products.service';
 import { checkHero, loadResolvable, reconcileMedia } from './media.integrity';
 import { resolveGallery } from './media.resolver';
 
 const prisma = new PrismaClient();
+
+/* Clear anything an earlier crashed run left behind. */
+beforeAll(async () => {
+  await sweepFixtures(prisma);
+});
 afterAll(async () => prisma.$disconnect());
 
 const TAG = `zz-hero-${Date.now()}`;

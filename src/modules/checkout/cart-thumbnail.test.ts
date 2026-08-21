@@ -8,10 +8,16 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MediaStatus, MediaType, PrismaClient } from '@prisma/client';
+import { sweepFixtures } from '@/test/fixtures';
 import { priceCart } from './pricing.service';
 import * as settingsService from '@/modules/settings/settings.service';
 
 const prisma = new PrismaClient();
+
+/* Clear anything an earlier crashed run left behind. */
+beforeAll(async () => {
+  await sweepFixtures(prisma);
+});
 
 /*
  * Warm Redis before the timer starts.

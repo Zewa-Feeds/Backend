@@ -8,13 +8,19 @@
  * Each test builds and rolls back its own product, so the live catalogue is
  * untouched.
  */
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MediaType, PrismaClient } from '@prisma/client';
+import { sweepFixtures } from '@/test/fixtures';
 import { previewMedia } from './products.service';
 import { loadResolvable } from './media.integrity';
 import { resolveGallery } from './media.resolver';
 
 const prisma = new PrismaClient();
+
+/* Clear anything an earlier crashed run left behind. */
+beforeAll(async () => {
+  await sweepFixtures(prisma);
+});
 afterAll(async () => prisma.$disconnect());
 
 const TAG = `zz-preview-${Date.now()}`;

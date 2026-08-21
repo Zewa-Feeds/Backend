@@ -38,3 +38,7 @@ Brand Videos/
 Listing Images/
 scripts/video-web/
 *.psd
+
+# Test environment: points at the local docker services, no secrets of value.
+# Committed deliberately so a fresh clone can run the suite — see README.
+!.env.test

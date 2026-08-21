@@ -9,8 +9,9 @@
  * Every test builds its own product in a transaction and rolls it back, so the
  * live catalogue is never touched and the suite can run repeatedly.
  */
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { MediaStatus, MediaType, PrismaClient, type Prisma } from '@prisma/client';
+import { sweepFixtures } from '@/test/fixtures';
 import {
   HeroRejection,
   MediaDisposition,
@@ -25,6 +26,11 @@ import {
 import { Coverage, resolveGallery } from './media.resolver';
 
 const prisma = new PrismaClient();
+
+/* Clear anything an earlier crashed run left behind. */
+beforeAll(async () => {
+  await sweepFixtures(prisma);
+});
 afterAll(async () => prisma.$disconnect());
 
 /** Marker so anything that ever escapes a rollback is obvious. */

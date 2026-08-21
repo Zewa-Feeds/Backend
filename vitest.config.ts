@@ -1,22 +1,27 @@
 /**
  * Test runner.
  *
- * The resolver is pure and would run in milliseconds, but the integrity and
- * preview suites talk to the real database — composite keys, cascade direction
- * and transaction behaviour are the things being tested, and a mock would only
- * prove the mock was called.
+ * The resolver and presentation layers are pure and run in milliseconds, but the
+ * integrity, preview, identity and draft suites talk to a real database —
+ * composite keys, cascade direction, unique constraints and transaction
+ * behaviour are the things being tested, and a mock would only prove the mock
+ * was called.
  *
- * That database is remote (Neon), so a round trip costs roughly a second. Two
- * settings follow from that and neither is a workaround:
+ * That database is now LOCAL: `.env.test` points at the Postgres and Redis
+ * containers in docker/docker-compose.yml.
  *
- *   - testTimeout is raised well above the 5s default, which is sized for unit
- *     tests and times out on a handful of sequential queries;
- *   - fileParallelism is off, because three files opening transactions against
- *     one remote database contend for connections and each other's locks.
+ *   npm run test:setup     start the containers, migrate, seed
+ *   npm test               run against them
  *
- * Sequential and slower, but honest: a green run means the invariants hold.
- */
-import { defineConfig } from 'vitest/config';
+ * It used to be the shared hosted instance, which meant a test could contaminate
+ * the real catalogue and that reliability depended on a remote free tier. Round
+ * trips are now sub-millisecond instead of ~70ms, so the suite is both faster
+ * and deterministic.
+ *
+ * `fileParallelism` stays off: several files opening transactions against one
+ * database contend for each other's locks, and a green run has to mean the
+ * invariants hold rather than that the scheduler was kind.
+ */import { defineConfig } from 'vitest/config';
 import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
@@ -26,11 +31,7 @@ export default defineConfig({
     testTimeout: 45_000,
     hookTimeout: 45_000,
     fileParallelism: false,
-    /*
-     * Closes the Redis clients each isolated file opens. See vitest.setup.ts:
-     * without it a run accumulated ten connections against a remote free-tier
-     * instance and ioredis's retry backoff stalled unrelated tests.
-     */
+    /* Loads .env.test and closes per-file Redis clients. See vitest.setup.ts. */
     setupFiles: ['./vitest.setup.ts'],
   },
   resolve: {

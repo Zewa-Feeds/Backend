@@ -1031,12 +1031,42 @@ async function applyToLive(
    * `position` comes from the payload index, so the two phases cannot disturb
    * the operator's ordering.
    */
+  /*
+   * Park renamed packs on a temporary SKU first.
+   *
+   * SKU is unique, and a rename can collide with a row that has not been
+   * updated yet. The plain swap is the clearest case: A becomes B while B
+   * becomes A, so whichever is written first hits the name the other still
+   * holds. The database rejects it, the transaction rolls back, and the
+   * operator sees a raw unique-constraint error for an operation that is
+   * perfectly legal.
+   *
+   * Parking every renamed row on a value nothing else can hold empties the
+   * namespace before any final name is claimed, so swaps, three-way rotations
+   * and rename-then-reuse all resolve without special cases. The park value is
+   * the row's own uuid, which is unique by definition and never valid input —
+   * the DTO only accepts `[A-Z0-9][A-Z0-9-]*`, so it cannot arrive from a
+   * client, and it exists only between two statements of one transaction.
+   *
+   * Only renames pay for this; an ordinary save does no extra writes.
+   */
+  const renames = [...resolved.entries()]
+    .map(([i, row]) => ({ i, row, to: body.variants[i]!.sku }))
+    .filter(({ row, to }) => row.sku !== to);
+
+  for (const { row } of renames) {
+    await tx.productVariant.update({
+      where: { id: row.id },
+      data: { sku: `PARK-${row.id}` },
+    });
+  }
+
   for (const [i, v] of body.variants.entries()) {
     const row = resolved.get(i);
     if (!row) continue;
     keptIds.add(row.id);
     if (row.sku !== v.sku) renamedFrom.set(row.sku, v.sku);
-    // `sku` is written too: this is the rename.
+    // `sku` is written too: this is the rename, off the park value if it took one.
     await tx.productVariant.update({
       where: { id: row.id },
       data: { ...fields(v, i), sku: v.sku },
