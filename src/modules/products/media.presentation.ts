@@ -44,6 +44,8 @@ export interface PresentableVariant extends ResolvableVariant {
   isActive?: boolean;
   position?: number;
   familyId?: string;
+  stock?: number;
+  inStock?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -172,24 +174,16 @@ export function presentDetail(
 // ---------------------------------------------------------------------------
 
 /**
- * The pack whose photography REPRESENTS a product on listing surfaces.
+ * The pack explicitly CONFIGURED by the operator to represent this product.
  *
  * Explicit choice first, then the first active pack by the operator's own
- * ordering. Both are stock-independent on purpose: the card used to lead with
- * "the first pack that is in stock", so a pack selling out silently changed
- * which photograph the whole catalogue showed for that product. Merchandising
- * imagery must not move because of a stock count.
+ * position ordering.
  *
- * The explicit id is validated on write (same family, active), but it is
- * re-checked here too: a pack deactivated after the choice was made must fall
- * back rather than represent the product with a retired pack.
- *
- * NOTE: this decides IMAGERY ONLY. Price, availability and the Add-to-Cart SKU
- * continue to follow the first purchasable pack — see adaptProduct on the
- * storefront. Those are different questions and deliberately have different
- * answers.
+ * A sold-out variant CAN be configured as the representative. It remains the
+ * source of truth so that when it comes back into stock, it automatically
+ * becomes the effective listing variant again.
  */
-export function pickRepresentative<T extends PresentableVariant>(
+export function pickConfiguredVariant<T extends PresentableVariant>(
   variants: T[],
   representativeVariantId: string | null | undefined,
 ): T | null {
@@ -201,15 +195,65 @@ export function pickRepresentative<T extends PresentableVariant>(
     : null;
   if (explicit) return explicit;
 
-  // `variants` reaches here in position order from the query. Sorting again
-  // makes the rule hold for any caller, not just that one.
   return [...active].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))[0] ?? null;
 }
 
+/** Helper to test availability of a variant. */
+export function isVariantInStock(v: PresentableVariant): boolean {
+  if (typeof v.inStock === 'boolean') return v.inStock;
+  if (typeof v.stock === 'number') return v.stock > 0;
+  return true;
+}
+
+/**
+ * The pack actually used on storefront listing surfaces (EFFECTIVE variant).
+ *
+ * Rules:
+ *   1. If the configured main listing variant is IN STOCK, use it.
+ *   2. If the configured main listing variant is SOLD OUT, fall back deterministically
+ *      to the first IN-STOCK active variant (sorted by operator position).
+ *   3. If ALL variants are sold out, return the configured variant so the product
+ *      card retains consistent sold-out presentation without breaking.
+ */
+export function pickEffectiveVariant<T extends PresentableVariant>(
+  variants: T[],
+  representativeVariantId: string | null | undefined,
+): T | null {
+  const active = variants.filter((v) => v.isActive !== false);
+  if (active.length === 0) return null;
+
+  const configured = pickConfiguredVariant(active, representativeVariantId);
+  if (!configured) return null;
+
+  if (isVariantInStock(configured)) {
+    return configured;
+  }
+
+  // Configured variant is out of stock. Deterministic fallback to first in-stock variant by position.
+  const inStockVariants = active
+    .filter((v) => isVariantInStock(v))
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+
+  if (inStockVariants.length > 0 && inStockVariants[0]) {
+    return inStockVariants[0];
+  }
+
+  // All variants are out of stock. Fall back to configured variant.
+  return configured;
+}
+
+/**
+ * Backward-compatible alias for callers expecting pickRepresentative.
+ * Returns the effective variant for listing surfaces.
+ */
+export const pickRepresentative = pickEffectiveVariant;
+
 export interface ListingPresentation {
   representativeVariantId: string | null;
+  effectiveVariantId?: string | null;
   sku: string | null;
   pack: string | null;
+  configuredSku?: string | null;
   /** The card photograph. Null means "no suitable image" — show a placeholder. */
   heroUrl: string | null;
   heroAlt: string | null;
@@ -226,14 +270,8 @@ export interface ListingPresentation {
 /**
  * Everything a product card needs, decided on the server.
  *
- * The card used to work this out itself: filter the raw media by the first
- * in-stock pack's SKU, take the first image, and fall back to the product's
- * first image of any pack when that came up empty. That last step is why a card
- * selling Cichlid C4 45g showed a 1kg pouch.
- *
- * There is no fallback to another pack here and there must never be one. A
- * product with nothing suitable returns `heroUrl: null`, and the card shows a
- * placeholder — an honest gap rather than a confidently wrong photograph.
+ * Uses the EFFECTIVE listing variant (configured variant if in-stock, or deterministic
+ * in-stock fallback if sold out).
  *
  * `optimiseVideo` is injected rather than imported so this module stays pure
  * and testable without Cloudinary configuration.
@@ -244,13 +282,16 @@ export function presentListing(
   representativeVariantId: string | null | undefined,
   optimiseVideo: (url: string) => string = (url) => url,
 ): ListingPresentation {
-  const representative = pickRepresentative(variants, representativeVariantId);
+  const configured = pickConfiguredVariant(variants, representativeVariantId);
+  const effective = pickEffectiveVariant(variants, representativeVariantId);
 
-  if (!representative) {
+  if (!effective) {
     return {
       representativeVariantId: null,
+      effectiveVariantId: null,
       sku: null,
       pack: null,
+      configuredSku: null,
       heroUrl: null,
       heroAlt: null,
       width: null,
@@ -262,14 +303,16 @@ export function presentListing(
     };
   }
 
-  const gallery = resolveGallery(media, representative);
-  const hero = pickHero(gallery, representative);
+  const gallery = resolveGallery(media, effective);
+  const hero = pickHero(gallery, effective);
   const video = pickVideo(gallery);
 
   return {
-    representativeVariantId: representative.id,
-    sku: representative.sku,
-    pack: representative.pack ?? null,
+    representativeVariantId: configured?.id ?? null,
+    effectiveVariantId: effective.id,
+    sku: effective.sku,
+    pack: effective.pack ?? null,
+    configuredSku: configured?.sku ?? null,
     heroUrl: hero?.url ?? null,
     heroAlt: hero?.alt ?? null,
     width: hero?.width ?? null,

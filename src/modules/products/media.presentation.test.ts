@@ -18,6 +18,8 @@ import {
   type ResolvableMedia,
 } from './media.resolver';
 import {
+  pickConfiguredVariant,
+  pickEffectiveVariant,
   pickHero,
   pickRepresentative,
   pickVideo,
@@ -28,12 +30,12 @@ import {
 
 // ---- Fixtures: Guppy Bites' real pack structure ----------------------------
 
-const V45: PresentableVariant = { id: 'v45', sku: 'G2-45G', pack: '45g Bottle', position: 0 };
+const V45: PresentableVariant = { id: 'v45', sku: 'G2-45G', pack: '45g Bottle', position: 0, stock: 10 };
 const V45X2: PresentableVariant = {
-  id: 'v45x2', sku: 'G2-45GX2', pack: '45g x 2', position: 1, baseVariantId: 'v45',
+  id: 'v45x2', sku: 'G2-45GX2', pack: '45g x 2', position: 1, baseVariantId: 'v45', stock: 10,
 };
-const V200: PresentableVariant = { id: 'v200', sku: 'G2-200G', pack: '200g Pouch', position: 3 };
-const V1KG: PresentableVariant = { id: 'v1kg', sku: 'G2-1KG', pack: '1kg Pouch', position: 4 };
+const V200: PresentableVariant = { id: 'v200', sku: 'G2-200G', pack: '200g Pouch', position: 3, stock: 10 };
+const V1KG: PresentableVariant = { id: 'v1kg', sku: 'G2-1KG', pack: '1kg Pouch', position: 4, stock: 10 };
 const ALL = [V45, V45X2, V200, V1KG];
 
 let seq = 0;
@@ -54,53 +56,110 @@ const vid = (variantId: string | null, position: number, id?: string): Resolvabl
   posterUrl: `https://res.cloudinary.com/x/${id ?? seq}.jpg`,
 });
 
-// ---- Representative variant -------------------------------------------------
+// ---- Representative & Effective variant ------------------------------------
 
-describe('representative variant', () => {
-  it('uses the operator’s explicit choice', () => {
-    expect(pickRepresentative(ALL, 'v200')?.sku).toBe('G2-200G');
+describe('configured vs effective listing variant', () => {
+  describe('configured variant (operator choice)', () => {
+    it('uses the operator’s explicit choice when configured', () => {
+      expect(pickConfiguredVariant(ALL, 'v200')?.sku).toBe('G2-200G');
+    });
+
+    it('falls back to the first ACTIVE pack by position when unconfigured', () => {
+      expect(pickConfiguredVariant(ALL, null)?.sku).toBe('G2-45G');
+    });
+
+    it('orders by position, not by array order', () => {
+      const shuffled = [V1KG, V200, V45X2, V45];
+      expect(pickConfiguredVariant(shuffled, null)?.sku).toBe('G2-45G');
+    });
+
+    it('never picks a pack from another product', () => {
+      expect(pickConfiguredVariant(ALL, 'variant-of-another-product')?.sku).toBe('G2-45G');
+    });
+
+    it('skips a retired pack, even when it is the stored choice', () => {
+      const retired = ALL.map((v) => (v.id === 'v200' ? { ...v, isActive: false } : v));
+      expect(pickConfiguredVariant(retired, 'v200')?.sku).toBe('G2-45G');
+    });
+
+    it('retains the configured variant even when it is SOLD OUT', () => {
+      const withSoldOut = ALL.map((v) => (v.id === 'v45' ? { ...v, stock: 0 } : v));
+      expect(pickConfiguredVariant(withSoldOut, 'v45')?.sku).toBe('G2-45G');
+    });
   });
 
-  it('falls back to the first ACTIVE pack by position', () => {
-    expect(pickRepresentative(ALL, null)?.sku).toBe('G2-45G');
+  describe('effective variant (storefront availability-driven fallback)', () => {
+    it('uses configured variant when in stock', () => {
+      expect(pickEffectiveVariant(ALL, 'v45')?.sku).toBe('G2-45G');
+    });
+
+    it('when multiple variants are in stock, uses explicitly configured variant without guessing', () => {
+      // Even if v1kg has higher position or stock, configured v45 wins
+      expect(pickEffectiveVariant(ALL, 'v45')?.sku).toBe('G2-45G');
+      expect(pickEffectiveVariant(ALL, 'v200')?.sku).toBe('G2-200G');
+    });
+
+    it('when configured variant is SOLD OUT, deterministically falls back to first in-stock variant', () => {
+      // v45 is configured and sold out; v45x2 is next in position and in stock
+      const stockState = ALL.map((v) => (v.id === 'v45' ? { ...v, stock: 0 } : v));
+      expect(pickEffectiveVariant(stockState, 'v45')?.sku).toBe('G2-45GX2');
+    });
+
+    it('falls back past multiple sold out variants to find the next in-stock variant', () => {
+      // v45 and v45x2 are sold out; v200 is in stock
+      const stockState = ALL.map((v) =>
+        v.id === 'v45' || v.id === 'v45x2' ? { ...v, stock: 0 } : v,
+      );
+      expect(pickEffectiveVariant(stockState, 'v45')?.sku).toBe('G2-200G');
+    });
+
+    it('when configured variant comes BACK in stock, it automatically becomes effective again', () => {
+      const soldOutState = ALL.map((v) => (v.id === 'v45' ? { ...v, stock: 0 } : v));
+      expect(pickEffectiveVariant(soldOutState, 'v45')?.sku).toBe('G2-45GX2');
+
+      const restockedState = ALL.map((v) => (v.id === 'v45' ? { ...v, stock: 15 } : v));
+      expect(pickEffectiveVariant(restockedState, 'v45')?.sku).toBe('G2-45G');
+    });
+
+    it('when ALL variants are sold out, returns configured variant preserving sold-out behavior', () => {
+      const allSoldOut = ALL.map((v) => ({ ...v, stock: 0 }));
+      expect(pickEffectiveVariant(allSoldOut, 'v200')?.sku).toBe('G2-200G');
+      expect(pickEffectiveVariant(allSoldOut, null)?.sku).toBe('G2-45G');
+    });
+
+    it('automatic fallback does NOT mutate or change the configured variant id', () => {
+      const soldOutState = ALL.map((v) => (v.id === 'v45' ? { ...v, stock: 0 } : v));
+      const configured = pickConfiguredVariant(soldOutState, 'v45');
+      const effective = pickEffectiveVariant(soldOutState, 'v45');
+
+      expect(configured?.id).toBe('v45');
+      expect(effective?.id).toBe('v45x2');
+    });
+
+    it('returns nothing when every pack is retired', () => {
+      expect(pickEffectiveVariant(ALL.map((v) => ({ ...v, isActive: false })), null)).toBeNull();
+    });
   });
 
-  it('orders by position, not by array order', () => {
-    const shuffled = [V1KG, V200, V45X2, V45];
-    expect(pickRepresentative(shuffled, null)?.sku).toBe('G2-45G');
-  });
+  describe('presentListing presentation', () => {
+    it('uses effective variant photography and reports both configured and effective IDs', () => {
+      const media = [img('v45', 0, 'bottle-photo'), img('v200', 1, 'pouch-photo')];
+      
+      // When v45 is in stock:
+      const inStock = presentListing(media, ALL, 'v45');
+      expect(inStock.representativeVariantId).toBe('v45');
+      expect(inStock.effectiveVariantId).toBe('v45');
+      expect(inStock.sku).toBe('G2-45G');
+      expect(inStock.heroUrl).toContain('bottle-photo');
 
-  it('never picks a pack from another product', () => {
-    // The id is well-formed but belongs to a different family, so it is not in
-    // this product's variant list at all. A foreign key would have accepted it.
-    expect(pickRepresentative(ALL, 'variant-of-another-product')?.sku).toBe('G2-45G');
-  });
-
-  it('skips a retired pack, even when it is the stored choice', () => {
-    const retired = ALL.map((v) => (v.id === 'v200' ? { ...v, isActive: false } : v));
-    expect(pickRepresentative(retired, 'v200')?.sku).toBe('G2-45G');
-  });
-
-  it('falls back past an inactive first pack', () => {
-    const retired = ALL.map((v) => (v.id === 'v45' ? { ...v, isActive: false } : v));
-    expect(pickRepresentative(retired, null)?.sku).toBe('G2-45GX2');
-  });
-
-  it('returns nothing when every pack is retired', () => {
-    expect(pickRepresentative(ALL.map((v) => ({ ...v, isActive: false })), null)).toBeNull();
-  });
-
-  it('is DETERMINISTIC across stock changes', () => {
-    /*
-     * The card used to lead with "the first pack that is in stock", so a pack
-     * selling out silently changed which photograph the catalogue showed for
-     * that product. Stock is not an input here and must never become one.
-     */
-    const media = [img('v45', 0, 'bottle'), img('v1kg', 1, 'pouch')];
-    const inStock = presentListing(media, ALL, null);
-    const soldOut = presentListing(media, ALL.map((v) => ({ ...v, stock: 0 })) as never, null);
-    expect(soldOut.heroUrl).toBe(inStock.heroUrl);
-    expect(soldOut.sku).toBe('G2-45G');
+      // When v45 is sold out, and v45x2 has no photos, but v200 is in stock:
+      const v45Out = ALL.map((v) => (v.id === 'v45' || v.id === 'v45x2' ? { ...v, stock: 0 } : v));
+      const fallback = presentListing(media, v45Out, 'v45');
+      expect(fallback.representativeVariantId).toBe('v45'); // configured stays v45
+      expect(fallback.effectiveVariantId).toBe('v200'); // effective becomes v200
+      expect(fallback.sku).toBe('G2-200G');
+      expect(fallback.heroUrl).toContain('pouch-photo');
+    });
   });
 });
 
