@@ -34,7 +34,7 @@ export const CATEGORY_LABELS: Record<Category, string> = {
   // Product type — how the catalogue is browsed.
   [Category.DRIED_BSF_LARVAE]: 'Dried BSF Larvae',
   [Category.FLOATING_PELLETS]: 'Floating Pellets',
-  [Category.SLOW_SINKING_PELLETS]: 'Slow-Sinking Pellets',
+  [Category.SLOW_SINKING_PELLETS]: 'Slow-Sinking Granules',
   [Category.BOTTOM_DWELLERS]: 'Bottom Dwellers',
   [Category.HATCHERY_FEEDS]: 'Hatchery Feeds',
   // Legacy species values — kept so old rows still render. Not offered for new
@@ -69,9 +69,20 @@ export const BADGE_LABELS: Record<Badge, string> = {
 };
 
 /** Accept either the enum or the CMS's display string. */
-export const parseCategory = (v: string): Category | undefined =>
-  (Object.entries(CATEGORY_LABELS).find(([k, label]) => k === v || label === v)?.[0] as Category) ??
-  undefined;
+export const parseCategory = (v: string): Category | undefined => {
+  if (
+    v === 'Slow-Sinking Pellets' ||
+    v === 'Slow Sinking Pellets' ||
+    v === 'Slow-Sinking Granules' ||
+    v === 'Slow Sinking Granules'
+  ) {
+    return Category.SLOW_SINKING_PELLETS;
+  }
+  return (
+    (Object.entries(CATEGORY_LABELS).find(([k, label]) => k === v || label === v)?.[0] as Category) ??
+    undefined
+  );
+};
 
 export const parseStatus = (v: string): ProductStatus | undefined =>
   (Object.entries(STATUS_LABELS).find(([k, label]) => k === v || label === v)?.[0] as
