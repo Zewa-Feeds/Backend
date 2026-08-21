@@ -118,7 +118,12 @@ describe('video versus image parameters', () => {
    * land, while an image carries an inline transformation because its work is
    * fast and the derived version is the only thing worth storing.
    */
-  const videoParams = { eager: 'q_auto,w_1920,c_limit', eager_async: 'true' };
+  const videoParams = {
+    eager: 'q_auto,w_1920,c_limit',
+    eager_async: 'true',
+    eager_notification_url: 'https://api.example.com/api/v1/webhooks/cloudinary',
+    notification_url: 'https://api.example.com/api/v1/webhooks/cloudinary',
+  };
   const imageParams = { transformation: 'q_auto,f_auto,w_2000,c_limit' };
 
   it('a video never carries a synchronous transformation', () => {
@@ -127,6 +132,11 @@ describe('video versus image parameters', () => {
 
   it('a video is always asynchronous', () => {
     expect(videoParams.eager_async).toBe('true');
+  });
+
+  it('a video signs both upload and eager notification URLs', () => {
+    expect(videoParams.notification_url).toBe('https://api.example.com/api/v1/webhooks/cloudinary');
+    expect(videoParams.eager_notification_url).toBe('https://api.example.com/api/v1/webhooks/cloudinary');
   });
 
   it('an image carries the approved ingest transform', () => {

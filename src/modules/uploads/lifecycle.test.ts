@@ -185,6 +185,58 @@ describe('tickets', () => {
     expect(afterDup.status).toBe(UploadTicketStatus.UPLOADED);
   });
 
+  it('handles video upload: original moves ticket to UPLOADED, eager moves media to READY', async () => {
+    const s = await seed({ type: MediaType.VIDEO });
+    await openTicket({ publicId: s.publicId, resourceType: 'video', folder: 'zewa/products' });
+
+    // Step 1: Upload notification arrives
+    const r1 = await applyNotification({ publicId: s.publicId, outcome: 'UPLOADED' });
+    expect(r1.ticket).toBe('updated');
+    expect(r1.media).toBe('unchanged');
+
+    // Ticket is UPLOADED, but Media is STILL PENDING
+    const ticket1 = await prisma.uploadTicket.findUniqueOrThrow({ where: { publicId: s.publicId } });
+    expect(ticket1.status).toBe(UploadTicketStatus.UPLOADED);
+    expect(ticket1.uploadedAt).not.toBeNull();
+    const media1 = await prisma.productMedia.findUniqueOrThrow({ where: { id: s.mediaId } });
+    expect(media1.status).toBe(MediaStatus.PENDING);
+
+    // Step 2: Eager completion notification arrives
+    const r2 = await applyNotification({
+      publicId: s.publicId,
+      outcome: 'READY',
+      width: 1920,
+      height: 1080,
+      durationSec: 15,
+    });
+    expect(r2.media).toBe('promoted');
+
+    const media2 = await prisma.productMedia.findUniqueOrThrow({ where: { id: s.mediaId } });
+    expect(media2.status).toBe(MediaStatus.READY);
+    expect(media2.width).toBe(1920);
+    expect(media2.height).toBe(1080);
+    expect(media2.durationSec).toBe(15);
+  });
+
+  it('handles video eager failure by marking media and ticket FAILED', async () => {
+    const s = await seed({ type: MediaType.VIDEO });
+    await openTicket({ publicId: s.publicId, resourceType: 'video', folder: 'zewa/products' });
+
+    const r = await applyNotification({
+      publicId: s.publicId,
+      outcome: 'FAILED',
+      reason: 'eager transformation failed',
+    });
+    expect(r.media).toBe('failed');
+    expect(r.ticket).toBe('updated');
+
+    const media = await prisma.productMedia.findUniqueOrThrow({ where: { id: s.mediaId } });
+    expect(media.status).toBe(MediaStatus.FAILED);
+    const ticket = await prisma.uploadTicket.findUniqueOrThrow({ where: { publicId: s.publicId } });
+    expect(ticket.status).toBe(UploadTicketStatus.FAILED);
+    expect(ticket.failureReason).toBe('eager transformation failed');
+  });
+
   it('a ticket already ATTACHED is not demoted by a later notification', async () => {
     const s = await seed({ type: MediaType.VIDEO });
     await openTicket({ publicId: s.publicId, resourceType: 'video', folder: 'zewa/products' });

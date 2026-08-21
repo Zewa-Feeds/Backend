@@ -88,9 +88,9 @@ describe('what a notification means', () => {
       .toEqual({ kind: 'READY', publicId: 'p' });
   });
 
-  it('a video upload is NOT finished — only the original landed', () => {
+  it('a video upload records the upload but does not mark it READY yet', () => {
     const out = interpret({ notification_type: 'upload', public_id: 'p', resource_type: 'video' });
-    expect(out.kind).toBe('IGNORED');
+    expect(out).toEqual({ kind: 'UPLOADED', publicId: 'p' });
   });
 
   it('an eager notification finishes a video', () => {

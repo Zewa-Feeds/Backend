@@ -20,6 +20,12 @@ import { afterAll } from 'vitest';
 
 config({ path: '.env.test', override: true });
 
+process.on('unhandledRejection', (reason: unknown) => {
+  if (reason instanceof Error && reason.message.includes('Connection is closed')) {
+    return;
+  }
+});
+
 /**
  * Close the Redis clients each isolated file opens.
  *

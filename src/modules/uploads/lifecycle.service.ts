@@ -101,7 +101,7 @@ export interface TransitionResult {
  */
 export async function applyNotification(input: {
   publicId: string;
-  outcome: 'READY' | 'FAILED';
+  outcome: 'READY' | 'UPLOADED' | 'FAILED';
   reason?: string;
   url?: string | null;
   width?: number | null;
@@ -140,6 +140,13 @@ export async function applyNotification(input: {
     select: { id: true, status: true },
   });
   if (!media) return result;
+
+  if (input.outcome === 'UPLOADED') {
+    // For a video, upload notification means the original bytes arrived.
+    // Transcoding continues in the background, so media stays PENDING.
+    result.media = 'unchanged';
+    return result;
+  }
 
   if (input.outcome === 'FAILED') {
     const changed = await prisma.productMedia.updateMany({

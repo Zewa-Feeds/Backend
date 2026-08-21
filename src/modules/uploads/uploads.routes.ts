@@ -160,7 +160,11 @@ uploadsRouter.post(
       allowed_formats: ALLOWED_FORMATS[resourceType],
       ...(notificationUrl ? { notification_url: notificationUrl } : {}),
       ...(resourceType === 'video'
-        ? { eager: VIDEO_EAGER_TRANSFORM, eager_async: 'true' }
+        ? {
+            eager: VIDEO_EAGER_TRANSFORM,
+            eager_async: 'true',
+            ...(notificationUrl ? { eager_notification_url: notificationUrl } : {}),
+          }
         : { transformation: IMAGE_INGEST_TRANSFORM }),
     };
 
@@ -199,6 +203,7 @@ uploadsRouter.post(
         /* The client MUST echo this back unchanged; it is part of the signature. */
         publicId: fileId,
         ...(notificationUrl ? { notificationUrl } : {}),
+        ...(params.eager_notification_url ? { eagerNotificationUrl: params.eager_notification_url } : {}),
         /** Client-side pre-check limit, so the browser and Cloudinary agree. */
         maxBytes: resourceType === 'video' ? 100 * 1024 * 1024 : 10 * 1024 * 1024,
         // Resource type selects the endpoint; a video posted to /image/upload is

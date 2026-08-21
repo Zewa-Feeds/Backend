@@ -175,19 +175,16 @@ export async function probeAsset(
 ): Promise<{ exists: boolean; ready: boolean; width?: number; height?: number; durationSec?: number } | null> {
   if (!isConfigured()) return null;
 
-  const timestamp = Math.floor(Date.now() / 1000);
-  const params = { public_id: publicId, timestamp };
-  const query = new URLSearchParams({
-    public_id: publicId,
-    timestamp: String(timestamp),
-    api_key: env.CLOUDINARY_API_KEY as string,
-    signature: sign(params),
-  });
+  const authHeader = `Basic ${Buffer.from(`${env.CLOUDINARY_API_KEY}:${env.CLOUDINARY_API_SECRET}`).toString('base64')}`;
 
   try {
     const response = await fetch(
-      `https://api.cloudinary.com/v1_1/${env.CLOUDINARY_CLOUD_NAME}/resources/${resourceType}/upload/${encodeURIComponent(publicId)}?${query}`,
-      { method: 'GET', signal: AbortSignal.timeout(8000) },
+      `https://api.cloudinary.com/v1_1/${env.CLOUDINARY_CLOUD_NAME}/resources/${resourceType}/upload/${encodeURIComponent(publicId)}`,
+      {
+        method: 'GET',
+        headers: { Authorization: authHeader },
+        signal: AbortSignal.timeout(8000),
+      },
     );
 
     // A definite 404 is the one negative answer worth trusting.

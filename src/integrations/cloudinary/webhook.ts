@@ -88,6 +88,7 @@ export interface Notification {
  */
 export type NotificationOutcome =
   | { kind: 'READY'; publicId: string }
+  | { kind: 'UPLOADED'; publicId: string }
   | { kind: 'FAILED'; publicId: string; reason: string }
   | { kind: 'IGNORED'; reason: string };
 
@@ -103,12 +104,13 @@ export function interpret(body: Notification): NotificationOutcome {
     /*
      * `upload` fires when the bytes land. For an image that is the whole story:
      * the ingest transformation is applied synchronously, so the asset is
-     * finished. For a video it only means the original is stored — the derived
-     * version is still transcoding, and `eager` will follow.
+     * finished. For a video it means the original is stored (ticket moves to
+     * UPLOADED), while the derived version is still transcoding (media stays PENDING)
+     * and `eager` will follow.
      */
     case 'upload':
       return body.resource_type === 'video'
-        ? { kind: 'IGNORED', reason: 'video original stored; awaiting eager' }
+        ? { kind: 'UPLOADED', publicId }
         : { kind: 'READY', publicId };
 
     /* Asynchronous transcoding finished. This is what a video waits for. */
