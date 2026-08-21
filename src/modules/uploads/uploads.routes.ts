@@ -124,7 +124,8 @@ uploadsRouter.post(
      * is about to exist BEFORE the browser is told where to upload, which is the
      * only way an abandoned upload is ever findable again.
      */
-    const publicId = `${folder}/${randomUUID()}`;
+    const fileId = randomUUID();
+    const publicId = `${folder}/${fileId}`;
 
     const family = req.body.slug
       ? await prisma.productFamily.findFirst({
@@ -154,7 +155,7 @@ uploadsRouter.post(
      */
     const params: Record<string, string | number> = {
       folder,
-      public_id: publicId,
+      public_id: fileId,
       timestamp,
       allowed_formats: ALLOWED_FORMATS[resourceType],
       ...(notificationUrl ? { notification_url: notificationUrl } : {}),
@@ -196,7 +197,7 @@ uploadsRouter.post(
         ...(params.eager ? { eager: params.eager, eagerAsync: 'true' } : {}),
         allowedFormats: params.allowed_formats,
         /* The client MUST echo this back unchanged; it is part of the signature. */
-        publicId,
+        publicId: fileId,
         ...(notificationUrl ? { notificationUrl } : {}),
         /** Client-side pre-check limit, so the browser and Cloudinary agree. */
         maxBytes: resourceType === 'video' ? 100 * 1024 * 1024 : 10 * 1024 * 1024,

@@ -50,6 +50,7 @@ export function guardWorker(worker: Worker, name: string): void {
   };
 
   worker.on('error', (err: Error) => {
+    if (worker.closing) return;
     consecutive += 1;
 
     const now = Date.now();

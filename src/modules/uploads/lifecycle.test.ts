@@ -152,6 +152,39 @@ describe('tickets', () => {
     expect(await prisma.uploadTicket.count({ where: { publicId } })).toBe(1);
   });
 
+  it('transitions ticket from SIGNED to UPLOADED on webhook with canonical publicId', async () => {
+    const folder = 'zewa/products';
+    const fileId = ns('img');
+    const canonicalPublicId = `${folder}/${fileId}`;
+
+    await openTicket({ publicId: canonicalPublicId, resourceType: 'image', folder });
+    const before = await prisma.uploadTicket.findUniqueOrThrow({ where: { publicId: canonicalPublicId } });
+    expect(before.status).toBe(UploadTicketStatus.SIGNED);
+    expect(before.uploadedAt).toBeNull();
+
+    const transition = await applyNotification({
+      publicId: canonicalPublicId,
+      outcome: 'READY',
+      width: 1000,
+      height: 1000,
+    });
+    expect(transition.ticket).toBe('updated');
+
+    const after = await prisma.uploadTicket.findUniqueOrThrow({ where: { publicId: canonicalPublicId } });
+    expect(after.status).toBe(UploadTicketStatus.UPLOADED);
+    expect(after.uploadedAt).not.toBeNull();
+    expect(after.failureReason).toBeNull();
+
+    // Re-delivering webhook is idempotent
+    const duplicate = await applyNotification({
+      publicId: canonicalPublicId,
+      outcome: 'READY',
+    });
+    expect(duplicate.ticket).toBe('updated');
+    const afterDup = await prisma.uploadTicket.findUniqueOrThrow({ where: { publicId: canonicalPublicId } });
+    expect(afterDup.status).toBe(UploadTicketStatus.UPLOADED);
+  });
+
   it('a ticket already ATTACHED is not demoted by a later notification', async () => {
     const s = await seed({ type: MediaType.VIDEO });
     await openTicket({ publicId: s.publicId, resourceType: 'video', folder: 'zewa/products' });

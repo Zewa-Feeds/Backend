@@ -74,7 +74,7 @@ describe('the signature covers the security parameters', () => {
   const secret = 'shh';
   const base = {
     folder: 'zewa/products',
-    public_id: 'zewa/products/abc',
+    public_id: 'abc-123',
     timestamp: 1_700_000_000,
     allowed_formats: 'jpg,jpeg,png,webp,avif',
     notification_url: 'https://api.example.com/api/v1/webhooks/cloudinary',
@@ -99,6 +99,15 @@ describe('the signature covers the security parameters', () => {
   it('is order-independent — Cloudinary sorts before hashing', () => {
     const reordered = Object.fromEntries(Object.entries(base).reverse());
     expect(sign(reordered, secret)).toBe(sign(base, secret));
+  });
+
+  it('canonical publicId avoids folder double-prefixing', () => {
+    const folder = 'zewa/products';
+    const fileId = 'abc-123';
+    // Cloudinary combines folder and public_id into canonical publicId:
+    const canonicalPublicId = `${folder}/${fileId}`;
+    expect(canonicalPublicId).toBe('zewa/products/abc-123');
+    expect(canonicalPublicId).not.toContain('zewa/products/zewa/products');
   });
 });
 

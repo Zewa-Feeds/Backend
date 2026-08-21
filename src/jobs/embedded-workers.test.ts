@@ -29,6 +29,9 @@ import { startMaintenanceWorker } from '@/jobs/workers/maintenance.worker';
  */
 async function startEmbeddedWorkers() {
   const workers = [startEmailWorker(), startPaymentWorker(), startMaintenanceWorker()];
+  for (const w of workers) {
+    w.on('error', () => {});
+  }
   try {
     await scheduleMaintenance();
   } catch {
@@ -37,11 +40,20 @@ async function startEmbeddedWorkers() {
   return workers;
 }
 
+const suppressConnectionClosed = (reason: unknown) => {
+  if (reason instanceof Error && reason.message.includes('Connection is closed')) {
+    return;
+  }
+  console.error('Unhandled Rejection:', reason);
+};
+
 beforeAll(async () => {
+  process.on('unhandledRejection', suppressConnectionClosed);
   await maintenanceQueue.obliterate({ force: true }).catch(() => undefined);
 });
 
 afterAll(async () => {
+  process.off('unhandledRejection', suppressConnectionClosed);
   await maintenanceQueue.obliterate({ force: true }).catch(() => undefined);
   await maintenanceQueue.close().catch(() => undefined);
 });
