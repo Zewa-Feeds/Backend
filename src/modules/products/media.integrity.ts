@@ -14,6 +14,7 @@
  */
 import { MediaStatus, MediaType, type Prisma, type PrismaClient } from '@prisma/client';
 import { resolveGallery, type ResolvableMedia } from '@/modules/products/media.resolver';
+import { initialStatus } from '@/modules/uploads/lifecycle.service';
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -120,10 +121,23 @@ export async function reconcileMedia(
       width: item.width ?? null,
       height: item.height ?? null,
       durationSec: item.type === MediaType.VIDEO ? (item.durationSec ?? null) : null,
-      // A row present in the payload is live, even if a previous save archived it.
-      // That is what makes "undo a removal" work by simply saving it back.
-      status: MediaStatus.READY,
-      archivedAt: null,
+      /*
+       * A row present in the payload is live again, even if a previous save
+       * archived it — that is what makes "undo a removal" work by saving it back.
+       *
+       * READY or PENDING depending on the medium. An image is finished the
+       * moment Cloudinary responds, because its ingest transform runs inline. A
+       * video is not: the upload returns while transcoding continues, so it
+       * stays PENDING until a notification or the reconciliation sweep confirms
+       * the derived version exists. Marking it READY here is what "pretending a
+       * video is immediately ready" would look like.
+       *
+       * An existing row keeps whatever status it has unless it was archived:
+       * re-saving a gallery must not demote a READY video back to PENDING.
+       */
+      ...(match && match.status !== MediaStatus.ARCHIVED
+        ? {}
+        : { status: initialStatus(item.type), archivedAt: null }),
       // Legacy column stays in step for dual-read.
       variantId: resolveLegacyVariantId(item, variantIdBySku),
     };
@@ -283,6 +297,25 @@ export async function checkHero(
       message: 'That image has been removed, so it cannot lead the gallery.',
     };
   }
+  /*
+   * A hero must be finished, not merely present.
+   *
+   * PENDING means a video is still transcoding and FAILED means it never
+   * will — either would put a broken frame at the top of a product page and
+   * into the Open Graph image. `loadResolvable` already excludes both, so the
+   * gallery check below would catch it, but rejecting here gives the operator
+   * the real reason instead of "not shown for this pack".
+   */
+  if (media.status !== MediaStatus.READY) {
+    return {
+      ok: false,
+      reason: HeroRejection.ARCHIVED,
+      message:
+        media.status === MediaStatus.PENDING
+          ? 'That video is still processing. It can lead the gallery once it is ready.'
+          : 'That upload failed, so it cannot lead the gallery.',
+    };
+  }
 
   const gallery = await loadResolvable(tx, variant.familyId);
   const resolved = resolveGallery(gallery, variant);
@@ -300,7 +333,10 @@ export async function checkHero(
 /** Live (non-archived) media for a product, in the resolver's shape. */
 export async function loadResolvable(tx: Tx, familyId: string): Promise<ResolvableMedia[]> {
   const rows = await tx.productMedia.findMany({
-    where: { familyId, status: { not: MediaStatus.ARCHIVED } },
+    /* READY only. PENDING and FAILED assets are not renderable, and every
+       consumer of this — storefront galleries, the CMS preview, cart
+       thumbnails — renders what it gets. */
+    where: { familyId, status: MediaStatus.READY },
     select: {
       id: true,
       type: true,

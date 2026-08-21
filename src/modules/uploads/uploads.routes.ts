@@ -13,7 +13,7 @@
  *   - Cloudinary enforces the constraints we sign (folder, allowed formats), so a
  *     tampered client cannot upload elsewhere in the account
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '@/middleware/asyncHandler';
@@ -21,6 +21,9 @@ import { requirePermission } from '@/middleware/auth';
 import { validate } from '@/middleware/validate';
 import { notConfigured } from '@/lib/errors';
 import { env } from '@/config/env';
+import { currentUser } from '@/middleware/auth';
+import { openTicket } from './lifecycle.service';
+import { prisma } from '@/lib/prisma';
 
 export const uploadsRouter = Router();
 
@@ -95,13 +98,11 @@ uploadsRouter.post(
       folder: z.enum(FOLDERS),
       /** Defaults to image, so existing callers keep working unchanged. */
       resourceType: z.enum(RESOURCE_TYPES).optional().default('image'),
-      /** Optional public_id so a re-upload can replace an existing asset. */
-      publicId: z
-        .string()
-        .trim()
-        .max(120)
-        .regex(/^[\w-]+$/, 'Use letters, numbers, hyphens and underscores only.')
-        .optional(),
+      /**
+       * The product being edited, so an abandoned upload can be traced back.
+       * Optional: articles and spotlights are not part of a product gallery.
+       */
+      slug: z.string().trim().max(120).optional(),
     }),
   }),
   asyncHandler(async (req, res) => {
@@ -114,29 +115,63 @@ uploadsRouter.post(
     const resourceType: ResourceType = req.body.resourceType;
 
     /*
+     * THE PUBLIC ID IS GENERATED HERE, never accepted from the client.
+     *
+     * Two things follow from that. A client cannot aim an upload at an existing
+     * asset and overwrite it — the previous version of this route took a
+     * `publicId` parameter, which let any authorised caller replace any file in
+     * the account. And because the server decides the name, it can record what
+     * is about to exist BEFORE the browser is told where to upload, which is the
+     * only way an abandoned upload is ever findable again.
+     */
+    const publicId = `${folder}/${randomUUID()}`;
+
+    const family = req.body.slug
+      ? await prisma.productFamily.findFirst({
+          where: { slug: req.body.slug, deletedAt: null },
+          select: { id: true },
+        })
+      : null;
+
+    /*
+     * Where Cloudinary reports the outcome.
+     *
+     * Signed, so a client cannot point notifications elsewhere or strip them to
+     * keep an upload from ever being marked FAILED. Omitted when no public
+     * origin is configured — locally there is nothing for Cloudinary to reach,
+     * and the reconciliation sweep covers that case.
+     */
+    const notificationUrl = env.PUBLIC_API_ORIGIN
+      ? `${env.PUBLIC_API_ORIGIN.replace(/\/$/, '')}/api/v1/webhooks/cloudinary`
+      : null;
+
+    /*
      * Every param here is signed, so the client cannot change any of them.
      *
-     * Images transform inline (fast, and we want the derived version to be the
-     * only thing stored). Video uses eager+async so the request returns as soon
-     * as the bytes arrive — see VIDEO_EAGER_TRANSFORM for why.
+     * Images transform inline (fast, and the derived version is the only thing
+     * stored). Video uses eager+async so the request returns as soon as the
+     * bytes arrive — see VIDEO_EAGER_TRANSFORM for why.
      */
-    const params: Record<string, string | number> =
-      resourceType === 'video'
-        ? {
-            folder,
-            timestamp,
-            eager: VIDEO_EAGER_TRANSFORM,
-            eager_async: 'true',
-            allowed_formats: ALLOWED_FORMATS.video,
-            ...(req.body.publicId ? { public_id: req.body.publicId } : {}),
-          }
-        : {
-            folder,
-            timestamp,
-            transformation: IMAGE_INGEST_TRANSFORM,
-            allowed_formats: ALLOWED_FORMATS.image,
-            ...(req.body.publicId ? { public_id: req.body.publicId } : {}),
-          };
+    const params: Record<string, string | number> = {
+      folder,
+      public_id: publicId,
+      timestamp,
+      allowed_formats: ALLOWED_FORMATS[resourceType],
+      ...(notificationUrl ? { notification_url: notificationUrl } : {}),
+      ...(resourceType === 'video'
+        ? { eager: VIDEO_EAGER_TRANSFORM, eager_async: 'true' }
+        : { transformation: IMAGE_INGEST_TRANSFORM }),
+    };
+
+    // Recorded before the browser is told anything, so an upload that never
+    // comes back is still traceable. See UploadTicket.
+    await openTicket({
+      publicId,
+      resourceType,
+      folder,
+      familyId: family?.id ?? null,
+      requestedById: currentUser(req).id,
+    });
 
     const toSign = Object.keys(params)
       .sort()
@@ -160,9 +195,11 @@ uploadsRouter.post(
         ...(params.transformation ? { transformation: params.transformation } : {}),
         ...(params.eager ? { eager: params.eager, eagerAsync: 'true' } : {}),
         allowedFormats: params.allowed_formats,
+        /* The client MUST echo this back unchanged; it is part of the signature. */
+        publicId,
+        ...(notificationUrl ? { notificationUrl } : {}),
         /** Client-side pre-check limit, so the browser and Cloudinary agree. */
         maxBytes: resourceType === 'video' ? 100 * 1024 * 1024 : 10 * 1024 * 1024,
-        ...(req.body.publicId ? { publicId: req.body.publicId } : {}),
         // Resource type selects the endpoint; a video posted to /image/upload is
         // rejected by Cloudinary regardless of signature validity.
         uploadUrl: `https://api.cloudinary.com/v1_1/${env.CLOUDINARY_CLOUD_NAME}/${resourceType}/upload`,

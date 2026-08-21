@@ -238,6 +238,8 @@ model ProductFamily {
   /// Ordered gallery — photos AND video interleaved. See ProductMedia.
   media      ProductMedia[]
   coupons    CouponProduct[]
+  /// Upload signatures minted while editing this product. See UploadTicket.
+  uploadTickets UploadTicket[]
 
   @@index([status, category])
   @@index([deletedAt])
@@ -729,6 +731,9 @@ model CmsUser {
 
   @@index([status])
   @@index([deletedAt])
+
+  /// Upload signatures this operator requested. See UploadTicket.
+  uploadTickets UploadTicket[]
 }
 
 model CmsSession {
@@ -1017,4 +1022,65 @@ model AuditLog {
   @@index([module, createdAt])
   @@index([actorId, createdAt])
   @@index([recordId])
+}
+
+/// A signature that was minted, and what became of it.
+///
+/// The gap this closes: the browser uploads straight to Cloudinary, so between
+/// minting a signature and the CMS saving the product, an asset can exist in the
+/// account that no database row references — the tab was closed, the network
+/// dropped, the save failed. Nothing knew those assets existed, so nothing could
+/// ever clean them up and they billed forever.
+///
+/// A ticket is written BEFORE the browser is told where to upload, and the
+/// public_id is generated here rather than accepted from the client, so the row
+/// always knows exactly what may appear in Cloudinary.
+model UploadTicket {
+  id String @id @default(uuid())
+
+  /// The public_id this signature authorises. Server-generated and unique, so a
+  /// client cannot aim an upload at somebody else's asset.
+  publicId String @unique
+
+  /// image | video — selects the Cloudinary endpoint and the delete endpoint.
+  resourceType String
+  folder       String
+
+  /// Which product the operator was editing. Null for article and spotlight
+  /// uploads, which are not part of a product gallery.
+  familyId String?
+  family   ProductFamily? @relation(fields: [familyId], references: [id], onDelete: SetNull)
+
+  status UploadTicketStatus @default(SIGNED)
+
+  /// Set when Cloudinary confirms the bytes landed — either the webhook or the
+  /// reconciliation sweep. Until then we do not know the asset exists.
+  uploadedAt DateTime?
+  /// Set when a ProductMedia row starts referencing this publicId.
+  attachedAt DateTime?
+  /// Cloudinary's own message when it rejected the upload.
+  failureReason String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  requestedById String?
+  requestedBy   CmsUser? @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([familyId])
+}
+
+/// Where a minted signature got to.
+enum UploadTicketStatus {
+  /// Signature issued; the browser may or may not have uploaded anything yet.
+  SIGNED
+  /// Cloudinary confirmed the asset exists, but no ProductMedia references it.
+  /// This is the orphan state the reconciliation sweep acts on.
+  UPLOADED
+  /// A ProductMedia row references the publicId. Nothing to clean up.
+  ATTACHED
+  /// Cloudinary rejected the upload, or processing failed.
+  FAILED
+  /// The asset was destroyed in Cloudinary and the ticket closed.
+  DISCARDED
 }

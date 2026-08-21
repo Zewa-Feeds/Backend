@@ -61,6 +61,12 @@ const schema = z.object({
   BCRYPT_COST: z.coerce.number().int().min(10).max(15).default(12), // §14.1 cost 12
 
   // ---- CORS ---------------------------------------------------------------
+  /**
+   * This API's own public origin, used to tell Cloudinary where to send
+   * notifications. Optional: without it uploads still work and the
+   * reconciliation sweep resolves their state instead.
+   */
+  PUBLIC_API_ORIGIN: optionalUrl,
   STOREFRONT_ORIGIN: z.string().url(),
   /**
    * Shared secret for the storefront's /api/revalidate route.

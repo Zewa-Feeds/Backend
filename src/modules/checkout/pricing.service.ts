@@ -117,7 +117,9 @@ export async function priceCart(input: {
            * reappear as a cart thumbnail.
            */
           media: {
-            where: { status: { not: MediaStatus.ARCHIVED } },
+            /* READY only: a PENDING video has no playable derivative and a
+               FAILED asset's URL 404s. Same rule the storefront applies. */
+            where: { status: MediaStatus.READY },
             select: {
               id: true,
               type: true,

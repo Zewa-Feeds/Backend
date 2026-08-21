@@ -21,6 +21,7 @@ import { Router } from 'express';
 import { adminLimiter, publicLimiter } from '@/middleware/rateLimit';
 import { requireAuth, requireEnrolled2fa } from '@/middleware/auth';
 import { authRouter } from '@/modules/auth/auth.routes';
+import { cloudinaryWebhookRouter } from '@/modules/uploads/webhook.routes';
 import { usersRouter } from '@/modules/users/users.routes';
 import { productsRouter } from '@/modules/products/products.routes';
 import { ordersRouter } from '@/modules/orders/orders.routes';
@@ -50,6 +51,9 @@ const publicRouter = Router();
 publicRouter.use(publicLimiter);
 
 // Catalogue, content, settings, cart, coupon validation and review submission.
+/* Cloudinary media notifications. Unauthenticated by necessity — the
+   signature is the authentication. See webhook.routes.ts. */
+publicRouter.use('/webhooks/cloudinary', cloudinaryWebhookRouter);
 publicRouter.use('/', catalogRouter);
 // Draft preview — signed short-lived token, scoped to one resource.
 publicRouter.use('/preview', previewRouter);

@@ -21,7 +21,16 @@ import { checkHero, reconcileMedia } from '@/modules/products/media.integrity';
 import { resolveGallery, type ResolvableMedia } from '@/modules/products/media.resolver';
 import { presentDetail, presentListing } from '@/modules/products/media.presentation';
 import { listMeta, toSkipTake } from '@/middleware/validate';
-import { destroyAssets } from '@/integrations/cloudinary/cloudinary.service';
+/*
+ * destroySafely, not destroyAssets.
+ *
+ * A publicId leaving one gallery does not mean the file is unused: two rows can
+ * share it — the same photograph on two products, or an asset re-added after
+ * being archived — and destroying it because one reference went away would 404 a
+ * live storefront. destroySafely re-checks every id against the committed state
+ * before anything is destroyed.
+ */
+import { destroySafely, markAttached } from '@/modules/uploads/lifecycle.service';
 import { revalidateStorefront } from '@/integrations/storefront/revalidate';
 import type { Role } from '@prisma/client';
 import {
@@ -732,7 +741,7 @@ export async function publish(slug: string, actorId: string, ctx: AuditContext, 
   });
 
   // See saveDraft: after commit only, best-effort.
-  await destroyAssets(orphaned);
+  await destroySafely(orphaned);
   /* The only path that changes live content, so the only one that must purge. */
   await revalidateStorefront(slug);
 
@@ -1252,6 +1261,19 @@ async function applyMediaToLive(
   orphanSink.push(...result.archivedPublicIds);
 
   /*
+   * Close the tickets for everything this save attached.
+   *
+   * Until a publicId is referenced by a ProductMedia row it looks like an
+   * abandoned upload, and the orphan sweep is entitled to destroy it. Marking
+   * them here is what stops the sweep deleting assets an operator has just
+   * saved.
+   */
+  await markAttached(
+    tx,
+    (body.media ?? []).map((m) => m.publicId).filter((id): id is string => Boolean(id)),
+  );
+
+  /*
    * A hero can be invalidated by the very save that archived its target. Clearing
    * it here keeps the invariant "a hero is always something this pack shows"
    * true at rest, rather than leaving a pointer the resolver would ignore.
@@ -1276,7 +1298,9 @@ async function clearInvalidHeroes(tx: Prisma.TransactionClient, familyId: string
   const live = await tx.productMedia.findMany({
     where: {
       id: { in: withHero.map((v) => v.heroMediaId).filter((id): id is string => Boolean(id)) },
-      status: { not: MediaStatus.ARCHIVED },
+      // READY only: a hero that is still processing or has failed is as unusable
+      // as a removed one, and it renders into an <img>.
+      status: MediaStatus.READY,
     },
     select: { id: true },
   });

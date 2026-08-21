@@ -155,3 +155,67 @@ export function hoverVideoUrl(url: string | null | undefined): string | null {
 
   return `${url.slice(0, at + marker.length)}${HOVER_VIDEO_TRANSFORM}/${rest}`;
 }
+
+/**
+ * Does this asset exist in Cloudinary, and is it finished?
+ *
+ * The webhook is the fast path; this is the one that makes a MISSED webhook
+ * survivable. Notifications get lost — a deploy mid-flight, an outage, a
+ * misconfigured URL — and without a way to ask directly, a video would sit
+ * PENDING forever and never reach a customer.
+ *
+ * Returns null when Cloudinary is not configured or the lookup fails, which the
+ * caller must treat as "unknown", never as "missing". Deleting an asset because
+ * a network call failed is exactly the mistake this whole module exists to
+ * avoid.
+ */
+export async function probeAsset(
+  publicId: string,
+  resourceType: ResourceType,
+): Promise<{ exists: boolean; ready: boolean; width?: number; height?: number; durationSec?: number } | null> {
+  if (!isConfigured()) return null;
+
+  const timestamp = Math.floor(Date.now() / 1000);
+  const params = { public_id: publicId, timestamp };
+  const query = new URLSearchParams({
+    public_id: publicId,
+    timestamp: String(timestamp),
+    api_key: env.CLOUDINARY_API_KEY as string,
+    signature: sign(params),
+  });
+
+  try {
+    const response = await fetch(
+      `https://api.cloudinary.com/v1_1/${env.CLOUDINARY_CLOUD_NAME}/resources/${resourceType}/upload/${encodeURIComponent(publicId)}?${query}`,
+      { method: 'GET', signal: AbortSignal.timeout(8000) },
+    );
+
+    // A definite 404 is the one negative answer worth trusting.
+    if (response.status === 404) return { exists: false, ready: false };
+    if (!response.ok) return null;
+
+    const asset = (await response.json()) as {
+      width?: number; height?: number; duration?: number;
+      eager?: { status?: string }[];
+    };
+
+    /*
+     * "Ready" means every requested derivation finished. For an image there are
+     * none — the ingest transform is applied inline — so its presence is
+     * sufficient. For a video the eager entry is the thing being waited on.
+     */
+    const eager = asset.eager ?? [];
+    const ready = eager.length === 0 || eager.every((e) => !e.status || e.status === 'complete');
+
+    return {
+      exists: true,
+      ready,
+      width: asset.width,
+      height: asset.height,
+      durationSec: asset.duration,
+    };
+  } catch (err) {
+    logger.warn({ err, publicId }, 'cloudinary asset probe failed');
+    return null;
+  }
+}

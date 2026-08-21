@@ -41,6 +41,9 @@ export function createApp(): Express {
   // Must precede express.json(): re-serialising a parsed body changes the bytes
   // and the HMAC no longer matches.
   app.use('/api/v1/webhooks/razorpay', express.raw({ type: 'application/json', limit: '256kb' }));
+  /* Cloudinary signs the RAW body — see webhook.ts. Parsing first breaks every
+     signature, so this must stay above express.json(). */
+  app.use('/api/v1/webhooks/cloudinary', express.raw({ type: '*/*', limit: '256kb' }));
 
   app.use(express.json({ limit: BODY_LIMIT }));
   app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));

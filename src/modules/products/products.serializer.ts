@@ -160,14 +160,19 @@ export const FAMILY_SELECT = {
   variants: { select: VARIANT_SELECT, orderBy: { position: 'asc' } },
   media: {
     /*
-     * ARCHIVED is a soft delete. The row and its publicId survive so the
-     * Cloudinary asset can be destroyed deliberately rather than orphaned — but
-     * an archived asset has been REMOVED from the gallery by an operator and
-     * must not reach a customer or reappear in the editor. There was no filter
-     * here at all, which was harmless only because nothing had been archived
-     * yet; the Phase 3 media manager makes archiving a one-click action.
+     * READY ONLY, for the storefront and for the editor's gallery.
+     *
+     * Each of the other three states is a distinct reason an asset must not be
+     * rendered: ARCHIVED was removed by an operator; FAILED never processed and
+     * its URL would 404; PENDING is a video whose derived version does not exist
+     * yet, so serving it shows a broken player.
+     *
+     * This used to be `not: ARCHIVED`, which was correct only while PENDING and
+     * FAILED could not occur. They can now, so the filter is positive rather
+     * than an exclusion list — a new state added later is hidden by default,
+     * which is the safe direction to be wrong in.
      */
-    where: { status: { not: MediaStatus.ARCHIVED } },
+    where: { status: MediaStatus.READY },
     select: {
       id: true,
       type: true,
