@@ -19,15 +19,56 @@ import { checkDatabase, disconnectPrisma } from '@/lib/prisma';
 import { checkRedis, disconnectRedis } from '@/lib/redis';
 import { startEmailWorker } from '@/jobs/workers/email.worker';
 import { startPaymentWorker } from '@/jobs/workers/payment.worker';
-import { closeQueues } from '@/jobs/queues';
+import { startMaintenanceWorker } from '@/jobs/workers/maintenance.worker';
+import { closeQueues, scheduleMaintenance } from '@/jobs/queues';
 
 /**
  * Workers hosted inside this process. Empty unless RUN_WORKERS_IN_API.
  *
- * Typed by the only capability shutdown needs, since the email and payment
- * workers carry different job types and share no useful common supertype.
+ * Typed by the only capability shutdown needs, since the three workers carry
+ * different job types and share no useful common supertype.
  */
 type EmbeddedWorkers = { close: () => Promise<void> }[];
+
+/**
+ * Start the queue consumers inside the API process, and register the recurring
+ * maintenance schedule.
+ *
+ * WHY ALL THREE AND NOT TWO. This used to start only the email and payment
+ * workers, because those were the only queues that existed when it was written.
+ * The maintenance worker and its schedule lived solely in the separate worker
+ * entry point — so on a single-service deployment, media reconciliation never
+ * ran at all. That is the one job whose entire purpose is surviving a missed
+ * Cloudinary webhook, and without it a video whose notification was lost stays
+ * hidden from customers forever while abandoned uploads bill indefinitely.
+ *
+ * WHY THE SCHEDULE IS SAFE TO REGISTER HERE. `scheduleMaintenance()` is
+ * idempotent: BullMQ keys a repeatable job on its name plus its repeat options,
+ * and the explicit `jobId` makes that guarantee legible rather than incidental.
+ * Restarting the API, or running several instances behind a load balancer,
+ * therefore leaves exactly one schedule rather than one per process.
+ *
+ * A failure to register must not stop the API booting. The queues still work,
+ * the storefront still serves, and the next boot registers it — refusing to
+ * serve HTTP because a housekeeping timer could not be written would be a much
+ * worse outcome than a late sweep.
+ */
+async function startEmbeddedWorkers(): Promise<EmbeddedWorkers> {
+  const workers: EmbeddedWorkers = [
+    startEmailWorker(),
+    startPaymentWorker(),
+    startMaintenanceWorker(),
+  ];
+
+  try {
+    await scheduleMaintenance();
+    log.info('maintenance schedule registered');
+  } catch (err) {
+    log.error({ err }, 'could not register the maintenance schedule — sweeps may not run');
+  }
+
+  return workers;
+}
 
 const log = logger.child({ module: 'server' });
 
@@ -146,9 +187,7 @@ async function main(): Promise<void> {
    * Optionally host the queue consumers here. See RUN_WORKERS_IN_API in
    * config/env.ts for why a separate process is otherwise preferred.
    */
-  const workers: EmbeddedWorkers = env.RUN_WORKERS_IN_API
-    ? [startEmailWorker(), startPaymentWorker()]
-    : [];
+  const workers: EmbeddedWorkers = env.RUN_WORKERS_IN_API ? await startEmbeddedWorkers() : [];
 
   if (workers.length > 0) {
     log.warn(
