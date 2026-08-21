@@ -48,9 +48,9 @@ export const CATEGORY_LABELS: Record<Category, string> = {
 /** Only these are offered when creating or editing a product. */
 export const ACTIVE_CATEGORIES: Category[] = [
   Category.DRIED_BSF_LARVAE,
-  Category.FLOATING_PELLETS,
   Category.SLOW_SINKING_PELLETS,
   Category.BOTTOM_DWELLERS,
+  Category.FLOATING_PELLETS,
   Category.HATCHERY_FEEDS,
 ];
 
