@@ -174,6 +174,27 @@ model ProductFamily {
   status   ProductStatus @default(DRAFT)
   badge    Badge?
 
+  /// Merchandising order across every customer-facing product listing.
+  ///
+  /// PRODUCT order, not variant order. `ProductVariant.position` sequences the
+  /// packs INSIDE one product and is a separate concern this does not touch;
+  /// likewise `ProductMedia.position` for a gallery.
+  ///
+  /// The storefront listed products by `[status, name]`, so the catalogue was
+  /// alphabetical by accident. This makes the sequence an explicit decision an
+  /// operator makes by dragging, rather than a side effect of naming.
+  ///
+  /// Contiguous 0-based, rewritten as a whole list on every reorder — see
+  /// products.service.reorder(). Deliberately NO unique constraint: swapping
+  /// two rows inside one transaction would violate it midway, and the service
+  /// already guarantees the stronger property (a dense 0..n-1 sequence with no
+  /// duplicates) by rewriting every row rather than patching two.
+  ///
+  /// Seeded from the PDP Content Master v5 running order
+  /// (scripts/derived-meta.json), the catalogue's own document sequence, so
+  /// introducing this field is a deliberate reorder rather than a random one.
+  displayOrder Int @default(0)
+
   /// Max 200 chars (§5.2). Enforced in the DTO too.
   shortDesc    String @db.VarChar(200)
   /// Sanitised Tiptap HTML — sanitised server-side on write, never trusted raw.
@@ -243,6 +264,8 @@ model ProductFamily {
 
   @@index([status, category])
   @@index([deletedAt])
+  /// Every storefront listing reads the catalogue in this order.
+  @@index([displayOrder])
 }
 
 model ProductVariant {

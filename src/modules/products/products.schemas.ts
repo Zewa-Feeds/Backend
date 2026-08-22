@@ -337,3 +337,19 @@ export const productListQuerySchema = paginationSchema.extend({
 });
 
 export const slugParamSchema = z.object({ slug: slugSchema });
+
+/**
+ * Catalogue reorder payload.
+ *
+ * The COMPLETE ordered list of slugs, not a move instruction. Position is the
+ * array index, which is what makes duplicate or skipped positions
+ * unrepresentable: there is no field for a caller to get wrong. The service
+ * additionally checks the set matches the live catalogue exactly.
+ *
+ * Capped well above the current thirteen products; the bound exists so a
+ * malformed client cannot make the server open a transaction over an unbounded
+ * list, not because the catalogue is expected to approach it.
+ */
+export const reorderBodySchema = z.object({
+  order: z.array(slugSchema).min(1, 'Nothing to reorder.').max(500),
+});

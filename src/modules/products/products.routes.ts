@@ -23,6 +23,7 @@ import {
   mediaPreviewSchema,
   productBodySchema,
   productListQuerySchema,
+  reorderBodySchema,
   slugParamSchema,
   stockUpdateSchema,
 } from './products.schemas';
@@ -42,6 +43,38 @@ productsRouter.get(
     const user = currentUser(req);
     const result = await productsService.list(req.query as never, user.role);
     res.json(result);
+  }),
+);
+
+/*
+ * ---- Display order -------------------------------------------------------
+ *
+ * DECLARED BEFORE '/:slug'. Express matches in registration order and "order"
+ * is a perfectly valid slug, so registering these afterwards would route
+ * GET /products/order into the product editor's handler looking for a product
+ * called "order".
+ *
+ * PRODUCT order — the sequence products appear in on the storefront. Not
+ * variant order (ProductVariant.position) and not gallery order
+ * (ProductMedia.position).
+ */
+productsRouter.get(
+  '/order',
+  asyncHandler(async (_req, res) => {
+    res.json({ data: await productsService.listDisplayOrder() });
+  }),
+);
+
+productsRouter.put(
+  '/order',
+  // Reordering the shop front is merchandising, so it sits behind the same
+  // permission as editing a product rather than the read-only products.view
+  // the router as a whole requires.
+  requirePermission('products.edit'),
+  validate({ body: reorderBodySchema }),
+  asyncHandler(async (req, res) => {
+    const { order } = req.body as { order: string[] };
+    res.json({ data: await productsService.reorder(order, auditContext(req)) });
   }),
 );
 

@@ -34,6 +34,7 @@ import { destroySafely, markAttached } from '@/modules/uploads/lifecycle.service
 import { revalidateStorefront } from '@/integrations/storefront/revalidate';
 import type { Role } from '@prisma/client';
 import {
+  CATEGORY_LABELS,
   FAMILY_SELECT,
   LOW_STOCK_THRESHOLD,
   serializeFamily,
@@ -1332,4 +1333,161 @@ async function assertSkusAvailable(skus: string[], exceptFamilyId?: string): Pro
       { skus: clashes.map((c) => c.sku) },
     );
   }
+}
+
+// ============================================================================
+// DISPLAY ORDER (§5.1) — the sequence products appear in on the storefront
+// ============================================================================
+//
+// PRODUCT order only. `ProductVariant.position` (packs inside one product) and
+// `ProductMedia.position` (gallery) are separate systems and nothing here reads
+// or writes either of them.
+
+/** One row of the CMS reorder list. */
+export type DisplayOrderRow = {
+  slug: string;
+  name: string;
+  category: string;
+  status: ProductStatus;
+  position: number;
+};
+
+/**
+ * The catalogue in merchandising order, for the CMS reorder screen.
+ *
+ * Includes COMING_SOON and DISCONTINUED as well as ACTIVE: an operator
+ * sequencing the catalogue needs to see the whole thing, and a product being
+ * temporarily off sale is not a reason for it to lose its place. Soft-deleted
+ * rows are excluded — they are gone, not hidden.
+ *
+ * `name` breaks ties so the list is stable while the column is still all
+ * zeroes on a database that has not been reordered yet.
+ */
+export async function listDisplayOrder(): Promise<DisplayOrderRow[]> {
+  const rows = await prisma.productFamily.findMany({
+    where: { deletedAt: null },
+    orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
+    select: { slug: true, name: true, category: true, status: true, displayOrder: true },
+  });
+
+  /*
+   * Positions are RENUMBERED for display rather than sent raw.
+   *
+   * The stored values can legitimately be sparse or duplicated — a product
+   * created after the last reorder arrives with the default 0 — and showing an
+   * operator "0, 0, 3, 7" would be alarming and useless. What the screen needs
+   * is the rank, which is exactly the array index.
+   */
+  return rows.map((r, i) => ({
+    slug: r.slug,
+    name: r.name,
+    category: CATEGORY_LABELS[r.category],
+    status: r.status,
+    position: i,
+  }));
+}
+
+/**
+ * Rewrite the whole catalogue sequence.
+ *
+ * Takes the complete ordered list of slugs, not a "move X to position 4" delta.
+ * That is what makes duplicate and skipped positions impossible: the stored
+ * column is not patched, it is replaced with a dense 0..n-1 sequence derived
+ * from the array index. It also makes the operation idempotent — sending the
+ * same list twice is a no-op — which is what protects against a double-click
+ * on Save.
+ *
+ * The submitted set must match the current catalogue EXACTLY. A slug that has
+ * been deleted, or a product created, since the operator loaded the screen
+ * means they are sequencing a catalogue that no longer exists, and silently
+ * accepting it would drop the new product to position 0. They are told to
+ * reload instead.
+ */
+export async function reorder(slugs: string[], ctx: AuditContext): Promise<DisplayOrderRow[]> {
+  const duplicates = slugs.filter((s, i) => slugs.indexOf(s) !== i);
+  if (duplicates.length > 0) {
+    throw new AppError(422, ErrorCode.VALIDATION_FAILED, 'The same product appears twice in the order.', {
+      fields: { order: `Duplicated: ${[...new Set(duplicates)].join(', ')}` },
+    });
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const current = await tx.productFamily.findMany({
+      where: { deletedAt: null },
+      select: { id: true, slug: true },
+    });
+
+    const known = new Set(current.map((f) => f.slug));
+    const submitted = new Set(slugs);
+
+    const unknown = slugs.filter((s) => !known.has(s));
+    const missing = current.map((f) => f.slug).filter((s) => !submitted.has(s));
+
+    if (unknown.length > 0 || missing.length > 0) {
+      /*
+       * 422 rather than 409, matching reorderSpotlights, which is the same
+       * operation on a sibling collection. The MESSAGE carries the useful part:
+       * this is nearly always a stale screen, not a malformed request.
+       */
+      throw new AppError(
+        422,
+        ErrorCode.VALIDATION_FAILED,
+        'The catalogue changed while you were reordering it. Reload and try again.',
+        {
+          fields: {
+            ...(unknown.length ? { unknown: unknown.join(', ') } : {}),
+            ...(missing.length ? { missing: missing.join(', ') } : {}),
+          },
+        },
+      );
+    }
+
+    const idBySlug = new Map(current.map((f) => [f.slug, f.id]));
+
+    /*
+     * One UPDATE per row, inside one transaction.
+     *
+     * Thirteen statements against a database ~180ms away is not free, but a
+     * partially applied reorder is worse than a slow one: the catalogue would
+     * be left with two products claiming the same slot. The transaction is what
+     * makes the whole sequence land or none of it.
+     */
+    for (const [index, slug] of slugs.entries()) {
+      await tx.productFamily.update({
+        where: { id: idBySlug.get(slug)! },
+        data: { displayOrder: index },
+      });
+    }
+
+    await writeAudit(
+      ctx,
+      {
+        module: AuditModule.PRODUCTS,
+        action: `Reordered the product catalogue (${slugs.length} products)`,
+        diff: { displayOrder: { to: slugs } },
+      },
+      tx,
+    );
+
+    return tx.productFamily.findMany({
+      where: { deletedAt: null },
+      orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
+      select: { slug: true, name: true, category: true, status: true, displayOrder: true },
+    });
+  });
+
+  /*
+   * The sequence is what every listing surface renders, so the shop grid and
+   * the homepage are both stale the moment it changes. Same purge the publish
+   * path uses — no slug, because this is a catalogue-wide change.
+   */
+  await revalidateStorefront();
+
+  return updated.map((r, i) => ({
+    slug: r.slug,
+    name: r.name,
+    category: CATEGORY_LABELS[r.category],
+    status: r.status,
+    position: i,
+  }));
 }

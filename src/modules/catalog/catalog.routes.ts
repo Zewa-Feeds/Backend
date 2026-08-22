@@ -66,7 +66,20 @@ catalogRouter.get(
         ...(query.q ? { name: { contains: query.q, mode: 'insensitive' } } : {}),
       },
       select: FAMILY_SELECT,
-      orderBy: [{ status: 'asc' }, { name: 'asc' }],
+      /*
+       * Merchandising order, decided in the CMS.
+       *
+       * This was [status, name], so the shop was alphabetical by accident and
+       * "ACTIVE before COMING_SOON" was doing the merchandising. Neither is a
+       * decision anyone made. `displayOrder` leads now; status no longer sorts
+       * at all, because an operator who wants a pre-launch product teased at
+       * the top of the range should be able to put it there.
+       *
+       * `name` only breaks ties — reachable when two rows genuinely share a
+       * position, which the reorder service prevents but a fresh row created
+       * since the last reorder can still cause (it arrives at the default 0).
+       */
+      orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
     });
 
     res.setHeader('Cache-Control', CACHE_60S);
