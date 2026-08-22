@@ -18,10 +18,24 @@ export interface StaffPrincipal {
   permissions: Permission[];
 }
 
-/** The authenticated storefront customer. */
+/**
+ * The authenticated storefront customer.
+ *
+ * Carries the whole profile, not just the identity, because the guard has to
+ * read the row anyway to check the BANNED flag. `/account/me` was issuing a
+ * second query for the row the guard had just loaded — same customer, same
+ * request, twice — so these fields are now loaded once and reused.
+ *
+ * `status` is deliberately NOT here: the guard consumes it and nothing
+ * downstream should branch on it, least of all a response body.
+ */
 export interface CustomerPrincipal {
   id: string;
   email: string;
+  firstName: string;
+  lastName: string;
+  phone: string | null;
+  registeredAt: Date;
 }
 
 declare global {

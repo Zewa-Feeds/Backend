@@ -60,9 +60,25 @@ export const requireCustomer: RequestHandler = async (req, _res, next) => {
 
     const claims = verifyCustomerToken(header.slice(7).trim());
 
+    /*
+     * Selects the whole profile, not just the identity.
+     *
+     * This row has to be read on every /account/* request regardless — the ban
+     * check below is the reason — so the four extra columns are free, and
+     * `/account/me` no longer needs a query of its own. One round trip saved
+     * per request against a database that is ~180ms away.
+     */
     const customer = await prisma.customer.findUnique({
       where: { id: claims.sub },
-      select: { id: true, email: true, status: true },
+      select: {
+        id: true,
+        email: true,
+        status: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        registeredAt: true,
+      },
     });
     if (!customer) throw unauthenticated('Account not found.', ErrorCode.TOKEN_INVALID);
 
@@ -70,7 +86,19 @@ export const requireCustomer: RequestHandler = async (req, _res, next) => {
       throw new AppError(403, ErrorCode.ACCOUNT_BANNED, 'Your account has been suspended.');
     }
 
-    req.customer = { id: customer.id, email: customer.email };
+    /*
+     * `status` is dropped here on purpose. It is the guard's business and
+     * nothing downstream should branch on it — leaving it off the principal
+     * makes it impossible for a handler to leak it into a response.
+     */
+    req.customer = {
+      id: customer.id,
+      email: customer.email,
+      firstName: customer.firstName,
+      lastName: customer.lastName,
+      phone: customer.phone,
+      registeredAt: customer.registeredAt,
+    };
     next();
   } catch (err) {
     next(err);
@@ -347,21 +375,21 @@ customerAuthRouter.post(
 
 accountRouter.use(requireCustomer);
 
+/**
+ * The signed-in customer's own profile.
+ *
+ * No query: `requireCustomer` has already loaded this row to check the ban
+ * flag, so re-fetching it was a second round trip for data sitting in memory.
+ *
+ * The projection is written out rather than sending `req.customer` straight
+ * through, so the response stays exactly the six fields it has always been
+ * even if the principal grows another field later.
+ */
 accountRouter.get(
   '/me',
   asyncHandler(async (req, res) => {
-    const customer = await prisma.customer.findUniqueOrThrow({
-      where: { id: req.customer!.id },
-      select: {
-        id: true,
-        email: true,
-        firstName: true,
-        lastName: true,
-        phone: true,
-        registeredAt: true,
-      },
-    });
-    res.json({ data: customer });
+    const { id, email, firstName, lastName, phone, registeredAt } = req.customer!;
+    res.json({ data: { id, email, firstName, lastName, phone, registeredAt } });
   }),
 );
 
