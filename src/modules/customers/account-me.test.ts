@@ -34,9 +34,15 @@ vi.mock('@/middleware/rateLimit', () => ({
 
 vi.mock('@/modules/customers/account.mailer', () => ({ sendAccountEmail: vi.fn() }));
 
-const { accountRouter } = await import('@/modules/customers/account.routes');
-const { errorHandler } = await import('@/middleware/errorHandler');
-const { signCustomerToken } = await import('@/lib/tokens');
+/*
+ * Static imports, even though the mocks above must apply first: vitest hoists
+ * `vi.mock` above the import graph, so these see the mocked modules. Dynamic
+ * `await import()` also worked at runtime but is a top-level await, which this
+ * project's CommonJS tsconfig rejects — `npm run typecheck` failed on it.
+ */
+import { accountRouter } from '@/modules/customers/account.routes';
+import { errorHandler } from '@/middleware/errorHandler';
+import { signCustomerToken } from '@/lib/tokens';
 
 /** The row the guard's SELECT returns for a healthy customer. */
 const ROW = {
@@ -66,6 +72,9 @@ const url = (path: string) => `http://127.0.0.1:${port()}${path}`;
 afterAll(() => {
   server.close();
 });
+
+type MeBody = { data: Record<string, unknown> };
+type ErrorBody = { error: { code: string; message: string } };
 
 const tokenFor = (id: string, email: string) => signCustomerToken({ sub: id, email });
 
@@ -110,13 +119,13 @@ describe('authorization is unchanged', () => {
     findUnique.mockResolvedValue({ ...ROW, status: 'BANNED' });
     const res = await getMe(tokenFor(ROW.id, ROW.email));
     expect(res.status).toBe(403);
-    expect((await res.json()).error.code).toBe('ACCOUNT_BANNED');
+    expect(((await res.json()) as ErrorBody).error.code).toBe('ACCOUNT_BANNED');
   });
 
   it('looks the customer up by the token subject, not by anything client-supplied', async () => {
     findUnique.mockResolvedValue(ROW);
     await getMe(tokenFor(ROW.id, ROW.email));
-    expect(findUnique.mock.calls[0][0]).toMatchObject({ where: { id: ROW.id } });
+    expect(findUnique.mock.calls[0]?.[0]).toMatchObject({ where: { id: ROW.id } });
   });
 });
 
@@ -126,7 +135,7 @@ describe('/account/me', () => {
     const res = await getMe(tokenFor(ROW.id, ROW.email));
 
     expect(res.status).toBe(200);
-    const { data } = await res.json();
+    const { data } = (await res.json()) as MeBody;
     expect(data).toEqual({
       id: ROW.id,
       email: ROW.email,
@@ -139,7 +148,7 @@ describe('/account/me', () => {
 
   it('does not leak the account status the guard reads', async () => {
     findUnique.mockResolvedValue(ROW);
-    const { data } = await (await getMe(tokenFor(ROW.id, ROW.email))).json();
+    const { data } = (await (await getMe(tokenFor(ROW.id, ROW.email))).json()) as MeBody;
     expect(data).not.toHaveProperty('status');
     expect(Object.keys(data).sort()).toEqual(
       ['email', 'firstName', 'id', 'lastName', 'phone', 'registeredAt'],
@@ -156,7 +165,7 @@ describe('/account/me', () => {
     findUnique.mockResolvedValue(ROW);
     await getMe(tokenFor(ROW.id, ROW.email));
 
-    const { select } = findUnique.mock.calls[0][0] as { select: Record<string, boolean> };
+    const { select } = findUnique.mock.calls[0]?.[0] as { select: Record<string, boolean> };
     // Everything /account/me answers with, plus the flag the ban check needs.
     for (const field of ['id', 'email', 'status', 'firstName', 'lastName', 'phone', 'registeredAt']) {
       expect(select[field]).toBe(true);
@@ -165,7 +174,7 @@ describe('/account/me', () => {
 
   it('carries a null phone through unchanged', async () => {
     findUnique.mockResolvedValue({ ...ROW, phone: null });
-    const { data } = await (await getMe(tokenFor(ROW.id, ROW.email))).json();
+    const { data } = (await (await getMe(tokenFor(ROW.id, ROW.email))).json()) as MeBody;
     expect(data.phone).toBeNull();
   });
 });
