@@ -430,25 +430,12 @@ export async function checkout(
       .catch((err) => log.error({ err, sku: line.sku }, 'failed to queue stock alert'));
   }
 
-  await emailQueue
-    .add('staff-new-order', {
-      kind: 'staff',
-      template: 'staff-new-order',
-      context: {
-        orderNo: created.orderNo,
-        customerName: input.shippingAddress.name,
-        totalPaise: created.totalPaise,
-        itemCount: cart.lines.reduce((s, l) => s + l.qty, 0),
-        paymentMethod: input.paymentMethod,
-      },
-    })
-    .catch((err) => log.error({ err }, 'failed to queue staff order alert'));
-
   // ---- 7. Payment ---------------------------------------------------------
   if (input.paymentMethod === PaymentMethod.COD) {
     // COD is complete on creation. Ops can accept it immediately; payment is
     // collected on delivery, so paymentStatus stays UNPAID until then.
     await queueCustomerEmail(created.id, created.orderNo, 'order-placed');
+    await queueStaffNewOrderEmail(created.orderNo);
 
     log.info({ orderNo: created.orderNo, totalPaise: created.totalPaise }, 'COD order placed');
     return {
@@ -606,34 +593,78 @@ export async function confirmPayment(
     .catch(() => undefined);
 
   await queueCustomerEmail(order.id, orderNo, 'order-placed');
+  await queueStaffNewOrderEmail(orderNo);
 
   log.info({ orderNo, gatewayPaymentId }, 'payment confirmed');
   return serializeOrder(updated);
 }
 
-/** Create the OrderEmail row and enqueue the send. */
+/** Create the OrderEmail row and enqueue the send idempotently. */
 async function queueCustomerEmail(
   orderId: string,
   orderNo: string,
   template: 'order-placed',
 ): Promise<void> {
   try {
-    const row = await prisma.orderEmail.create({
-      data: {
+    const existing = await prisma.orderEmail.findFirst({
+      where: {
         orderId,
-        subject: template === 'order-placed' ? `We've received your order ${orderNo}` : orderNo,
-        toEmail: (await prisma.order.findUniqueOrThrow({ where: { id: orderId }, select: { email: true } })).email,
+        subject: { in: [`Order ${orderNo} confirmed`, `We've received your order ${orderNo}`] },
       },
       select: { id: true },
     });
-    await emailQueue.add('customer-email', {
-      kind: 'customer',
-      orderEmailId: row.id,
-      orderNo,
-      template,
+    if (existing) {
+      log.info({ orderNo }, 'customer order-placed email already queued/sent — skipping duplicate');
+      return;
+    }
+
+    const order = await prisma.order.findUniqueOrThrow({
+      where: { id: orderId },
+      select: { email: true },
     });
+
+    const row = await prisma.orderEmail.create({
+      data: {
+        orderId,
+        subject: `Order ${orderNo} confirmed`,
+        toEmail: order.email,
+      },
+      select: { id: true },
+    });
+
+    await emailQueue.add(
+      'customer-email',
+      {
+        kind: 'customer',
+        orderEmailId: row.id,
+        orderNo,
+        template,
+      },
+      {
+        jobId: `customer-order-placed-${orderNo}`,
+      },
+    );
   } catch (err) {
     // Never fail a paid order because email queueing failed.
     log.error({ err, orderNo }, 'failed to queue customer email');
+  }
+}
+
+/** Enqueue internal notification for info@zewafeeds.com idempotently. */
+async function queueStaffNewOrderEmail(orderNo: string): Promise<void> {
+  try {
+    await emailQueue.add(
+      'staff-new-order',
+      {
+        kind: 'staff',
+        template: 'staff-new-order',
+        context: { orderNo },
+      },
+      {
+        jobId: `staff-order-placed-${orderNo}`,
+      },
+    );
+  } catch (err) {
+    log.error({ err, orderNo }, 'failed to queue staff new order email');
   }
 }

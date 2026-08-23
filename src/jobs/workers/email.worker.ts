@@ -30,36 +30,62 @@ async function orderContext(orderNo: string): Promise<{ ctx: OrderEmailContext; 
     select: {
       orderNo: true,
       email: true,
+      phone: true,
       shippingAddress: true,
       subtotalPaise: true,
       discountPaise: true,
       shippingPaise: true,
+      taxPaise: true,
       totalPaise: true,
       paymentMethod: true,
+      paymentStatus: true,
+      razorpayOrderId: true,
+      razorpayPaymentId: true,
+      customerNote: true,
+      internalNote: true,
+      placedAt: true,
       invoiceNumber: true,
       carrier: true,
       trackingNumber: true,
       trackingUrl: true,
       cancelReason: true,
       deliveredAt: true,
-      items: { select: { productName: true, pack: true, qty: true, lineTotalPaise: true } },
+      items: {
+        select: {
+          productName: true,
+          sku: true,
+          pack: true,
+          qty: true,
+          unitPricePaise: true,
+          lineTotalPaise: true,
+        },
+      },
     },
   });
 
-  const addr = (order.shippingAddress ?? {}) as { name?: string };
+  const addr = (order.shippingAddress ?? {}) as { name?: string; phone?: string };
 
   return {
     email: order.email,
     ctx: {
       orderNo: order.orderNo,
       customerName: addr.name ?? 'Customer',
+      customerEmail: order.email,
+      customerPhone: order.phone || addr.phone || '',
       items: order.items,
       subtotalPaise: order.subtotalPaise,
       discountPaise: order.discountPaise,
       shippingPaise: order.shippingPaise,
+      taxPaise: order.taxPaise,
       totalPaise: order.totalPaise,
       paymentMethod: order.paymentMethod === PaymentMethod.COD ? 'COD' : 'RAZORPAY',
+      paymentStatus: order.paymentStatus === 'PAID' ? 'PAID' : 'UNPAID',
       addressLine: formatAddress(order.shippingAddress),
+      placedAt: order.placedAt,
+      customerNote: order.customerNote,
+      internalNote: order.internalNote,
+      razorpayOrderId: order.razorpayOrderId,
+      razorpayPaymentId: order.razorpayPaymentId,
       invoiceNumber: order.invoiceNumber,
       carrier: order.carrier,
       trackingNumber: order.trackingNumber,
@@ -139,13 +165,51 @@ async function handleCustomerEmail(job: Job<EmailJob>): Promise<void> {
 }
 
 /**
- * Staff alerts (§15) go to every Ops Manager and Admin. No per-user toggles —
- * §15 is explicit that preferences were removed in v2.0.
+ * Staff alerts (§15).
+ *
+ * New order alerts are sent directly to info@zewafeeds.com (as well as active
+ * Ops Managers and Admins) with full order breakdown, items with SKUs,
+ * gateway IDs, and clearly separated customer vs internal notes.
  */
 async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
   const data = job.data;
   if (data.kind !== 'staff') return;
 
+  if (data.template === 'staff-new-order') {
+    const orderNo = data.context.orderNo as string;
+    const { ctx } = await orderContext(orderNo);
+    const build = staffTemplates['staff-new-order'];
+    const rendered = build(ctx);
+
+    const recipients: { email: string; name?: string }[] = [
+      { email: 'info@zewafeeds.com', name: 'Zewa Feeds Orders' },
+    ];
+
+    const staffUsers = await prisma.cmsUser.findMany({
+      where: {
+        status: 'ACTIVE',
+        deletedAt: null,
+        role: { in: [Role.OPS_MANAGER, Role.ADMIN] },
+      },
+      select: { email: true, name: true },
+    });
+
+    for (const u of staffUsers) {
+      if (u.email.toLowerCase() !== 'info@zewafeeds.com') {
+        recipients.push({ email: u.email, name: u.name });
+      }
+    }
+
+    await sendEmail({
+      to: recipients,
+      subject: rendered.subject,
+      htmlBody: rendered.html,
+      reference: `staff-${orderNo}`,
+    });
+    return;
+  }
+
+  // Other staff alerts (staff-stock-zero, staff-new-review)
   const recipients = await prisma.cmsUser.findMany({
     where: {
       status: 'ACTIVE',

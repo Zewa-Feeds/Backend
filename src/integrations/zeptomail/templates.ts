@@ -40,19 +40,51 @@ const CANVAS = '#F4F6F8';
 export interface OrderEmailContext {
   orderNo: string;
   customerName: string;
-  items: { productName: string; pack: string; qty: number; lineTotalPaise: number }[];
+  customerEmail?: string;
+  customerPhone?: string;
+  items: {
+    productName: string;
+    pack: string;
+    qty: number;
+    lineTotalPaise: number;
+    sku?: string;
+    unitPricePaise?: number;
+  }[];
   subtotalPaise: number;
   discountPaise: number;
   shippingPaise: number;
+  taxPaise?: number;
   totalPaise: number;
   paymentMethod: 'RAZORPAY' | 'COD';
+  paymentStatus?: 'PAID' | 'UNPAID';
   addressLine: string;
+  placedAt?: Date | string | null;
+  customerNote?: string | null;
+  internalNote?: string | null;
+  razorpayOrderId?: string | null;
+  razorpayPaymentId?: string | null;
   invoiceNumber?: string | null;
   carrier?: string | null;
   trackingNumber?: string | null;
   trackingUrl?: string | null;
   cancelReason?: string | null;
   deliveredOn?: Date | null;
+}
+
+/** Formats a date nicely in Indian standard format (IST). */
+function formatDate(d: Date | string | null | undefined): string {
+  if (!d) return '—';
+  const date = typeof d === 'string' ? new Date(d) : d;
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+    timeZone: 'Asia/Kolkata',
+  });
 }
 
 /**
@@ -167,8 +199,8 @@ function itemsBlock(ctx: OrderEmailContext): string {
       (i) => `
       <tr>
         <td style="padding:11px 0;border-bottom:1px solid ${HAIRLINE};font-size:14px;color:${INK};line-height:1.45;">
-          ${esc(i.productName)}<br/>
-          <span style="font-size:12.5px;color:${MUTED};">${esc(i.pack)} · Qty ${i.qty}</span>
+          <strong>${esc(i.productName)}</strong><br/>
+          <span style="font-size:12.5px;color:${MUTED};">${esc(i.pack)}${i.sku ? ` · SKU: ${esc(i.sku)}` : ''} · Qty ${i.qty}${i.unitPricePaise ? ` · ${esc(formatInr(i.unitPricePaise))} each` : ''}</span>
         </td>
         <td style="padding:11px 0;border-bottom:1px solid ${HAIRLINE};font-size:14px;color:${INK};text-align:right;white-space:nowrap;vertical-align:top;">
           ${esc(formatInr(i.lineTotalPaise))}
@@ -183,6 +215,18 @@ function itemsBlock(ctx: OrderEmailContext): string {
         <td style="padding:${strong ? '12' : '5'}px 0 ${strong ? '0' : '5'}px;font-size:${strong ? '18' : '13.5'}px;color:${strong ? BRAND : INK};text-align:right;white-space:nowrap;${strong ? 'font-weight:700;border-top:1px solid ' + HAIRLINE + ';' : ''}">${esc(value)}</td>
       </tr>`;
 
+  const customerNoteBlock = ctx.customerNote
+    ? `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0 0;">
+    <tr>
+      <td style="padding:14px 16px;background:#FBFCFD;border:1px solid ${HAIRLINE};border-radius:10px;">
+        <div style="font-size:10.5px;letter-spacing:0.09em;text-transform:uppercase;color:${MUTED};margin-bottom:4px;">Delivery instructions / Note</div>
+        <div style="font-size:13px;line-height:1.5;color:${INK};">${esc(ctx.customerNote)}</div>
+      </td>
+    </tr>
+  </table>`
+    : '';
+
   return `
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
     <tbody>
@@ -190,6 +234,7 @@ function itemsBlock(ctx: OrderEmailContext): string {
       ${totalRow('Subtotal', formatInr(ctx.subtotalPaise))}
       ${ctx.discountPaise > 0 ? totalRow('Discount', `− ${formatInr(ctx.discountPaise)}`) : ''}
       ${totalRow('Shipping', ctx.shippingPaise === 0 ? 'Free' : formatInr(ctx.shippingPaise))}
+      ${ctx.taxPaise !== undefined && ctx.taxPaise > 0 ? totalRow('Tax (GST incl.)', formatInr(ctx.taxPaise)) : ''}
       ${totalRow(ctx.paymentMethod === 'COD' ? 'Total, pay on delivery' : 'Total paid', formatInr(ctx.totalPaise), true)}
     </tbody>
   </table>
@@ -199,6 +244,147 @@ function itemsBlock(ctx: OrderEmailContext): string {
       <td style="padding:16px;background:#FBFCFD;border:1px solid ${HAIRLINE};border-radius:10px;">
         <div style="font-size:10.5px;letter-spacing:0.09em;text-transform:uppercase;color:${MUTED};margin-bottom:6px;">Delivering to</div>
         <div style="font-size:13.5px;line-height:1.6;color:${INK};">${esc(ctx.addressLine)}</div>
+      </td>
+    </tr>
+  </table>
+  ${customerNoteBlock}`;
+}
+
+/**
+ * Internal order details block for staff notifications sent to info@zewafeeds.com.
+ *
+ * Clearly displays customer details, comprehensive items breakdown with SKUs,
+ * complete financials, payment gateway IDs, and strictly separates
+ * CUSTOMER NOTE from INTERNAL NOTE.
+ */
+function staffOrderBlock(ctx: OrderEmailContext): string {
+  const itemRows = ctx.items
+    .map(
+      (i) => `
+      <tr>
+        <td style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};font-size:13px;color:${INK};">
+          <strong>${esc(i.productName)}</strong>
+        </td>
+        <td style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};font-size:12.5px;color:${MUTED};font-family:monospace;">
+          ${esc(i.sku ?? '—')}
+        </td>
+        <td style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};font-size:12.5px;color:${MUTED};">
+          ${esc(i.pack)}
+        </td>
+        <td style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};font-size:13px;color:${INK};text-align:center;">
+          ${esc(i.qty)}
+        </td>
+        <td style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};font-size:13px;color:${INK};text-align:right;">
+          ${esc(i.unitPricePaise ? formatInr(i.unitPricePaise) : '—')}
+        </td>
+        <td style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};font-size:13px;color:${INK};font-weight:600;text-align:right;">
+          ${esc(formatInr(i.lineTotalPaise))}
+        </td>
+      </tr>`,
+    )
+    .join('');
+
+  return `
+  <!-- Customer Details -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+    <tr>
+      <td style="padding:12px 16px;background:${BRAND_SOFT};border-bottom:1px solid ${HAIRLINE};">
+        <strong style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:${BRAND};">Customer Details</strong>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:14px 16px;font-size:13.5px;line-height:1.6;color:${INK};">
+        <strong>Name:</strong> ${esc(ctx.customerName)}<br/>
+        <strong>Email:</strong> <a href="mailto:${esc(ctx.customerEmail ?? '')}" style="color:${BRAND};text-decoration:none;">${esc(ctx.customerEmail ?? '—')}</a><br/>
+        <strong>Phone:</strong> ${esc(ctx.customerPhone ?? '—')}<br/>
+        <strong>Shipping Address:</strong> ${esc(ctx.addressLine)}
+      </td>
+    </tr>
+  </table>
+
+  <!-- Order & Items Table -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;overflow:hidden;border-collapse:collapse;">
+    <thead>
+      <tr style="background:#F8FAFC;">
+        <th style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};text-align:left;font-size:11px;text-transform:uppercase;color:${MUTED};">Product</th>
+        <th style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};text-align:left;font-size:11px;text-transform:uppercase;color:${MUTED};">SKU</th>
+        <th style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};text-align:left;font-size:11px;text-transform:uppercase;color:${MUTED};">Pack</th>
+        <th style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};text-align:center;font-size:11px;text-transform:uppercase;color:${MUTED};">Qty</th>
+        <th style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};text-align:right;font-size:11px;text-transform:uppercase;color:${MUTED};">Unit Price</th>
+        <th style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};text-align:right;font-size:11px;text-transform:uppercase;color:${MUTED};">Line Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${itemRows}
+    </tbody>
+  </table>
+
+  <!-- Financial & Gateway Details -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
+    <tr>
+      <td width="48%" style="vertical-align:top;padding-right:8px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;">
+          <tr>
+            <td style="padding:10px 14px;background:#F8FAFC;border-bottom:1px solid ${HAIRLINE};">
+              <strong style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${MUTED};">Payment Information</strong>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:12px 14px;font-size:12.5px;line-height:1.6;color:${INK};">
+              <strong>Method:</strong> ${esc(ctx.paymentMethod)}<br/>
+              <strong>Status:</strong> <span style="font-weight:700;color:${ctx.paymentStatus === 'PAID' ? BRAND : '#D97706'};">${esc(ctx.paymentStatus ?? 'PAID')}</span><br/>
+              <strong>Razorpay Order:</strong> <span style="font-family:monospace;">${esc(ctx.razorpayOrderId ?? '—')}</span><br/>
+              <strong>Razorpay Payment:</strong> <span style="font-family:monospace;">${esc(ctx.razorpayPaymentId ?? '—')}</span>
+            </td>
+          </tr>
+        </table>
+      </td>
+      <td width="52%" style="vertical-align:top;padding-left:8px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;">
+          <tr>
+            <td style="padding:10px 14px;background:#F8FAFC;border-bottom:1px solid ${HAIRLINE};">
+              <strong style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${MUTED};">Financial Breakdown</strong>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:12px 14px;font-size:12.5px;line-height:1.6;color:${INK};">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr><td style="color:${MUTED};">Subtotal:</td><td style="text-align:right;">${esc(formatInr(ctx.subtotalPaise))}</td></tr>
+                ${ctx.discountPaise > 0 ? `<tr><td style="color:${MUTED};">Discount:</td><td style="text-align:right;color:#DC2626;">− ${esc(formatInr(ctx.discountPaise))}</td></tr>` : ''}
+                <tr><td style="color:${MUTED};">Shipping:</td><td style="text-align:right;">${ctx.shippingPaise === 0 ? 'Free' : esc(formatInr(ctx.shippingPaise))}</td></tr>
+                ${ctx.taxPaise !== undefined && ctx.taxPaise > 0 ? `<tr><td style="color:${MUTED};">Tax (GST):</td><td style="text-align:right;">${esc(formatInr(ctx.taxPaise))}</td></tr>` : ''}
+                <tr><td style="padding-top:6px;border-top:1px solid ${HAIRLINE};font-weight:700;font-size:14px;color:${INK};">Total:</td><td style="padding-top:6px;border-top:1px solid ${HAIRLINE};text-align:right;font-weight:700;font-size:15px;color:${BRAND};">${esc(formatInr(ctx.totalPaise))}</td></tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+
+  <!-- Strictly Separated Notes -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 10px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+    <tr>
+      <td style="padding:10px 14px;background:#F8FAFC;border-bottom:1px solid ${HAIRLINE};">
+        <strong style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${MUTED};">CUSTOMER NOTE</strong>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:12px 14px;font-size:13px;line-height:1.5;color:${INK};">
+        ${ctx.customerNote ? esc(ctx.customerNote) : `<span style="color:${MUTED};font-style:italic;">None provided by customer</span>`}
+      </td>
+    </tr>
+  </table>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+    <tr>
+      <td style="padding:10px 14px;background:#F8FAFC;border-bottom:1px solid ${HAIRLINE};">
+        <strong style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${MUTED};">INTERNAL NOTE</strong>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:12px 14px;font-size:13px;line-height:1.5;color:${INK};">
+        ${ctx.internalNote ? esc(ctx.internalNote) : `<span style="color:${MUTED};font-style:italic;">None</span>`}
       </td>
     </tr>
   </table>`;
@@ -239,6 +425,7 @@ export const templates = {
         : `We've got your order and your payment is confirmed. You'll hear from us again the moment it ships.`,
       factsBlock([
         ['Order', ctx.orderNo],
+        ['Date', formatDate(ctx.placedAt)],
         ['Total', formatInr(ctx.totalPaise)],
         ['Payment', ctx.paymentMethod === 'COD' ? 'On delivery' : 'Paid online'],
       ]) +
@@ -407,12 +594,13 @@ export type AccountTemplateName = keyof typeof accountTemplates;
 // ---- Staff alert templates (§15) -------------------------------------------
 
 export const staffTemplates = {
-  'staff-new-order': (ctx: { orderNo: string; customerName: string; totalPaise: number; itemCount: number; paymentMethod: string }) => ({
-    subject: `New order ${ctx.orderNo} — ${formatInr(ctx.totalPaise)}`,
+  'staff-new-order': (ctx: OrderEmailContext) => ({
+    subject: `New Order Placed — #${ctx.orderNo}`,
     html: shell(
-      'New order placed',
-      `<strong>${esc(ctx.orderNo)}</strong> from ${esc(ctx.customerName)} — ${esc(ctx.itemCount)} item(s), ${esc(formatInr(ctx.totalPaise))} (${esc(ctx.paymentMethod)}).`,
-      button('Open in CMS', `${env.CMS_ORIGIN}/orders/${ctx.orderNo}`),
+      `New Order Placed — #${esc(ctx.orderNo)}`,
+      `A new order was placed on ${esc(formatDate(ctx.placedAt))} for <strong style="color:${BRAND};">${esc(formatInr(ctx.totalPaise))}</strong> via ${esc(ctx.paymentMethod)} (${esc(ctx.paymentStatus ?? (ctx.paymentMethod === 'COD' ? 'UNPAID' : 'PAID'))}).`,
+      staffOrderBlock(ctx) + button('Open in CMS', `${env.CMS_ORIGIN}/orders/${ctx.orderNo}`),
+      `New order #${ctx.orderNo} from ${esc(ctx.customerName)} · ${formatInr(ctx.totalPaise)}`,
     ),
   }),
 
