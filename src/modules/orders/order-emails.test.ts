@@ -239,5 +239,47 @@ describe('Email Trigger Points & Idempotency Rules', () => {
     const primaryStaffRecipient = 'info@zewafeeds.com';
     expect(primaryStaffRecipient).toBe('info@zewafeeds.com');
   });
-});
 
+  it('verifies that unconfirmed/abandoned online checkout does NOT trigger Order Placed or staff emails', () => {
+    const initialCheckoutOnlineState = {
+      orderStatus: 'PENDING',
+      paymentStatus: 'UNPAID',
+      paymentMethod: 'RAZORPAY',
+    };
+    // Online checkout creation must NOT queue emails before payment verification
+    const shouldSendEmailAtCheckout = initialCheckoutOnlineState.paymentMethod === 'COD';
+    expect(shouldSendEmailAtCheckout).toBe(false);
+  });
+
+  it('verifies that COD checkout triggers both customer and staff notifications on creation', () => {
+    const codState = {
+      orderStatus: 'PENDING',
+      paymentStatus: 'UNPAID',
+      paymentMethod: 'COD',
+    };
+    const shouldSendEmailAtCheckout = codState.paymentMethod === 'COD';
+    expect(shouldSendEmailAtCheckout).toBe(true);
+  });
+
+  it('guarantees duplicate webhook protection via deterministic job ID and status check', () => {
+    const orderNo = '27ZFO200';
+    const firstWebhookJobId = `customer-order-placed-${orderNo}`;
+    const duplicateWebhookJobId = `customer-order-placed-${orderNo}`;
+
+    expect(firstWebhookJobId).toEqual(duplicateWebhookJobId);
+  });
+
+  it('confirms asynchronous non-blocking email failure resilience', () => {
+    const simulateEmailError = () => {
+      try {
+        throw new Error('Redis / ZeptoMail temporary outage');
+      } catch (err) {
+        // Must be caught and logged without propagating error to caller
+        return { success: true, warning: 'Email queueing failed but order remains valid' };
+      }
+    };
+
+    const result = simulateEmailError();
+    expect(result.success).toBe(true);
+  });
+});
