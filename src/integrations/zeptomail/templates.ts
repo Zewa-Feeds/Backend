@@ -500,26 +500,26 @@ export const templates = {
    * promising it money back would invent a refund that cannot exist.
    */
   'order-cancelled': (ctx: OrderEmailContext, _email: string) => {
-    const captured = ctx.paymentStatus === 'PAID';
+    const isPrepaid = ctx.paymentMethod !== 'COD' && ctx.paymentStatus === 'PAID';
 
     return {
       subject: `Order ${ctx.orderNo} was cancelled`,
       html: shell(
         'Your order was cancelled.',
         `Order <strong style="color:${INK};">${esc(ctx.orderNo)}</strong> has been cancelled.${
-          ctx.cancelReason ? ` Reason given: ${esc(ctx.cancelReason)}.` : ''
+          ctx.cancelReason ? ` Reason: ${esc(ctx.cancelReason)}.` : ''
         }${
-          captured
-            ? ' Any payment already made will be refunded to your original payment method once our team processes the refund.'
-            : ''
+          isPrepaid
+            ? ' Any payment you have made will be refunded to the original source automatically in full, after deducting applicable gateway charges, within 5 working days. You can track your refund status from your order page.'
+            : ' No payment was collected for this order, so no refund is required.'
         }`,
         note(
-          captured
-            ? `After the refund is processed, it may take 5–7 working days to reflect. If this cancellation wasn't expected, reply to this email and we'll look into it.`
+          isPrepaid
+            ? `After the refund is processed by your bank, it may take 5–7 working days to reflect. If this cancellation wasn't expected, reply to this email and we'll look into it.`
             : `If this cancellation wasn't expected, reply to this email and we'll look into it.`,
         ),
-        captured
-          ? `${ctx.orderNo} cancelled · our team will process your refund`
+        isPrepaid
+          ? `${ctx.orderNo} cancelled · refund initiated`
           : `${ctx.orderNo} cancelled`,
       ),
     };
