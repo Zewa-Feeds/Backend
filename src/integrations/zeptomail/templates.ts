@@ -553,13 +553,13 @@ export const accountTemplates = {
     html: shell(
       "You've been invited to Zewa Feeds CMS.",
       `Hi ${esc(ctx.recipientName)}, you have been invited to join the Zewa Feeds CMS team as <strong style="color:${BRAND};">${esc(ctx.roleLabel)}</strong>. Click the button below to set your password and activate your account.`,
-      button('Accept Invitation & Set Password', ctx.inviteUrl) +
-        factsBlock([
-          ['Assigned Role', ctx.roleLabel],
-          ['Account Email', ctx.recipientEmail],
-          ['Link Validity', `${ctx.expiresInHours} hours`],
-        ]) +
-        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 0;">
+      factsBlock([
+        ['Assigned Role', ctx.roleLabel],
+        ['Account Email', ctx.recipientEmail],
+        ['Link Validity', `${ctx.expiresInHours} hours`],
+      ]) +
+        button('Accept Invitation & Set Password', ctx.inviteUrl) +
+        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 0;">
            <tr>
              <td style="padding:14px 16px;background:#FBFCFD;border:1px solid ${HAIRLINE};border-radius:10px;">
                <div style="font-size:11px;color:${MUTED};margin-bottom:6px;">If the button doesn't work, paste this into your browser:</div>
