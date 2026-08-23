@@ -540,6 +540,41 @@ export type CustomerTemplateName = keyof typeof templates;
 
 export const accountTemplates = {
   /**
+   * CMS staff invitation link.
+   */
+  'cms-user-invitation': (ctx: {
+    recipientName: string;
+    recipientEmail: string;
+    roleLabel: string;
+    inviteUrl: string;
+    expiresInHours: number;
+  }) => ({
+    subject: "You're invited to Zewa Feeds CMS",
+    html: shell(
+      "You've been invited to Zewa Feeds CMS.",
+      `Hi ${esc(ctx.recipientName)}, you have been invited to join the Zewa Feeds CMS team as <strong style="color:${BRAND};">${esc(ctx.roleLabel)}</strong>. Click the button below to set your password and activate your account.`,
+      button('Accept Invitation & Set Password', ctx.inviteUrl) +
+        factsBlock([
+          ['Assigned Role', ctx.roleLabel],
+          ['Account Email', ctx.recipientEmail],
+          ['Link Validity', `${ctx.expiresInHours} hours`],
+        ]) +
+        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 0;">
+           <tr>
+             <td style="padding:14px 16px;background:#FBFCFD;border:1px solid ${HAIRLINE};border-radius:10px;">
+               <div style="font-size:11px;color:${MUTED};margin-bottom:6px;">If the button doesn't work, paste this into your browser:</div>
+               <div style="font-size:12px;line-height:1.5;color:${INK};word-break:break-all;">${esc(ctx.inviteUrl)}</div>
+             </td>
+           </tr>
+         </table>` +
+        note(
+          `<strong style="color:${INK};">Security notice:</strong> This invitation link is single-use and expires in ${ctx.expiresInHours} hours. Two-factor authentication (2FA) will be configured on your first sign-in.`,
+        ),
+      `You're invited to Zewa Feeds CMS as ${esc(ctx.roleLabel)}`,
+    ),
+  }),
+
+  /**
    * Password reset link.
    *
    * States the expiry and says what to do if it was not requested — an

@@ -14,7 +14,7 @@ import { queueRedis } from '@/lib/redis';
 import { prisma } from '@/lib/prisma';
 import { logger } from '@/lib/logger';
 import { sendEmail } from '@/integrations/zeptomail/zeptomail.client';
-import { staffTemplates, templates, type OrderEmailContext } from '@/integrations/zeptomail/templates';
+import { accountTemplates, staffTemplates, templates, type OrderEmailContext } from '@/integrations/zeptomail/templates';
 import { generateInvoicePdf } from '@/integrations/pdf/invoice';
 import * as settingsService from '@/modules/settings/settings.service';
 import { formatAddress } from '@/modules/orders/orders.serializer';
@@ -235,12 +235,34 @@ async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
   });
 }
 
+async function handleInvitationEmail(job: Job<EmailJob>): Promise<void> {
+  const data = job.data;
+  if (data.kind !== 'invitation') return;
+
+  const build = accountTemplates['cms-user-invitation'];
+  const rendered = build({
+    recipientName: data.recipientName,
+    recipientEmail: data.recipientEmail,
+    roleLabel: data.roleLabel,
+    inviteUrl: data.inviteUrl,
+    expiresInHours: data.expiresInHours,
+  });
+
+  await sendEmail({
+    to: [{ email: data.recipientEmail, name: data.recipientName }],
+    subject: rendered.subject,
+    htmlBody: rendered.html,
+    reference: `invite-${data.recipientEmail}`,
+  });
+}
+
 export function startEmailWorker(): Worker<EmailJob> {
   const worker = new Worker<EmailJob>(
     QUEUE_NAMES.email,
     async (job) => {
       if (job.data.kind === 'customer') return handleCustomerEmail(job);
-      return handleStaffEmail(job);
+      if (job.data.kind === 'staff') return handleStaffEmail(job);
+      return handleInvitationEmail(job);
     },
     {
       connection: queueRedis,

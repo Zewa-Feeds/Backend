@@ -106,6 +106,7 @@ enum Role {
 enum CmsUserStatus {
   ACTIVE
   DEACTIVATED
+  INVITED
 }
 
 enum TwofaMethod {
@@ -724,6 +725,9 @@ model CmsUser {
   role   Role
   status CmsUserStatus @default(ACTIVE)
 
+  phone       String?
+  activatedAt DateTime?
+
   // ---- 2FA — mandatory for every role (§14.3) ----
   twofaMethod     TwofaMethod?
   /// AES-256-GCM encrypted at rest.
@@ -743,6 +747,9 @@ model CmsUser {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
+  invitation      CmsInvitation?
+  invitationsSent CmsInvitation[] @relation("InvitedBy")
+
   sessions        CmsSession[]
   backupCodes     BackupCode[]
   auditLogs       AuditLog[]
@@ -757,6 +764,26 @@ model CmsUser {
 
   /// Upload signatures this operator requested. See UploadTicket.
   uploadTickets UploadTicket[]
+}
+
+model CmsInvitation {
+  id          String    @id @default(uuid())
+  userId      String    @unique
+  user        CmsUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  revokedAt   DateTime?
+
+  invitedById String?
+  invitedBy   CmsUser?  @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([tokenHash])
+  @@index([userId])
 }
 
 model CmsSession {

@@ -55,7 +55,16 @@ export interface StaffEmailJob {
   context: Record<string, unknown>;
 }
 
-export type EmailJob = CustomerEmailJob | StaffEmailJob;
+export interface InvitationEmailJob {
+  kind: 'invitation';
+  recipientName: string;
+  recipientEmail: string;
+  roleLabel: string;
+  inviteUrl: string;
+  expiresInHours: number;
+}
+
+export type EmailJob = CustomerEmailJob | StaffEmailJob | InvitationEmailJob;
 
 export interface AutoConfirmJob {
   /**

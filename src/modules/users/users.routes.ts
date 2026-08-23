@@ -27,16 +27,18 @@ const createSchema = z.object({
   name: z.string().trim().min(2, 'Enter a full name.').max(120).transform(plainText),
   email: emailSchema,
   role: z.nativeEnum(Role),
+  phone: z.string().trim().max(30).optional(),
   sendInvite: z.boolean().optional().default(true),
 });
 
 const updateSchema = z
   .object({
     name: z.string().trim().min(2).max(120).transform(plainText).optional(),
+    phone: z.string().trim().max(30).optional(),
     role: z.nativeEnum(Role).optional(),
   })
   // Reject an empty body rather than performing a no-op write.
-  .refine((v) => v.name !== undefined || v.role !== undefined, {
+  .refine((v) => v.name !== undefined || v.phone !== undefined || v.role !== undefined, {
     message: 'Nothing to update.',
   });
 
@@ -102,6 +104,24 @@ usersRouter.patch(
       auditContext(req),
     );
     res.json({ data: user });
+  }),
+);
+
+usersRouter.post(
+  '/:id/resend-invitation',
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    const result = await usersService.resendInvitation(req.params.id as string, auditContext(req));
+    res.json({ data: result });
+  }),
+);
+
+usersRouter.post(
+  '/:id/revoke-invitation',
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    const result = await usersService.revokeInvitation(req.params.id as string, auditContext(req));
+    res.json({ data: result });
   }),
 );
 

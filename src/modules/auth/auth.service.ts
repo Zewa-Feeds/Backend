@@ -28,7 +28,7 @@ import {
   signChallengeToken,
   verifyChallengeToken,
 } from '@/lib/tokens';
-import { AppError, ErrorCode, unauthenticated } from '@/lib/errors';
+import { AppError, ErrorCode, notFound, unauthenticated } from '@/lib/errors';
 import { permissionsFor, ROLE_LABELS } from '@/rbac/permissions';
 import { type AuditContext, writeAudit, writeAuditSafe } from '@/modules/audit/audit.service';
 import { assertNotReused, assertPasswordPolicy, pushHistory } from './password.policy';
@@ -105,6 +105,18 @@ export async function login(
     throw new AppError(401, ErrorCode.INVALID_CREDENTIALS, 'Incorrect email or password.');
   }
 
+  if (user.status === CmsUserStatus.INVITED) {
+    writeAuditSafe(
+      { ...ctx, actorId: user.id, actorName: user.name, actorRole: ROLE_LABELS[user.role] },
+      { module: AuditModule.AUTH, action: 'Login blocked — invitation pending activation', recordId: user.email },
+    );
+    throw new AppError(
+      403,
+      ErrorCode.FORBIDDEN,
+      'This account is pending invitation acceptance. Please click the invitation link sent to your email to set your password.',
+    );
+  }
+
   const passwordOk = await verifyPassword(password, user.passwordHash);
   if (!passwordOk) {
     writeAuditSafe(
@@ -141,6 +153,9 @@ async function userFromChallenge(challengeToken: string): Promise<CmsUser> {
   if (!user || user.deletedAt) throw unauthenticated('Sign in again.', ErrorCode.TOKEN_INVALID);
   if (user.status === CmsUserStatus.DEACTIVATED) {
     throw new AppError(403, ErrorCode.ACCOUNT_DEACTIVATED, 'This account has been deactivated.');
+  }
+  if (user.status === CmsUserStatus.INVITED) {
+    throw new AppError(403, ErrorCode.FORBIDDEN, 'This account is pending invitation acceptance.');
   }
   return user;
 }
@@ -547,4 +562,135 @@ export async function revokeSession(
     action: 'Terminated an active session',
     recordId: sessionId,
   });
+}
+
+export interface InvitationDetails {
+  email: string;
+  name: string;
+  role: Role;
+  roleLabel: string;
+}
+
+export async function getInvitationDetails(rawToken: string): Promise<InvitationDetails> {
+  const tokenHash = hashToken(rawToken);
+  const invitation = await prisma.cmsInvitation.findUnique({
+    where: { tokenHash },
+    include: { user: true },
+  });
+
+  if (!invitation || !invitation.user || invitation.user.deletedAt) {
+    throw notFound('Invitation not found or invalid.');
+  }
+
+  if (invitation.revokedAt) {
+    throw new AppError(
+      410,
+      ErrorCode.FORBIDDEN,
+      'This invitation has been revoked. Please ask an administrator to resend the invite.',
+    );
+  }
+
+  if (invitation.usedAt) {
+    throw new AppError(
+      410,
+      ErrorCode.FORBIDDEN,
+      'This invitation has already been used. Please sign in with your credentials.',
+    );
+  }
+
+  if (new Date() > invitation.expiresAt) {
+    throw new AppError(
+      410,
+      ErrorCode.TOKEN_EXPIRED,
+      'This invitation has expired. Please ask an administrator to resend the invite.',
+    );
+  }
+
+  if (invitation.user.status === CmsUserStatus.DEACTIVATED) {
+    throw new AppError(403, ErrorCode.ACCOUNT_DEACTIVATED, 'This user account has been deactivated.');
+  }
+
+  return {
+    email: invitation.user.email,
+    name: invitation.user.name,
+    role: invitation.user.role,
+    roleLabel: ROLE_LABELS[invitation.user.role],
+  };
+}
+
+export interface AcceptInvitationInput {
+  token: string;
+  name?: string;
+  password: string;
+}
+
+export async function acceptInvitation(
+  input: AcceptInvitationInput,
+  ctx: AuditContext,
+): Promise<{ ok: boolean; message: string }> {
+  assertPasswordPolicy(input.password);
+
+  const tokenHash = hashToken(input.token);
+  const invitation = await prisma.cmsInvitation.findUnique({
+    where: { tokenHash },
+    include: { user: true },
+  });
+
+  if (!invitation || !invitation.user || invitation.user.deletedAt) {
+    throw notFound('Invitation not found or invalid.');
+  }
+
+  if (invitation.revokedAt) {
+    throw new AppError(410, ErrorCode.FORBIDDEN, 'This invitation has been revoked.');
+  }
+
+  if (invitation.usedAt) {
+    throw new AppError(410, ErrorCode.FORBIDDEN, 'This invitation has already been used.');
+  }
+
+  if (new Date() > invitation.expiresAt) {
+    throw new AppError(410, ErrorCode.TOKEN_EXPIRED, 'This invitation has expired.');
+  }
+
+  if (invitation.user.status === CmsUserStatus.DEACTIVATED) {
+    throw new AppError(403, ErrorCode.ACCOUNT_DEACTIVATED, 'This user account has been deactivated.');
+  }
+
+  const newHash = await hashPassword(input.password);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.cmsInvitation.update({
+      where: { id: invitation.id },
+      data: { usedAt: new Date() },
+    });
+
+    await tx.cmsUser.update({
+      where: { id: invitation.userId },
+      data: {
+        status: CmsUserStatus.ACTIVE,
+        passwordHash: newHash,
+        passwordHistory: [newHash],
+        name: input.name?.trim() || invitation.user.name,
+        activatedAt: new Date(),
+        tokenVersion: { increment: 1 },
+      },
+    });
+
+    await writeAudit(
+      {
+        ...ctx,
+        actorId: invitation.user.id,
+        actorName: input.name?.trim() || invitation.user.name,
+        actorRole: ROLE_LABELS[invitation.user.role],
+      },
+      {
+        module: AuditModule.AUTH,
+        action: `Accepted CMS invitation and activated account for ${invitation.user.email}`,
+        recordId: invitation.user.id,
+      },
+      tx,
+    );
+  });
+
+  return { ok: true, message: 'Account activated successfully.' };
 }

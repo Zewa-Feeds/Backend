@@ -19,6 +19,8 @@ import { ROLE_LABELS } from '@/rbac/permissions';
 import { type AuditContext, buildDiff, writeAudit } from '@/modules/audit/audit.service';
 import type { Pagination } from '@/middleware/validate';
 import { listMeta, toSkipTake } from '@/middleware/validate';
+import { emailQueue } from '@/jobs/queues';
+import { env } from '@/config/env';
 
 /** Fields safe to return. Never includes passwordHash, twofaSecret, or history. */
 const SELECT = {
@@ -27,16 +29,36 @@ const SELECT = {
   name: true,
   role: true,
   status: true,
+  phone: true,
+  activatedAt: true,
   twofaMethod: true,
   twofaEnrolledAt: true,
   lastLoginAt: true,
   createdAt: true,
+  invitation: {
+    select: {
+      expiresAt: true,
+      usedAt: true,
+      revokedAt: true,
+      createdAt: true,
+      invitedBy: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+    },
+  },
 } satisfies Prisma.CmsUserSelect;
 
 type UserRow = Prisma.CmsUserGetPayload<{ select: typeof SELECT }>;
 
 /** Shape for the CMS list — adds the labels its table renders (§11.1). */
 function serialize(user: UserRow) {
+  const inv = user.invitation;
+  const isExpired = inv ? new Date() > inv.expiresAt && !inv.usedAt : false;
+
   return {
     id: user.id,
     email: user.email,
@@ -44,10 +66,21 @@ function serialize(user: UserRow) {
     role: user.role,
     roleLabel: ROLE_LABELS[user.role],
     status: user.status,
+    phone: user.phone ?? null,
+    activatedAt: user.activatedAt ?? null,
     // "Pending setup" is what §11.1 shows before enrolment completes.
     twofa: user.twofaEnrolledAt ? (user.twofaMethod ?? 'TOTP') : 'Pending setup',
     lastLoginAt: user.lastLoginAt,
     createdAt: user.createdAt,
+    invitation: inv
+      ? {
+          expiresAt: inv.expiresAt,
+          isExpired,
+          usedAt: inv.usedAt,
+          revokedAt: inv.revokedAt,
+          invitedBy: inv.invitedBy?.name ?? null,
+        }
+      : null,
   };
 }
 
@@ -89,54 +122,71 @@ export interface CreateInput {
   name: string;
   email: string;
   role: Role;
-  sendInvite: boolean;
+  phone?: string;
+  sendInvite?: boolean;
 }
 
 export interface CreateResult {
   user: ReturnType<typeof serialize>;
-  /** Returned only when no invite email is sent, so the Admin can pass it on. */
+  /** Returned so the Admin can view or copy the setup invitation link directly if needed. */
   setupToken?: string;
+  inviteUrl?: string;
 }
 
 /**
- * Create a CMS user (§11.2).
+ * Invite a CMS user (§11.2).
  *
- * No password is set here. The user receives a setup link and chooses their own,
- * then completes mandatory 2FA on first login (§14.3) — so an Admin never knows
- * another user's credentials.
+ * No password is set here. The user receives a cryptographically secure setup link,
+ * chooses their own password, and then completes mandatory 2FA on first login (§14.3)
+ * — so an Admin never knows another user's credentials.
  */
 export async function create(input: CreateInput, ctx: AuditContext): Promise<CreateResult> {
+  const email = input.email.trim().toLowerCase();
   const existing = await prisma.cmsUser.findUnique({
-    where: { email: input.email },
-    select: { id: true, deletedAt: true },
+    where: { email },
+    include: { invitation: true },
   });
+
   if (existing && !existing.deletedAt) {
-    throw conflict('A CMS user with that email already exists.', ErrorCode.CONFLICT, {
+    if (existing.status === CmsUserStatus.INVITED) {
+      throw conflict(
+        'An invitation is already pending for this email. You can resend or revoke it from the Users list.',
+        ErrorCode.CONFLICT,
+        { field: 'email', isPendingInvitation: true, userId: existing.id },
+      );
+    }
+    throw conflict('An account with this email already exists.', ErrorCode.CONFLICT, {
       field: 'email',
     });
   }
 
   // Unusable placeholder — long random, never revealed. The setup token is the
-  // only way in, so the account cannot be logged into until it is used.
+  // only way in, so the account cannot be logged into until the invitation is accepted.
   const placeholder = await hashPassword(generateToken(48));
-  const setupToken = generateToken();
+  const rawToken = generateToken(32);
+  const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
 
   const user = await prisma.$transaction(async (tx) => {
+    // If the email was previously soft-deleted, clean up old references to allow re-invitation.
+    if (existing && existing.deletedAt) {
+      await tx.cmsInvitation.deleteMany({ where: { userId: existing.id } });
+      await tx.cmsSession.deleteMany({ where: { userId: existing.id } });
+      await tx.cmsUser.delete({ where: { id: existing.id } });
+    }
+
     const row = await tx.cmsUser.create({
       data: {
-        email: input.email,
-        name: input.name,
+        email,
+        name: input.name.trim(),
         role: input.role,
+        phone: input.phone?.trim() || null,
         passwordHash: placeholder,
-        status: CmsUserStatus.ACTIVE,
-        // Reuse the session table as the setup-token store: a 7-day row with the
-        // token hashed, so it is single-use and expiring without a new table.
-        sessions: {
+        status: CmsUserStatus.INVITED,
+        invitation: {
           create: {
-            refreshTokenHash: hashToken(setupToken),
-            ip: ctx.ip,
-            userAgent: 'account-setup',
-            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+            tokenHash: hashToken(rawToken),
+            expiresAt,
+            invitedById: ctx.actorId,
           },
         },
       },
@@ -147,7 +197,7 @@ export async function create(input: CreateInput, ctx: AuditContext): Promise<Cre
       ctx,
       {
         module: AuditModule.USERS,
-        action: `Created CMS user ${input.email} with role ${ROLE_LABELS[input.role]}`,
+        action: `Invited CMS user ${email} with role ${ROLE_LABELS[input.role]}`,
         recordId: row.id,
       },
       tx,
@@ -155,15 +205,139 @@ export async function create(input: CreateInput, ctx: AuditContext): Promise<Cre
     return row;
   });
 
+  const inviteUrl = `${env.CMS_ORIGIN}/accept-invitation?token=${rawToken}`;
+
+  if (input.sendInvite !== false) {
+    try {
+      await emailQueue.add('invitation', {
+        kind: 'invitation',
+        recipientName: input.name.trim(),
+        recipientEmail: email,
+        roleLabel: ROLE_LABELS[input.role],
+        inviteUrl,
+        expiresInHours: 48,
+      });
+    } catch {
+      // If queue is unreachable during testing/offline, don't fail user creation.
+    }
+  }
+
   return {
     user: serialize(user),
-    // TODO Phase 3: when sendInvite is true, queue the ZeptoMail invite instead.
-    setupToken,
+    setupToken: rawToken,
+    inviteUrl,
   };
+}
+
+/**
+ * Resend an invitation with a fresh secure token and 48-hour expiration.
+ */
+export async function resendInvitation(
+  id: string,
+  ctx: AuditContext,
+): Promise<{ ok: boolean; setupToken: string; inviteUrl: string }> {
+  const target = await prisma.cmsUser.findFirst({
+    where: { id, deletedAt: null },
+    include: { invitation: true },
+  });
+  if (!target) throw notFound('User');
+  if (target.status !== CmsUserStatus.INVITED) {
+    throw conflict('Cannot resend invitation for an active or deactivated user.');
+  }
+
+  const rawToken = generateToken(32);
+  const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.cmsInvitation.upsert({
+      where: { userId: id },
+      create: {
+        userId: id,
+        tokenHash: hashToken(rawToken),
+        expiresAt,
+        invitedById: ctx.actorId,
+      },
+      update: {
+        tokenHash: hashToken(rawToken),
+        expiresAt,
+        usedAt: null,
+        revokedAt: null,
+        invitedById: ctx.actorId,
+      },
+    });
+
+    await writeAudit(
+      ctx,
+      {
+        module: AuditModule.USERS,
+        action: `Resent CMS invitation to ${target.email}`,
+        recordId: id,
+      },
+      tx,
+    );
+  });
+
+  const inviteUrl = `${env.CMS_ORIGIN}/accept-invitation?token=${rawToken}`;
+
+  try {
+    await emailQueue.add('invitation', {
+      kind: 'invitation',
+      recipientName: target.name,
+      recipientEmail: target.email,
+      roleLabel: ROLE_LABELS[target.role],
+      inviteUrl,
+      expiresInHours: 48,
+    });
+  } catch {
+    // Queue offline fallback
+  }
+
+  return { ok: true, setupToken: rawToken, inviteUrl };
+}
+
+/**
+ * Revoke a pending invitation.
+ */
+export async function revokeInvitation(id: string, ctx: AuditContext): Promise<{ ok: boolean }> {
+  const target = await prisma.cmsUser.findFirst({
+    where: { id, deletedAt: null },
+    include: { invitation: true },
+  });
+  if (!target) throw notFound('User');
+  if (target.status !== CmsUserStatus.INVITED) {
+    throw conflict('Cannot revoke an invitation for an active or deactivated user.');
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.cmsInvitation.updateMany({
+      where: { userId: id },
+      data: { revokedAt: new Date() },
+    });
+    await tx.cmsUser.update({
+      where: { id },
+      data: {
+        status: CmsUserStatus.DEACTIVATED,
+        deletedAt: new Date(),
+        tokenVersion: { increment: 1 },
+      },
+    });
+    await writeAudit(
+      ctx,
+      {
+        module: AuditModule.USERS,
+        action: `Revoked CMS invitation for ${target.email}`,
+        recordId: id,
+      },
+      tx,
+    );
+  });
+
+  return { ok: true };
 }
 
 export interface UpdateInput {
   name?: string;
+  phone?: string;
   role?: Role;
 }
 
@@ -201,6 +375,7 @@ export async function update(
       where: { id },
       data: {
         ...(input.name ? { name: input.name } : {}),
+        ...(input.phone !== undefined ? { phone: input.phone?.trim() || null } : {}),
         // A role change must invalidate existing tokens, or the old role's
         // permissions keep working until the access token expires.
         ...(input.role && input.role !== target.role
@@ -383,9 +558,9 @@ export async function remove(id: string, actorId: string, ctx: AuditContext): Pr
 }
 
 /**
- * Refuse to remove the last active Admin.
+ * Refuse to remove or demote the last active Admin.
  *
- * Without this, one API call can make settings and refunds permanently
+ * Without this, one action can make settings, user management, and refunds permanently
  * unreachable — a lockout with no in-app recovery path.
  */
 async function assertNotLastAdmin(excludingId: string): Promise<void> {
@@ -402,7 +577,7 @@ async function assertNotLastAdmin(excludingId: string): Promise<void> {
     throw new AppError(
       409,
       ErrorCode.CONFLICT,
-      'This is the last active Admin. Promote another user to Admin first.',
+      'This is the last active Admin. Promote another user to Admin first before modifying this account.',
     );
   }
 }

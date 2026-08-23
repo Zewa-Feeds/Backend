@@ -24,6 +24,7 @@ import { auditContext } from '@/modules/audit/audit.service';
 import { verifyAccessToken } from '@/lib/tokens';
 import { unauthenticated } from '@/lib/errors';
 import { env } from '@/config/env';
+import { plainText } from '@/lib/sanitize';
 import { PASSWORD_RULES } from './password.policy';
 import * as authService from './auth.service';
 import { ttlToMs } from './auth.service';
@@ -77,9 +78,40 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(1).max(200),
 });
 
+const invitationDetailsSchema = z.object({
+  token: z.string().min(10, 'Invalid invitation token.'),
+});
+
+const acceptInvitationSchema = z.object({
+  token: z.string().min(10, 'Invalid invitation token.'),
+  name: z.string().trim().min(2, 'Enter a full name.').max(120).transform(plainText).optional(),
+  password: z.string().min(1, 'Enter a password.').max(200),
+});
+
 // ============================================================================
 // PRE-SESSION — no auth, rate limited
 // ============================================================================
+
+/** Fetch invited user details to display on the acceptance page. */
+authRouter.get(
+  '/invitation-details',
+  validate({ query: invitationDetailsSchema }),
+  asyncHandler(async (req, res) => {
+    const details = await authService.getInvitationDetails(req.query.token as string);
+    res.json({ data: details });
+  }),
+);
+
+/** Accept invitation, create password, and activate account. */
+authRouter.post(
+  '/accept-invitation',
+  loginLimiter,
+  validate({ body: acceptInvitationSchema }),
+  asyncHandler(async (req, res) => {
+    const result = await authService.acceptInvitation(req.body, auditContext(req));
+    res.json({ data: result });
+  }),
+);
 
 /** Step 1 — password. Returns a challenge token, never a session. */
 authRouter.post(

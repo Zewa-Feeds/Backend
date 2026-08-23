@@ -28,6 +28,8 @@ type AccountContext = {
   'password-changed': { firstName: string };
 };
 
+type CustomerAccountTemplateName = keyof AccountContext;
+
 /**
  * Queue-free send. Returns immediately; the promise is handled internally.
  *
@@ -35,7 +37,7 @@ type AccountContext = {
  * awaiting this at a call site a type error, which is what keeps the timing
  * guarantee above from being undone by a well-meaning `await`.
  */
-export function sendAccountEmail<T extends AccountTemplateName>(
+export function sendAccountEmail<T extends CustomerAccountTemplateName>(
   to: string,
   template: T,
   context: AccountContext[T],
