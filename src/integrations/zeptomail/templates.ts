@@ -490,19 +490,40 @@ export const templates = {
     ),
   }),
 
-  'order-cancelled': (ctx: OrderEmailContext, _email: string) => ({
-    subject: `Order ${ctx.orderNo} was cancelled`,
-    html: shell(
-      'Your order was cancelled.',
-      `Order <strong style="color:${INK};">${esc(ctx.orderNo)}</strong> has been cancelled.${
-        ctx.cancelReason ? ` Reason given: ${esc(ctx.cancelReason)}.` : ''
-      } Any payment already made goes back to the method you paid with.`,
-      note(
-        `Refunds usually land within 5–7 working days. If this cancellation wasn't expected, reply to this email and we'll look into it.`,
+  /*
+   * Cancellation does NOT refund. A member of the team processes the gateway
+   * refund afterwards, so this email must not imply the money is already
+   * moving, and must not start the 5–7 day clock at cancellation — the wait
+   * begins when the refund is processed, which may be later.
+   *
+   * The refund sentence is also conditional: a COD order was never charged, so
+   * promising it money back would invent a refund that cannot exist.
+   */
+  'order-cancelled': (ctx: OrderEmailContext, _email: string) => {
+    const captured = ctx.paymentStatus === 'PAID';
+
+    return {
+      subject: `Order ${ctx.orderNo} was cancelled`,
+      html: shell(
+        'Your order was cancelled.',
+        `Order <strong style="color:${INK};">${esc(ctx.orderNo)}</strong> has been cancelled.${
+          ctx.cancelReason ? ` Reason given: ${esc(ctx.cancelReason)}.` : ''
+        }${
+          captured
+            ? ' Any payment already made will be refunded to your original payment method once our team processes the refund.'
+            : ''
+        }`,
+        note(
+          captured
+            ? `After the refund is processed, it may take 5–7 working days to reflect. If this cancellation wasn't expected, reply to this email and we'll look into it.`
+            : `If this cancellation wasn't expected, reply to this email and we'll look into it.`,
+        ),
+        captured
+          ? `${ctx.orderNo} cancelled · our team will process your refund`
+          : `${ctx.orderNo} cancelled`,
       ),
-      `${ctx.orderNo} cancelled · any payment will be refunded`,
-    ),
-  }),
+    };
+  },
 
   'refund-processed': (
     ctx: OrderEmailContext & { refundPaise: number; refundReason: string },

@@ -224,6 +224,56 @@ describe('Existing Customer Lifecycle Templates Remain Working', () => {
     expect(rendered.html).toContain('Customer requested cancellation before dispatch');
   });
 
+  /*
+   * Cancelling an order does not refund it — a member of the team processes
+   * the gateway refund afterwards. These pin the wording to that reality,
+   * because the failure mode is a customer counting five working days from
+   * the wrong event and concluding we are late.
+   */
+  it('order-cancelled tells a PAID customer the team will process the refund', () => {
+    const rendered = templates['order-cancelled'](
+      { ...mockContext, paymentStatus: 'PAID' },
+      mockContext.customerEmail!,
+    );
+
+    expect(rendered.html).toContain('once our team processes the refund');
+    expect(rendered.html).toContain('original payment method');
+  });
+
+  it('order-cancelled starts the 5–7 day wait AFTER processing, not at cancellation', () => {
+    const rendered = templates['order-cancelled'](
+      { ...mockContext, paymentStatus: 'PAID' },
+      mockContext.customerEmail!,
+    );
+
+    expect(rendered.html).toContain('After the refund is processed, it may take 5–7 working days');
+    // The old copy implied the money was already on its way.
+    expect(rendered.html).not.toContain('Refunds usually land within 5–7 working days');
+    expect(rendered.html).not.toContain('goes back to the method you paid with');
+  });
+
+  it('order-cancelled never claims the refund has already happened', () => {
+    const rendered = templates['order-cancelled'](
+      { ...mockContext, paymentStatus: 'PAID' },
+      mockContext.customerEmail!,
+    );
+
+    expect(rendered.html).not.toMatch(/refund (has been|was) (processed|initiated|sent)/i);
+    expect(rendered.html).not.toMatch(/your refund is on its way/i);
+  });
+
+  it('order-cancelled does NOT mention a refund on an unpaid COD order', () => {
+    const rendered = templates['order-cancelled'](
+      { ...mockContext, paymentMethod: 'COD', paymentStatus: 'UNPAID' },
+      mockContext.customerEmail!,
+    );
+
+    // Nothing was captured, so there is no refund to promise.
+    expect(rendered.html).not.toMatch(/refund/i);
+    expect(rendered.html).toContain('has been cancelled');
+    expect(rendered.html).toContain("reply to this email");
+  });
+
   it('refund-processed (Customer) template renders refund amount, order number, and reason safely without internal data', () => {
     const refundCtx = {
       ...mockContext,
