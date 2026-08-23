@@ -35,23 +35,30 @@ const ADMIN = Role.ADMIN;
  * and cannot destroy. Same shape for products, coupons, and orders.
  */
 export const CAN = {
-  'articles.create': [EDITOR, OPS, ADMIN],
-  'articles.publish': [OPS, ADMIN],
+  // Content Creator (Editor + Admin)
+  'articles.create': [EDITOR, ADMIN],
+  'articles.publish': [ADMIN],
   'articles.delete': [ADMIN],
-  'banners.edit': [EDITOR, OPS, ADMIN],
-  'homepage.edit': [EDITOR, OPS, ADMIN],
+  'banners.edit': [EDITOR, ADMIN],
+  'homepage.edit': [EDITOR, ADMIN],
+
+  // Listings (Editor gets read-only view; Ops & Admin get full management)
   'products.view': [EDITOR, OPS, ADMIN],
   'products.edit': [OPS, ADMIN],
   'products.sku': [OPS, ADMIN],
+
+  // Order Management (Ops & Admin get view, status transitions, invoices)
   'orders.view': [OPS, ADMIN],
   'orders.status': [OPS, ADMIN],
   'orders.invoice': [OPS, ADMIN],
+
+  // Admin Only
   'orders.refund': [ADMIN],
   'orders.export': [ADMIN],
-  'customers.view': [OPS, ADMIN],
+  'customers.view': [ADMIN],
   'customers.ban': [ADMIN],
-  'reviews.moderate': [OPS, ADMIN],
-  'coupons.edit': [OPS, ADMIN],
+  'reviews.moderate': [ADMIN],
+  'coupons.edit': [ADMIN],
   'coupons.delete': [ADMIN],
   'users.manage': [ADMIN],
   'settings.manage': [ADMIN],

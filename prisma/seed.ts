@@ -90,33 +90,38 @@ const DEV_BACKUP_CODES = [
 const normaliseCode = (c: string) => c.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 // ============================================================================
-// CMS USERS (§11) — from seed.js CMS_USERS + rbac.js ROLES
+// CMS USERS (§11) — from target user profiles
 // ============================================================================
 const CMS_USERS = [
   {
-    email: 'aditi@zewafeeds.com',
-    name: 'Aditi Nair',
+    email: 'nikhildevm@zewafeeds.com',
+    name: 'Nik Mulakkal',
     role: Role.ADMIN,
     twofaMethod: TwofaMethod.TOTP,
   },
   {
-    email: 'rahul@zewafeeds.com',
-    name: 'Rahul Kamat',
+    email: 'it@zewafeeds.com',
+    name: 'Zewa Feeds IT',
+    role: Role.ADMIN,
+    twofaMethod: TwofaMethod.TOTP,
+  },
+  {
+    email: 'aromals@zewafeeds.com',
+    name: 'Aromal Santhosh',
     role: Role.OPS_MANAGER,
     twofaMethod: TwofaMethod.TOTP,
   },
   {
-    email: 'priya@zewafeeds.com',
-    name: 'Priya Shah',
-    role: Role.CONTENT_EDITOR,
-    twofaMethod: TwofaMethod.SMS_OTP,
+    email: 'info@zewafeeds.com',
+    name: 'Zewa Feeds',
+    role: Role.OPS_MANAGER,
+    twofaMethod: TwofaMethod.TOTP,
   },
   {
-    email: 'devika@zewafeeds.com',
-    name: 'Devika Rao',
+    email: 'vaishnavip@zewafeeds.com',
+    name: 'Vaishnavi Prabhakar',
     role: Role.CONTENT_EDITOR,
-    // null 2FA => forced enrolment on first login (§14.3).
-    twofaMethod: null,
+    twofaMethod: TwofaMethod.SMS_OTP,
   },
 ] as const;
 
@@ -480,7 +485,7 @@ async function main() {
   console.log(`    current code: ${devCode}  (30s window)`);
 
   const admin = await prisma.cmsUser.findUniqueOrThrow({
-    where: { email: 'aditi@zewafeeds.com' },
+    where: { email: 'nikhildevm@zewafeeds.com' },
   });
 
   // ---- Products + variants ----------------------------------------------
@@ -845,10 +850,11 @@ async function main() {
 
   console.log('\n▸ Seed complete.\n');
   console.log('  Sign in to the CMS with:');
-  console.log('    aditi@zewafeeds.com  (Admin)');
-  console.log('    rahul@zewafeeds.com  (Ops Manager)');
-  console.log('    priya@zewafeeds.com  (Content Editor)');
-  console.log('    devika@zewafeeds.com (Editor — no 2FA, forced enrolment)');
+  console.log('    nikhildevm@zewafeeds.com  (Admin)');
+  console.log('    it@zewafeeds.com          (Admin)');
+  console.log('    aromals@zewafeeds.com     (Ops Manager)');
+  console.log('    info@zewafeeds.com        (Ops Manager)');
+  console.log('    vaishnavip@zewafeeds.com  (Content Editor)');
   console.log(`    password: ${DEV_PASSWORD}`);
   console.log(`\n  2FA: add secret ${DEV_TOTP_SECRET} to an authenticator app,`);
   console.log(`       or use a backup code: ${DEV_BACKUP_CODES.slice(0, 3).join(', ')}, …\n`);
