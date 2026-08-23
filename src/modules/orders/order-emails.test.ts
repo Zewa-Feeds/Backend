@@ -223,16 +223,69 @@ describe('Existing Customer Lifecycle Templates Remain Working', () => {
     expect(rendered.subject).toBe('Order 27ZFO099 was cancelled');
     expect(rendered.html).toContain('Customer requested cancellation before dispatch');
   });
+
+  it('refund-processed (Customer) template renders refund amount, order number, and reason safely without internal data', () => {
+    const refundCtx = {
+      ...mockContext,
+      refundPaise: 25800,
+      refundReason: 'Item arrived broken',
+    };
+    const rendered = templates['refund-processed'](refundCtx, mockContext.customerEmail!);
+
+    expect(rendered.subject).toBe('Refund sent for order 27ZFO099');
+    expect(rendered.html).toContain('Your refund is on its way.');
+    expect(rendered.html).toContain('27ZFO099');
+    expect(rendered.html).toContain('₹258');
+    expect(rendered.html).toContain('Item arrived broken');
+    expect(rendered.html).toContain('5–7 working days');
+    // Ensure internal notes or staff CMS links are not leaked to customer
+    expect(rendered.html).not.toContain('/admin/');
+    expect(rendered.html).not.toContain('Open Order in CMS');
+  });
+});
+
+describe('Internal Staff Refund Notification Template', () => {
+  it('staff-refund-processed template renders order details, customer info, gateway IDs, reason, and CMS link', () => {
+    const staffRefundCtx = {
+      ...mockContext,
+      refundPaise: 25800,
+      refundReason: 'Defective packaging reported by customer',
+      gatewayRefundId: 'rfnd_live_987654321',
+      processedByName: 'Nik Mulakkal',
+      refundDate: new Date('2026-08-23T13:30:00.000Z'),
+    };
+    const rendered = staffTemplates['staff-refund-processed'](staffRefundCtx);
+
+    expect(rendered.subject).toBe('Refund Processed — #27ZFO099');
+    expect(rendered.html).toContain('Refund Details (Internal Notice)');
+    expect(rendered.html).toContain('27ZFO099');
+    expect(rendered.html).toContain('₹258');
+    expect(rendered.html).toContain('₹467'); // Original order total
+    expect(rendered.html).toContain('RAZORPAY');
+    expect(rendered.html).toContain('pay_test_789012'); // Payment ID
+    expect(rendered.html).toContain('rfnd_live_987654321'); // Refund ID
+    expect(rendered.html).toContain('Defective packaging reported by customer');
+    expect(rendered.html).toContain('Aarav Sharma'); // Customer Name
+    expect(rendered.html).toContain('aarav@example.com'); // Customer Email
+    expect(rendered.html).toContain('9876543210'); // Customer Phone
+    expect(rendered.html).toContain('Nik Mulakkal'); // Processed by
+    expect(rendered.html).toContain('/orders/27ZFO099'); // CMS order link
+  });
 });
 
 describe('Email Trigger Points & Idempotency Rules', () => {
   it('uses deterministic BullMQ job IDs for customer and staff emails', () => {
     const orderNo = '27ZFO101';
+    const refundId = 'rfnd-rec-12345';
     const customerJobId = `customer-order-placed-${orderNo}`;
     const staffJobId = `staff-order-placed-${orderNo}`;
+    const customerRefundJobId = `customer-refund-${refundId}`;
+    const staffRefundJobId = `staff-refund-${refundId}`;
 
     expect(customerJobId).toBe('customer-order-placed-27ZFO101');
     expect(staffJobId).toBe('staff-order-placed-27ZFO101');
+    expect(customerRefundJobId).toBe('customer-refund-rfnd-rec-12345');
+    expect(staffRefundJobId).toBe('staff-refund-rfnd-rec-12345');
   });
 
   it('ensures staff notification recipients include info@zewafeeds.com as primary', () => {

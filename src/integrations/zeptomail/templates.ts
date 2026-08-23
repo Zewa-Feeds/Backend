@@ -626,7 +626,13 @@ export const accountTemplates = {
 
 export type AccountTemplateName = keyof typeof accountTemplates;
 
-// ---- Staff alert templates (§15) -------------------------------------------
+export interface StaffRefundContext extends OrderEmailContext {
+  refundPaise: number;
+  refundReason: string;
+  gatewayRefundId?: string | null;
+  refundDate?: Date | string | null;
+  processedByName?: string | null;
+}
 
 export const staffTemplates = {
   'staff-new-order': (ctx: OrderEmailContext) => ({
@@ -636,6 +642,52 @@ export const staffTemplates = {
       `A new order was placed on ${esc(formatDate(ctx.placedAt))} for <strong style="color:${BRAND};">${esc(formatInr(ctx.totalPaise))}</strong> via ${esc(ctx.paymentMethod)} (${esc(ctx.paymentStatus ?? (ctx.paymentMethod === 'COD' ? 'UNPAID' : 'PAID'))}).`,
       staffOrderBlock(ctx) + button('Open in CMS', `${env.CMS_ORIGIN}/orders/${ctx.orderNo}`),
       `New order #${ctx.orderNo} from ${esc(ctx.customerName)} · ${formatInr(ctx.totalPaise)}`,
+    ),
+  }),
+
+  'staff-refund-processed': (ctx: StaffRefundContext) => ({
+    subject: `Refund Processed — #${ctx.orderNo}`,
+    html: shell(
+      `Refund Processed — #${esc(ctx.orderNo)}`,
+      `A refund of <strong style="color:${BRAND};">${esc(formatInr(ctx.refundPaise))}</strong> has been processed for order <strong style="color:${INK};">${esc(ctx.orderNo)}</strong>.`,
+      `
+      <!-- Internal Refund Summary -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+        <tr>
+          <td style="padding:12px 16px;background:${BRAND_SOFT};border-bottom:1px solid ${HAIRLINE};">
+            <strong style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:${BRAND};">Refund Details (Internal Notice)</strong>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13.5px;line-height:1.6;color:${INK};">
+            <strong>Refund Amount:</strong> <strong style="color:${BRAND};">${esc(formatInr(ctx.refundPaise))}</strong><br/>
+            <strong>Original Order Total:</strong> ${esc(formatInr(ctx.totalPaise))}<br/>
+            <strong>Payment Method:</strong> ${esc(ctx.paymentMethod)} (${esc(ctx.paymentStatus ?? 'PAID')})<br/>
+            <strong>Razorpay Payment ID:</strong> <code style="font-family:monospace;font-size:12px;background:#F1F3F5;padding:2px 4px;border-radius:4px;">${esc(ctx.razorpayPaymentId ?? '—')}</code><br/>
+            <strong>Razorpay Refund ID:</strong> <code style="font-family:monospace;font-size:12px;background:#F1F3F5;padding:2px 4px;border-radius:4px;">${esc(ctx.gatewayRefundId ?? '—')}</code><br/>
+            <strong>Refund Reason:</strong> ${esc(ctx.refundReason)}<br/>
+            <strong>Processed On:</strong> ${esc(formatDate(ctx.refundDate ?? new Date()))}${ctx.processedByName ? `<br/><strong>Processed By:</strong> ${esc(ctx.processedByName)}` : ''}
+          </td>
+        </tr>
+      </table>
+
+      <!-- Customer Details -->
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+        <tr>
+          <td style="padding:12px 16px;background:${BRAND_SOFT};border-bottom:1px solid ${HAIRLINE};">
+            <strong style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:${BRAND};">Customer Information</strong>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13.5px;line-height:1.6;color:${INK};">
+            <strong>Customer Name:</strong> ${esc(ctx.customerName)}<br/>
+            <strong>Email:</strong> <a href="mailto:${esc(ctx.customerEmail ?? '')}" style="color:${BRAND};text-decoration:none;">${esc(ctx.customerEmail ?? '—')}</a><br/>
+            <strong>Phone:</strong> ${esc(ctx.customerPhone ?? '—')}
+          </td>
+        </tr>
+      </table>
+      ` + button('Open Order in CMS', `${env.CMS_ORIGIN}/orders/${ctx.orderNo}`),
+      `Refund of ${formatInr(ctx.refundPaise)} processed for order #${ctx.orderNo} (${esc(ctx.customerName)})`,
     ),
   }),
 

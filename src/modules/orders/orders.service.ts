@@ -415,7 +415,7 @@ export async function refund(
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    await tx.refund.create({
+    const refundRow = await tx.refund.create({
       data: {
         orderId: order.id,
         amountPaise,
@@ -423,6 +423,7 @@ export async function refund(
         processedById: actorId,
         razorpayRefundId: gatewayRefundId,
       },
+      select: { id: true, createdAt: true },
     });
 
     const totalRefunded = alreadyRefunded + amountPaise;
@@ -464,18 +465,46 @@ export async function refund(
     return {
       order: await tx.order.findUniqueOrThrow({ where: { id: order.id }, select: ORDER_SELECT }),
       emailId: row.id,
+      refundId: refundRow.id,
+      refundDate: refundRow.createdAt,
     };
   });
 
+  // 1. Customer refund notification
   await emailQueue
-    .add('customer-email', {
-      kind: 'customer',
-      orderEmailId: updated.emailId,
-      orderNo,
-      template: 'refund-processed' as CustomerTemplateName,
-      extra: { refundPaise: amountPaise, refundReason: reason },
-    })
-    .catch((err) => log.error({ err, orderNo }, 'failed to enqueue refund email'));
+    .add(
+      'customer-email',
+      {
+        kind: 'customer',
+        orderEmailId: updated.emailId,
+        orderNo,
+        template: 'refund-processed' as CustomerTemplateName,
+        extra: { refundPaise: amountPaise, refundReason: reason },
+      },
+      { jobId: `customer-refund-${updated.refundId}` },
+    )
+    .catch((err) => log.error({ err, orderNo }, 'failed to enqueue customer refund email'));
+
+  // 2. Internal staff refund alert (info@zewafeeds.com)
+  await emailQueue
+    .add(
+      'staff-email',
+      {
+        kind: 'staff',
+        template: 'staff-refund-processed',
+        context: {
+          orderNo,
+          refundId: updated.refundId,
+          refundPaise: amountPaise,
+          refundReason: reason,
+          gatewayRefundId,
+          processedByName: ctx.actorName,
+          refundDate: updated.refundDate,
+        },
+      },
+      { jobId: `staff-refund-${updated.refundId}` },
+    )
+    .catch((err) => log.error({ err, orderNo }, 'failed to enqueue staff refund email'));
 
   return serializeOrder(updated.order);
 }

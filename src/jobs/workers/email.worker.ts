@@ -209,6 +209,40 @@ async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
     return;
   }
 
+  if (data.template === 'staff-refund-processed') {
+    const orderNo = data.context.orderNo as string;
+    const { ctx } = await orderContext(orderNo);
+    const build = staffTemplates['staff-refund-processed'];
+    const rendered = build({ ...ctx, ...(data.context as any) });
+
+    const recipients: { email: string; name?: string }[] = [
+      { email: 'info@zewafeeds.com', name: 'Zewa Feeds Team' },
+    ];
+
+    const staffUsers = await prisma.cmsUser.findMany({
+      where: {
+        status: 'ACTIVE',
+        deletedAt: null,
+        role: { in: [Role.OPS_MANAGER, Role.ADMIN] },
+      },
+      select: { email: true, name: true },
+    });
+
+    for (const u of staffUsers) {
+      if (u.email.toLowerCase() !== 'info@zewafeeds.com') {
+        recipients.push({ email: u.email, name: u.name });
+      }
+    }
+
+    await sendEmail({
+      to: recipients,
+      subject: rendered.subject,
+      htmlBody: rendered.html,
+      reference: `staff-refund-${orderNo}-${data.context.refundId ?? '1'}`,
+    });
+    return;
+  }
+
   // Other staff alerts (staff-stock-zero, staff-new-review)
   const recipients = await prisma.cmsUser.findMany({
     where: {
