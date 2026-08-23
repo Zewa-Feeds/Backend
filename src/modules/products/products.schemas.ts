@@ -270,7 +270,7 @@ export const productBodySchema = z.object({
    */
   media: z
     .array(mediaSchema)
-    .max(20, 'A product can have at most 20 gallery items.')
+    .max(40, 'A product can have at most 40 gallery items.')
     .optional()
     .refine(
       (list) => !list || list.filter((m) => m.type === MediaType.VIDEO).length <= 1,
