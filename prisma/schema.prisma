@@ -654,12 +654,34 @@ model Customer {
   registeredAt    DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  addresses      Address[]
-  orders         Order[]
-  reviews        Review[]
-  passwordResets CustomerPasswordReset[]
+  addresses          Address[]
+  orders             Order[]
+  reviews            Review[]
+  passwordResets     CustomerPasswordReset[]
+  emailVerifications CustomerEmailVerification[]
 
   @@index([status])
+}
+
+/// Email verification tokens for storefront customer signup.
+///
+/// Plaintext token is emailed; only the sha256 hash is stored in the database.
+/// Tokens are single-use (`usedAt`), short-lived (`expiresAt`), and cascade-deleted
+/// if the customer is deleted.
+model CustomerEmailVerification {
+  id         String    @id @default(uuid())
+  customerId String
+  /// sha256 of the emailed token. Unique so a lookup is a single indexed hit.
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  /// Set the moment the token is spent, which is what makes it single-use.
+  usedAt     DateTime?
+  createdAt  DateTime  @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@index([expiresAt])
 }
 
 /// Password reset tokens for storefront customers.

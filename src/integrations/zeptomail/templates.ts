@@ -627,6 +627,34 @@ export const accountTemplates = {
   }),
 
   /**
+   * Customer account email verification link.
+   */
+  'customer-email-verification': (ctx: {
+    firstName: string;
+    verifyUrl: string;
+    expiresInHours: number;
+  }) => ({
+    subject: 'Verify your Zewa Feeds account',
+    html: shell(
+      'Verify your email address.',
+      `Hi ${esc(ctx.firstName)}, thank you for creating an account with Zewa Feeds. Click the button below to verify your email address and activate your account.`,
+      button('Verify Email Address', ctx.verifyUrl) +
+        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 0;">
+           <tr>
+             <td style="padding:14px 16px;background:#FBFCFD;border:1px solid ${HAIRLINE};border-radius:10px;">
+               <div style="font-size:11px;color:${MUTED};margin-bottom:6px;">If the button doesn't work, paste this link into your browser:</div>
+               <div style="font-size:12px;line-height:1.5;color:${INK};word-break:break-all;">${esc(ctx.verifyUrl)}</div>
+             </td>
+           </tr>
+         </table>` +
+        note(
+          `This link works once and expires in ${esc(ctx.expiresInHours)} hours. <strong style="color:${INK};">Didn't create an account?</strong> You can safely ignore this email — no account will be activated without your confirmation.`,
+        ),
+      'Verify your email to activate your Zewa Feeds account',
+    ),
+  }),
+
+  /**
    * Confirmation that a password actually changed.
    *
    * Sent after both the reset flow and a signed-in change, because this is the

@@ -114,6 +114,8 @@ export const requireCustomer: RequestHandler = async (req, _res, next) => {
 // AUTH
 // ============================================================================
 
+const VERIFICATION_TTL_HOURS = 24;
+
 customerAuthRouter.post(
   '/register',
   loginLimiter,
@@ -152,6 +154,7 @@ customerAuthRouter.post(
             passwordHash,
             firstName: req.body.firstName,
             lastName: req.body.lastName,
+            emailVerifiedAt: null,
             ...(req.body.phone ? { phone: req.body.phone } : {}),
           },
           select: { id: true, email: true, firstName: true, lastName: true },
@@ -163,19 +166,189 @@ customerAuthRouter.post(
             lastName: req.body.lastName,
             phone: req.body.phone ?? null,
             passwordHash,
+            emailVerifiedAt: null,
           },
           select: { id: true, email: true, firstName: true, lastName: true },
         });
 
+    // Invalidate any old verification tokens for this customer
+    await prisma.customerEmailVerification.updateMany({
+      where: { customerId: customer.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+
+    const verifyToken = generateToken(32);
+    await prisma.customerEmailVerification.create({
+      data: {
+        customerId: customer.id,
+        tokenHash: hashToken(verifyToken),
+        expiresAt: new Date(Date.now() + VERIFICATION_TTL_HOURS * 3600 * 1000),
+      },
+    });
+
+    sendAccountEmail(customer.email, 'customer-email-verification', {
+      firstName: customer.firstName,
+      verifyUrl: `${env.STOREFRONT_ORIGIN}/verify-email?token=${encodeURIComponent(verifyToken)}`,
+      expiresInHours: VERIFICATION_TTL_HOURS,
+    });
+
+    log.info({ customerId: customer.id }, 'customer registered; verification email sent');
+
     res.status(201).json({
       data: {
-        accessToken: signCustomerToken({ sub: customer.id, email: customer.email }),
+        pendingVerification: true,
+        email: customer.email,
+        message: 'Account created. Please check your email to verify your account.',
+      },
+    });
+  }),
+);
+
+customerAuthRouter.post(
+  '/verify-email',
+  loginLimiter,
+  validate({
+    body: z.object({
+      token: z.string().min(1, 'Verification link is missing its token.').max(200),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const record = await prisma.customerEmailVerification.findUnique({
+      where: { tokenHash: hashToken(req.body.token) },
+      select: {
+        id: true,
+        usedAt: true,
+        expiresAt: true,
         customer: {
-          id: customer.id,
-          email: customer.email,
-          firstName: customer.firstName,
-          lastName: customer.lastName,
+          select: {
+            id: true,
+            email: true,
+            firstName: true,
+            lastName: true,
+            status: true,
+            emailVerifiedAt: true,
+          },
         },
+      },
+    });
+
+    if (!record) {
+      throw new AppError(
+        400,
+        ErrorCode.TOKEN_INVALID,
+        'This verification link is invalid or has expired. Please request a new one.',
+      );
+    }
+
+    if (record.usedAt) {
+      if (record.customer.emailVerifiedAt) {
+        return res.json({
+          data: {
+            alreadyVerified: true,
+            message: 'Your email address is already verified. You can sign in to your account.',
+          },
+        });
+      }
+      throw new AppError(
+        400,
+        ErrorCode.TOKEN_INVALID,
+        'This verification link has already been used. Please request a new one.',
+      );
+    }
+
+    if (record.expiresAt < new Date()) {
+      throw new AppError(
+        400,
+        ErrorCode.TOKEN_EXPIRED,
+        'This verification link has expired. Please request a new one.',
+        { details: { expired: true, email: record.customer.email } },
+      );
+    }
+
+    if (record.customer.status === CustomerStatus.BANNED) {
+      throw new AppError(403, ErrorCode.ACCOUNT_BANNED, 'Your account has been suspended.');
+    }
+
+    await prisma.$transaction([
+      prisma.customer.update({
+        where: { id: record.customer.id },
+        data: { emailVerifiedAt: new Date() },
+      }),
+      prisma.customerEmailVerification.update({
+        where: { id: record.id },
+        data: { usedAt: new Date() },
+      }),
+      prisma.customerEmailVerification.updateMany({
+        where: { customerId: record.customer.id, usedAt: null },
+        data: { usedAt: new Date() },
+      }),
+    ]);
+
+    log.info({ customerId: record.customer.id }, 'customer email verified');
+
+    res.json({
+      data: {
+        verified: true,
+        accessToken: signCustomerToken({ sub: record.customer.id, email: record.customer.email }),
+        customer: {
+          id: record.customer.id,
+          email: record.customer.email,
+          firstName: record.customer.firstName,
+          lastName: record.customer.lastName,
+        },
+      },
+    });
+  }),
+);
+
+customerAuthRouter.post(
+  '/resend-verification',
+  passwordResetLimiter,
+  validate({ body: z.object({ email: emailSchema }) }),
+  asyncHandler(async (req, res) => {
+    const customer = await prisma.customer.findUnique({
+      where: { email: req.body.email },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        passwordHash: true,
+        status: true,
+        emailVerifiedAt: true,
+      },
+    });
+
+    if (
+      customer?.passwordHash &&
+      customer.status !== CustomerStatus.BANNED &&
+      !customer.emailVerifiedAt
+    ) {
+      await prisma.customerEmailVerification.updateMany({
+        where: { customerId: customer.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+
+      const verifyToken = generateToken(32);
+      await prisma.customerEmailVerification.create({
+        data: {
+          customerId: customer.id,
+          tokenHash: hashToken(verifyToken),
+          expiresAt: new Date(Date.now() + VERIFICATION_TTL_HOURS * 3600 * 1000),
+        },
+      });
+
+      sendAccountEmail(customer.email, 'customer-email-verification', {
+        firstName: customer.firstName,
+        verifyUrl: `${env.STOREFRONT_ORIGIN}/verify-email?token=${encodeURIComponent(verifyToken)}`,
+        expiresInHours: VERIFICATION_TTL_HOURS,
+      });
+
+      log.info({ customerId: customer.id }, 'verification email resent');
+    }
+
+    res.json({
+      data: {
+        message: 'If an unverified account exists for that email, a verification link has been sent.',
       },
     });
   }),
@@ -202,6 +375,7 @@ customerAuthRouter.post(
         lastName: true,
         passwordHash: true,
         status: true,
+        emailVerifiedAt: true,
       },
     });
 
@@ -216,6 +390,14 @@ customerAuthRouter.post(
     }
     if (customer.status === CustomerStatus.BANNED) {
       throw new AppError(403, ErrorCode.ACCOUNT_BANNED, 'Your account has been suspended.');
+    }
+    if (!customer.emailVerifiedAt) {
+      throw new AppError(
+        403,
+        ErrorCode.EMAIL_UNVERIFIED,
+        'Please verify your email address before signing in.',
+        { details: { email: customer.email, unverified: true } },
+      );
     }
 
     res.json({

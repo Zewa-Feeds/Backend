@@ -24,6 +24,7 @@ const log = logger.child({ module: 'customer.mail' });
 
 /** Context accepted by each account template, keyed by template name. */
 type AccountContext = {
+  'customer-email-verification': { firstName: string; verifyUrl: string; expiresInHours: number };
   'password-reset': { firstName: string; resetUrl: string; expiresInMinutes: number };
   'password-changed': { firstName: string };
 };
