@@ -24,6 +24,7 @@ import { formatInr } from './tax';
 import { nextInvoiceNo } from './numbering';
 import {
   isValidTransition,
+  customerCancelBlockedReason,
   nextStates,
   STATUS_TIMESTAMP,
   TRANSITIONS,
@@ -219,7 +220,39 @@ export async function transition(
       data.invoiceNumber = issuedInvoiceNo;
     }
 
-    await tx.order.update({ where: { id: order.id }, data });
+    /*
+     * Compare-and-swap on the status column.
+     *
+     * The legality check above ran against a row read OUTSIDE this
+     * transaction, so between that read and this write another actor can move
+     * the order on — ops marking it shipped while a customer is cancelling is
+     * the realistic case, and both requests validate happily against their own
+     * stale snapshot.
+     *
+     * Matching on the status we validated turns that into a no-op: the second
+     * writer updates zero rows and is told to look again, instead of both
+     * transitions landing and the later one silently winning.
+     *
+     * `updateMany` rather than `update` purely because it accepts a non-unique
+     * WHERE — the id still makes it a single row.
+     */
+    const swapped = await tx.order.updateMany({
+      where: { id: order.id, status: order.status },
+      data: data as Prisma.OrderUpdateManyMutationInput,
+    });
+
+    if (swapped.count === 0) {
+      const current = await tx.order.findUnique({
+        where: { id: order.id },
+        select: { status: true },
+      });
+      throw new AppError(
+        409,
+        ErrorCode.INVALID_TRANSITION,
+        `This order changed to ${ORDER_STATUS_LABELS[current?.status ?? order.status]} a moment ago. Reload and try again.`,
+        { details: { from: current?.status ?? order.status, allowed: nextStates(current?.status ?? order.status) } },
+      );
+    }
 
     // 3b. Coupon revenue attribution.
     //
@@ -335,6 +368,160 @@ export async function transition(
   }
 
   return serializeOrder(updated.row);
+}
+
+// ============================================================================
+// CUSTOMER SELF-SERVICE CANCELLATION
+// ============================================================================
+
+export interface CustomerCancelInput {
+  /** Who is asking. Ownership is enforced against this, not against a body field. */
+  customer: { id: string; email: string };
+  /** Optional free text from the customer. Empty means "no reason given". */
+  reason?: string | null;
+  ctx: AuditContext;
+}
+
+/**
+ * Cancel an order on the customer's own request.
+ *
+ * A THIN POLICY WRAPPER, not a second cancellation implementation. The actual
+ * state change goes through `transition()`, so restocking, coupon reversal,
+ * the audit entries and the "Your order was cancelled" email are exactly the
+ * ones an admin cancellation produces. Anything that gets fixed there is
+ * fixed here for free, which is the entire reason this is shaped this way.
+ *
+ * What this adds on top:
+ *
+ *   OWNERSHIP — matched on customerId OR email, mirroring `ownedBy` in the
+ *   account routes. Guest checkouts have no customerId, so an account that
+ *   later registers with the same address still owns its earlier orders. A
+ *   non-matching order is reported as not-found rather than forbidden, so
+ *   order numbers cannot be probed.
+ *
+ *   A NARROWER STATUS GATE — see CUSTOMER_CANCELLABLE_STATES. The lifecycle
+ *   permits cancelling a SHIPPED order; a customer may not.
+ *
+ * NO REFUND IS ISSUED HERE, deliberately. Refunds are a separate admin action
+ * (`refund()` above) that calls the gateway and requires the orders.refund
+ * permission. Cancelling a paid order leaves paymentStatus PAID and the money
+ * with us until someone processes it — so the customer is told the refund is
+ * being processed, never that it is done.
+ */
+export async function cancelByCustomer(
+  orderNo: string,
+  input: CustomerCancelInput,
+): Promise<ReturnType<typeof serializeOrder>> {
+  const { customer, ctx } = input;
+
+  /*
+   * Ownership is part of the WHERE clause, not a check afterwards. An order
+   * belonging to someone else is simply not found, which reveals nothing about
+   * whether that order number exists.
+   */
+  const order = await prisma.order.findFirst({
+    where: {
+      orderNo,
+      OR: [{ customerId: customer.id }, { email: customer.email }],
+    },
+    select: { id: true, orderNo: true, status: true, paymentStatus: true, paymentMethod: true },
+  });
+  if (!order) throw notFound('Order');
+
+  /*
+   * Already cancelled is reported plainly rather than as an error state.
+   *
+   * A double-click, a retried request, or a second tab all land here, and
+   * "your order is cancelled" is a truthful and useful answer to every one of
+   * them. Throwing would make a successful outcome look like a failure.
+   */
+  if (order.status === OrderStatus.CANCELLED) {
+    const row = await prisma.order.findUniqueOrThrow({
+      where: { id: order.id },
+      select: ORDER_SELECT,
+    });
+    return serializeOrder(row);
+  }
+
+  const blocked = customerCancelBlockedReason(order.status);
+  if (blocked) {
+    throw new AppError(409, ErrorCode.INVALID_TRANSITION, blocked, {
+      details: { from: order.status },
+    });
+  }
+
+  /*
+   * cancelReason is REQUIRED by the transition spec, and the customer's is
+   * optional — so a blank one is recorded as exactly that. The prefix marks
+   * the origin in the CMS, where the same column also holds staff reasons and
+   * "who cancelled this" is the first thing anyone asks.
+   */
+  const trimmed = (input.reason ?? '').trim();
+  const cancelReason = trimmed
+    ? `Cancelled by customer — ${trimmed}`
+    : 'Cancelled by customer — no reason given';
+
+  /*
+   * `transition()` re-reads the order and performs a compare-and-swap on the
+   * status, so an admin shipping this order between our check and this call
+   * loses the race safely: it throws 409 rather than cancelling a parcel that
+   * is already moving.
+   */
+  const result = await transition(
+    orderNo,
+    {
+      to: OrderStatus.CANCELLED,
+      fields: { cancelReason: cancelReason.slice(0, 500) },
+      notifyCustomer: true,
+    },
+    ctx,
+  );
+
+  /*
+   * Tell ops, AFTER the transition committed.
+   *
+   * A customer cancellation arrives unannounced, and a paid one leaves money
+   * sitting with us that somebody has to send back by hand — the refund is a
+   * separate admin action, so nothing else would raise it. Staff cancellations
+   * need no such alert: the person who did it already knows.
+   *
+   * `jobId` keyed on the order makes this idempotent. A retried request that
+   * gets past the already-cancelled short-circuit cannot produce a second
+   * alert for the same order.
+   *
+   * Failure to enqueue is logged, never thrown: the cancellation is committed
+   * and the customer's outcome must not depend on an internal alert.
+   */
+  await emailQueue
+    .add(
+      'staff-email',
+      {
+        kind: 'staff',
+        template: 'staff-order-cancelled',
+        context: {
+          orderNo,
+          cancelledBy: 'customer',
+          cancelledAtDate: new Date(),
+          /*
+           * Captured money that has not been returned. Read from the payment
+           * status BEFORE any refund exists, because cancelling never creates
+           * one — this is precisely the flag that tells ops to act.
+           */
+          refundState:
+            order.paymentStatus === PaymentStatus.PAID
+              ? 'pending'
+              : order.paymentStatus === PaymentStatus.REFUNDED
+                ? 'processed'
+                : order.paymentStatus === PaymentStatus.PARTIALLY_REFUNDED
+                  ? 'partial'
+                  : 'none',
+        },
+      },
+      { jobId: `staff-cancelled-${order.id}` },
+    )
+    .catch((err) => log.error({ err, orderNo }, 'failed to enqueue staff cancellation alert'));
+
+  return result;
 }
 
 // ============================================================================

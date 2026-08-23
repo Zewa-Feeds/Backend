@@ -655,6 +655,20 @@ export interface StaffRefundContext extends OrderEmailContext {
   processedByName?: string | null;
 }
 
+/**
+ * Internal alert for a cancellation the CUSTOMER initiated.
+ *
+ * Distinct from a staff cancellation, which ops already know about because
+ * they performed it. This one arrives unannounced and usually needs a refund
+ * decision, so it carries the payment identifiers needed to act on it.
+ */
+export interface StaffCancellationContext extends OrderEmailContext {
+  cancelledBy: 'customer' | 'staff';
+  cancelledAtDate?: Date | string | null;
+  /** 'pending' when money was captured and not yet returned. */
+  refundState: 'none' | 'pending' | 'processed' | 'partial';
+}
+
 export const staffTemplates = {
   'staff-new-order': (ctx: OrderEmailContext) => ({
     subject: `New Order Placed — #${ctx.orderNo}`,
@@ -709,6 +723,58 @@ export const staffTemplates = {
       </table>
       ` + button('Open Order in CMS', `${env.CMS_ORIGIN}/orders/${ctx.orderNo}`),
       `Refund of ${formatInr(ctx.refundPaise)} processed for order #${ctx.orderNo} (${esc(ctx.customerName)})`,
+    ),
+  }),
+
+  'staff-order-cancelled': (ctx: StaffCancellationContext) => ({
+    subject: `Order Cancelled by Customer — #${ctx.orderNo}`,
+    html: shell(
+      `Order Cancelled by Customer — #${esc(ctx.orderNo)}`,
+      `Order <strong style="color:${INK};">${esc(ctx.orderNo)}</strong> for <strong style="color:${BRAND};">${esc(formatInr(ctx.totalPaise))}</strong> was cancelled by the customer on ${esc(formatDate(ctx.cancelledAtDate ?? new Date()))}. Stock has been returned automatically.`,
+      `
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+        <tr>
+          <td style="padding:12px 16px;background:${BRAND_SOFT};border-bottom:1px solid ${HAIRLINE};">
+            <strong style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:${BRAND};">Cancellation Details (Internal Notice)</strong>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13.5px;line-height:1.6;color:${INK};">
+            <strong>Cancelled By:</strong> Customer<br/>
+            <strong>Reason:</strong> ${esc(ctx.cancelReason ?? 'No reason given')}<br/>
+            <strong>Order Total:</strong> ${esc(formatInr(ctx.totalPaise))}<br/>
+            <strong>Payment Method:</strong> ${esc(ctx.paymentMethod)} (${esc(ctx.paymentStatus ?? '—')})<br/>
+            <strong>Refund Status:</strong> ${
+              ctx.refundState === 'pending'
+                ? `<strong style="color:#C0392F;">ACTION REQUIRED — payment captured, refund not yet processed</strong>`
+                : ctx.refundState === 'processed'
+                  ? 'Already refunded'
+                  : ctx.refundState === 'partial'
+                    ? 'Partially refunded'
+                    : 'No refund due (nothing captured)'
+            }<br/>
+            <strong>Razorpay Order ID:</strong> <code style="font-family:monospace;font-size:12px;background:#F1F3F5;padding:2px 4px;border-radius:4px;">${esc(ctx.razorpayOrderId ?? '—')}</code><br/>
+            <strong>Razorpay Payment ID:</strong> <code style="font-family:monospace;font-size:12px;background:#F1F3F5;padding:2px 4px;border-radius:4px;">${esc(ctx.razorpayPaymentId ?? '—')}</code>
+          </td>
+        </tr>
+      </table>
+
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+        <tr>
+          <td style="padding:12px 16px;background:${BRAND_SOFT};border-bottom:1px solid ${HAIRLINE};">
+            <strong style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:${BRAND};">Customer Information</strong>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:14px 16px;font-size:13.5px;line-height:1.6;color:${INK};">
+            <strong>Customer Name:</strong> ${esc(ctx.customerName)}<br/>
+            <strong>Email:</strong> <a href="mailto:${esc(ctx.customerEmail ?? '')}" style="color:${BRAND};text-decoration:none;">${esc(ctx.customerEmail ?? '—')}</a><br/>
+            <strong>Phone:</strong> ${esc(ctx.customerPhone ?? '—')}
+          </td>
+        </tr>
+      </table>
+      ` + button('Open Order in CMS', `${env.CMS_ORIGIN}/orders/${ctx.orderNo}`),
+      `Order #${ctx.orderNo} cancelled by ${esc(ctx.customerName)} · ${formatInr(ctx.totalPaise)}${ctx.refundState === 'pending' ? ' · refund required' : ''}`,
     ),
   }),
 

@@ -10,7 +10,7 @@
  * orders are adopted by email when they later register.
  */
 import { Router } from 'express';
-import { CustomerStatus } from '@prisma/client';
+import { CustomerStatus, OrderStatus, PaymentStatus } from '@prisma/client';
 import { z } from 'zod';
 import { asyncHandler } from '@/middleware/asyncHandler';
 import {
@@ -27,10 +27,15 @@ import { signCustomerToken, verifyCustomerToken } from '@/lib/tokens';
 import { AppError, ErrorCode, notFound, unauthenticated } from '@/lib/errors';
 import { plainText } from '@/lib/sanitize';
 import { prisma } from '@/lib/prisma';
+import * as ordersService from '@/modules/orders/orders.service';
 import { logger } from '@/lib/logger';
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, formatAddress } from '@/modules/orders/orders.serializer';
 import { toRupees } from '@/modules/products/products.serializer';
-import { buildTimeline } from '@/modules/orders/lifecycle';
+import {
+  buildTimeline,
+  customerCancelBlockedReason,
+  isCustomerCancellable,
+} from '@/modules/orders/lifecycle';
 import { generateInvoicePdf } from '@/integrations/pdf/invoice';
 import { getTaxConfig } from '@/modules/settings/settings.service';
 import type { RequestHandler } from 'express';
@@ -475,6 +480,7 @@ const orderSelect = {
   shippedAt: true,
   deliveredAt: true,
   cancelledAt: true,
+  cancelReason: true,
   status: true,
   paymentStatus: true,
   paymentMethod: true,
@@ -498,6 +504,27 @@ type AccountOrder = Awaited<
 >;
 
 /** Wire shape for one order. Money is sent as paise AND formatted rupees. */
+/**
+ * How the customer should be told their money stands.
+ *
+ * Only meaningful once an order is cancelled; everything else is ordinary
+ * payment status and the page already shows that.
+ *
+ * "pending" is the honest answer for a paid order that has been cancelled: the
+ * refund is a manual admin step, so claiming anything stronger would be a
+ * promise the system has not kept yet.
+ */
+function refundStateFor(o: AccountOrder): 'none' | 'pending' | 'processed' | 'partial' {
+  if (o.paymentStatus === PaymentStatus.REFUNDED) return 'processed';
+  if (o.paymentStatus === PaymentStatus.PARTIALLY_REFUNDED) return 'partial';
+
+  // Nothing was captured, so there is nothing to send back — COD included.
+  if (o.status !== OrderStatus.CANCELLED) return 'none';
+  if (o.paymentStatus !== PaymentStatus.PAID) return 'none';
+
+  return 'pending';
+}
+
 function serialiseOrder(o: AccountOrder) {
   return {
     orderNo: o.orderNo,
@@ -520,6 +547,28 @@ function serialiseOrder(o: AccountOrder) {
       trackingNumber: o.trackingNumber,
       trackingUrl: o.trackingUrl,
     },
+    /*
+     * Whether the Cancel button may appear — decided HERE, by the same
+     * predicate the cancel route enforces with.
+     *
+     * The button could be derived from `status` on the client, but then the
+     * rule would exist in two places and drift. The server owns it; the client
+     * renders what it is told, and the route re-checks on the way in
+     * regardless, because a stale page is not evidence of anything.
+     */
+    canCancel: isCustomerCancellable(o.status),
+    cancelBlockedReason: customerCancelBlockedReason(o.status),
+    cancelReason: o.cancelReason,
+    cancelledAt: o.cancelledAt,
+    /*
+     * What to say about the money on a cancelled order.
+     *
+     * Cancelling does not refund — that is a separate admin action — so a paid
+     * order sits at PAID with status CANCELLED. Left to itself the page would
+     * show "Cancelled" beside "Payment successful", which reads as a mistake.
+     * This names the actual state instead.
+     */
+    refundState: refundStateFor(o),
     addressLine: formatAddress(o.shippingAddress),
     shippingAddress: o.shippingAddress,
     items: o.items.map((i) => ({
@@ -634,6 +683,65 @@ accountRouter.get(
     if (!order) throw notFound('Order');
 
     res.json({ data: serialiseOrder(order) });
+  }),
+);
+
+/**
+ * Cancel one's own order.
+ *
+ * The heavy lifting is `ordersService.cancelByCustomer`, which reuses the same
+ * `transition()` an admin cancellation runs through — same restock, same
+ * coupon reversal, same audit trail, same customer email. This route only
+ * supplies identity and shapes the reply.
+ *
+ * No refund is triggered. Refunds remain an admin action behind the
+ * orders.refund permission, so a paid order cancelled here stays PAID until
+ * someone processes it — and the response says so rather than implying the
+ * money is already on its way back.
+ */
+accountRouter.post(
+  '/orders/:orderNo/cancel',
+  validate({
+    params: z.object({ orderNo: z.string().trim().min(3).max(40) }),
+    body: z.object({
+      /*
+       * Optional, and capped well under the column's 500 so the
+       * "Cancelled by customer — " prefix cannot push it over.
+       */
+      reason: z.string().trim().max(400).transform(plainText).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const customer = req.customer!;
+
+    const order = await ordersService.cancelByCustomer(req.params.orderNo as string, {
+      customer: { id: customer.id, email: customer.email },
+      reason: (req.body as { reason?: string }).reason ?? null,
+      ctx: {
+        /*
+         * actorId stays null: the column is for CmsUser ids, and writing a
+         * customer id there would make the audit log lie about who staff
+         * were looking at. The name and role carry the attribution instead.
+         */
+        actorId: null,
+        actorName: customer.email,
+        actorRole: 'CUSTOMER',
+        ip: req.ip ?? '',
+        userAgent: req.get('user-agent') ?? undefined,
+      },
+    });
+
+    /*
+     * Re-read through the customer serialiser. `cancelByCustomer` returns the
+     * ADMIN shape, which carries internal notes and staff attribution — none
+     * of which may reach a customer.
+     */
+    const row = await prisma.order.findFirstOrThrow({
+      where: { orderNo: order.orderNo, ...ownedBy(customer) },
+      select: orderSelect,
+    });
+
+    res.json({ data: serialiseOrder(row) });
   }),
 );
 

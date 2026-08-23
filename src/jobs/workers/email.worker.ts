@@ -171,6 +171,31 @@ async function handleCustomerEmail(job: Job<EmailJob>): Promise<void> {
  * Ops Managers and Admins) with full order breakdown, items with SKUs,
  * gateway IDs, and clearly separated customer vs internal notes.
  */
+/**
+ * info@ first, then every active Ops Manager and Admin.
+ *
+ * The inbox is the operational address of record, so it leads and is never
+ * duplicated when a staff account happens to use it too.
+ */
+async function opsRecipients(inboxName: string): Promise<{ email: string; name?: string }[]> {
+  const recipients: { email: string; name?: string }[] = [
+    { email: 'info@zewafeeds.com', name: inboxName },
+  ];
+
+  const staffUsers = await prisma.cmsUser.findMany({
+    where: { status: 'ACTIVE', deletedAt: null, role: { in: [Role.OPS_MANAGER, Role.ADMIN] } },
+    select: { email: true, name: true },
+  });
+
+  for (const u of staffUsers) {
+    if (u.email.toLowerCase() !== 'info@zewafeeds.com') {
+      recipients.push({ email: u.email, name: u.name });
+    }
+  }
+
+  return recipients;
+}
+
 async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
   const data = job.data;
   if (data.kind !== 'staff') return;
@@ -239,6 +264,21 @@ async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
       subject: rendered.subject,
       htmlBody: rendered.html,
       reference: `staff-refund-${orderNo}-${data.context.refundId ?? '1'}`,
+    });
+    return;
+  }
+
+  if (data.template === 'staff-order-cancelled') {
+    const orderNo = data.context.orderNo as string;
+    const { ctx } = await orderContext(orderNo);
+    const build = staffTemplates['staff-order-cancelled'];
+    const rendered = build({ ...ctx, ...(data.context as Record<string, unknown>) } as never);
+
+    await sendEmail({
+      to: await opsRecipients('Zewa Feeds Orders'),
+      subject: rendered.subject,
+      htmlBody: rendered.html,
+      reference: `staff-cancelled-${orderNo}`,
     });
     return;
   }

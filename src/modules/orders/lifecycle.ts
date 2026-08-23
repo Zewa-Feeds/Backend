@@ -160,6 +160,55 @@ export function isValidTransition(from: OrderStatus, to: OrderStatus): boolean {
 }
 
 /**
+ * Which states a CUSTOMER may cancel from — deliberately narrower than the
+ * lifecycle above.
+ *
+ * `nextStates` permits SHIPPED → CANCELLED because ops genuinely need it: a
+ * parcel refused at the door or returned to origin is cancelled after
+ * dispatch. That is a staff judgement made with the courier's status in hand,
+ * and it must keep working.
+ *
+ * A customer has none of that context. Once a parcel is moving, self-service
+ * cancellation would strand goods in transit with the order already restocked
+ * and marked cancelled, so the customer is sent to support instead.
+ *
+ * This is a POLICY layer over the lifecycle, not a replacement for it. The
+ * lifecycle still decides what is structurally legal; this decides what a
+ * customer is allowed to ask for. Both are checked, in that order.
+ */
+export const CUSTOMER_CANCELLABLE_STATES: readonly OrderStatus[] = [
+  OrderStatus.PENDING,
+  OrderStatus.PROCESSING,
+] as const;
+
+/** May the customer cancel an order currently in this state? */
+export function isCustomerCancellable(status: OrderStatus): boolean {
+  return CUSTOMER_CANCELLABLE_STATES.includes(status);
+}
+
+/**
+ * Why a customer cannot cancel, phrased for the customer.
+ *
+ * Returns null when cancellation IS allowed. The wording avoids blaming them
+ * and points at the next useful action, because this text is the whole of what
+ * they see when the button is gone.
+ */
+export function customerCancelBlockedReason(status: OrderStatus): string | null {
+  if (isCustomerCancellable(status)) return null;
+
+  switch (status) {
+    case OrderStatus.SHIPPED:
+      return 'This order has already shipped and can no longer be cancelled online. Contact us and we will help.';
+    case OrderStatus.DELIVERED:
+      return 'This order has already been delivered and cannot be cancelled.';
+    case OrderStatus.CANCELLED:
+      return 'This order is already cancelled.';
+    default:
+      return 'This order can no longer be cancelled.';
+  }
+}
+
+/**
  * Validate a transition payload against its spec.
  * Returns field-keyed errors for §17.3 inline display, or null when valid.
  */
