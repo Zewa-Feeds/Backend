@@ -20,6 +20,14 @@ export interface DashboardCounters {
   pendingOrders: number;
   lowStockProducts: number;
   pendingReviews: number;
+  orderCounts?: {
+    all: number;
+    pending: number;
+    processing: number;
+    shipped: number;
+    delivered: number;
+    cancelled: number;
+  };
 }
 
 export interface ActivityEntry {
@@ -43,15 +51,42 @@ export async function counters(role: Role): Promise<DashboardCounters> {
   const canSeeOrders = can(role, 'orders.view');
   const canSeeReviews = can(role, 'reviews.moderate');
 
-  const [pendingOrders, lowStockProducts, pendingReviews] = await Promise.all([
-    canSeeOrders ? prisma.order.count({ where: { status: OrderStatus.PENDING } }) : 0,
-    // Matches the products list's "Low/Out" filter: families whose total stock is
-    // below the threshold. Counted per family, since that is what the list shows.
+  const [orderGroups, lowStockProducts, pendingReviews] = await Promise.all([
+    canSeeOrders
+      ? prisma.order.groupBy({
+          by: ['status'],
+          _count: { id: true },
+        })
+      : [],
     countLowStockFamilies(),
     canSeeReviews ? prisma.review.count({ where: { state: ReviewState.PENDING } }) : 0,
   ]);
 
-  return { pendingOrders, lowStockProducts, pendingReviews };
+  const orderCounts = {
+    all: 0,
+    pending: 0,
+    processing: 0,
+    shipped: 0,
+    delivered: 0,
+    cancelled: 0,
+  };
+
+  for (const g of orderGroups) {
+    const count = g._count.id;
+    orderCounts.all += count;
+    if (g.status === OrderStatus.PENDING) orderCounts.pending = count;
+    else if (g.status === OrderStatus.PROCESSING) orderCounts.processing = count;
+    else if (g.status === OrderStatus.SHIPPED) orderCounts.shipped = count;
+    else if (g.status === OrderStatus.DELIVERED) orderCounts.delivered = count;
+    else if (g.status === OrderStatus.CANCELLED) orderCounts.cancelled = count;
+  }
+
+  return {
+    pendingOrders: orderCounts.pending,
+    lowStockProducts,
+    pendingReviews,
+    orderCounts,
+  };
 }
 
 /**
