@@ -62,7 +62,7 @@ vi.mock('@/lib/prisma', () => ({
     auditLog: {
       create: (...args: unknown[]) => auditCreate(...args),
     },
-    $transaction: (...args: unknown[]) => transaction(...args),
+    $transaction: (fn: any) => transaction(fn),
   },
 }));
 
