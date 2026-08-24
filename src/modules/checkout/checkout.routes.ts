@@ -47,6 +47,8 @@ const checkoutSchema = z.object({
   shippingAddress: addressSchema,
   paymentMethod: z.nativeEnum(PaymentMethod),
   couponCode: z.string().trim().max(30).optional().nullable(),
+  /** Several codes, oldest first. Eligibility and stacking are re-decided here. */
+  couponCodes: z.array(z.string().trim().max(30)).max(10).optional(),
   customerNote: z.string().trim().max(1000).transform(plainText).optional(),
   /** "Save this address for next time" on the checkout form. */
   saveAddress: z.boolean().optional().default(false),

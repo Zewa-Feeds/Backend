@@ -56,6 +56,8 @@ export interface CheckoutInput {
   shippingAddress: ShippingAddressInput;
   paymentMethod: PaymentMethod;
   couponCode?: string | null;
+  /** Several codes, oldest first. Merged with `couponCode` when both are given. */
+  couponCodes?: string[] | null;
   customerNote?: string;
   /** Guards against double-submit; a repeat returns the original order. */
   idempotencyKey?: string;
@@ -207,14 +209,17 @@ export async function checkout(
   const cart = await priceCart({
     lines: input.lines,
     couponCode: input.couponCode,
+    couponCodes: input.couponCodes,
     email: input.email,
+    customerId: input.customerId,
     state: input.shippingAddress.state,
   });
 
   // A coupon that failed validation must not silently drop — the customer expects
   // the discount they were quoted.
   const couponIssue = cart.issues.find((i) => i.sku === '__coupon__');
-  if (input.couponCode && couponIssue) {
+  const askedForACoupon = Boolean(input.couponCode) || (input.couponCodes?.length ?? 0) > 0;
+  if (askedForACoupon && couponIssue) {
     throw new AppError(409, couponIssue.code as never, couponIssue.message);
   }
   assertFulfillable(cart);
@@ -346,6 +351,7 @@ export async function checkout(
           taxPaise: cart.taxPaise,
           totalPaise: cart.totalPaise,
           couponCode: cart.coupon?.code ?? null,
+          couponCodes: cart.coupons.map((c) => c.code),
           shippingAddress: { ...input.shippingAddress } as Prisma.InputJsonValue,
           // The shopper's own words go to customerNote. internalNote is
           // staff-only and starts empty.
@@ -369,27 +375,58 @@ export async function checkout(
         select: { id: true, orderNo: true, totalPaise: true },
       });
 
-      // 5c. Record the redemption so per-customer limits hold.
-      if (cart.coupon) {
-        const coupon = await tx.coupon.findUniqueOrThrow({
-          where: { code: cart.coupon.code },
-          select: { id: true },
+      /*
+       * 5c. Reserve every applied promotion.
+       *
+       * One redemption row per promotion per order — CouponRedemption is keyed
+       * @@unique([couponId, orderId]), a pair, so stacking needed no schema
+       * change here.
+       *
+       * The increment is CONDITIONAL, and that is the usage-limit guard. The
+       * limit was checked during pricing, outside this transaction, so by now it
+       * is a stale read: two checkouts racing for the last use both passed it.
+       * Re-checking in the WHERE clause at write time is the same technique the
+       * stock decrement above uses. Losing means `count === 0`, and throwing
+       * rolls the whole transaction back — no order, and the stock returns.
+       */
+      for (const promo of cart.coupons) {
+        const reserved = await tx.coupon.updateMany({
+          where: {
+            id: promo.couponId,
+            OR: [
+              { totalUsageLimit: null },
+              // `usedCount < NULL` is NULL in SQL, not true, which is why
+              // unlimited coupons need the branch above rather than this one.
+              { usedCount: { lt: prisma.coupon.fields.totalUsageLimit } },
+            ],
+          },
+          data: { usedCount: { increment: 1 } },
         });
+
+        if (reserved.count === 0) {
+          throw new AppError(
+            409,
+            ErrorCode.COUPON_LIMIT_REACHED,
+            `${promo.code} has reached its usage limit.`,
+          );
+        }
+
         await tx.couponRedemption.create({
           data: {
-            couponId: coupon.id,
+            couponId: promo.couponId,
             orderId: order.id,
             customerId: input.customerId ?? null,
             email: input.email.toLowerCase(),
-            // Snapshot for the per-coupon revenue report. `confirmedAt` stays
-            // null until the order is actually confirmed.
+            /*
+             * Snapshot for the per-coupon revenue report. The order's full value
+             * is recorded against each promotion that helped win it — a stacked
+             * order genuinely is attributable to both — while `discountPaise`
+             * stays per-promotion, so what each one COST is never double
+             * counted. `confirmedAt` stays null until the order is confirmed.
+             */
             cartValuePaise: cart.totalPaise,
-            discountPaise: cart.discountPaise,
+            discountPaise: promo.discountPaise,
           },
-        });
-        await tx.coupon.update({
-          where: { id: coupon.id },
-          data: { usedCount: { increment: 1 } },
         });
       }
 

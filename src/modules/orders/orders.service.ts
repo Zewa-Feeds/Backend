@@ -269,9 +269,12 @@ export async function transition(
     if (input.to === OrderStatus.PROCESSING) {
       await couponsService.confirmRedemption(order.id, tx);
     }
-    // Cancelling must undo the attribution, or reported revenue drifts upward.
+    // Cancelling must undo the attribution, or reported revenue drifts upward,
+    // AND hand the coupon use back — the order will never complete, so it must
+    // not keep consuming a usage slot or the customer's per-customer allowance.
     if (input.to === OrderStatus.CANCELLED) {
       await couponsService.reverseRedemption(order.id, tx);
+      await couponsService.releaseRedemption(order.id, tx);
     }
 
     // 4. Cancelling before delivery returns the stock.
@@ -644,6 +647,7 @@ export async function refund(
     // attribution: the order still happened and most of it stands.
     if (totalRefunded >= order.totalPaise) {
       await couponsService.reverseRedemption(order.id, tx);
+      await couponsService.releaseRedemption(order.id, tx);
     }
 
     const row = await tx.orderEmail.create({

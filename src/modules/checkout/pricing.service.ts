@@ -9,14 +9,15 @@
  * Client-supplied prices are never trusted. The request says *what* and *how many*;
  * everything monetary is looked up server-side.
  */
-import { MediaStatus, ProductStatus } from '@prisma/client';
+import { MediaStatus, ProductStatus, type Category } from '@prisma/client';
 import { resolveGallery } from '@/modules/products/media.resolver';
 import { toResolvable, type TargetableMediaRow } from '@/modules/products/media.integrity';
 import { pickHero } from '@/modules/products/media.presentation';
 import { prisma } from '@/lib/prisma';
 import { AppError, ErrorCode } from '@/lib/errors';
 import * as settingsService from '@/modules/settings/settings.service';
-import * as couponsService from '@/modules/coupons/coupons.service';
+import * as promotionEngine from '@/modules/promotions/engine';
+import type { AppliedPromotion } from '@/modules/promotions/types';
 import { computeInvoiceTax } from '@/modules/orders/tax';
 
 export interface CartLineInput {
@@ -27,6 +28,7 @@ export interface CartLineInput {
 export interface PricedLine {
   variantId: string;
   familyId: string;
+  category: Category;
   sku: string;
   productName: string;
   productSlug: string;
@@ -49,12 +51,24 @@ export interface PricedCart {
   shippingPaise: number;
   taxPaise: number;
   totalPaise: number;
+  /** The primary applied promotion — first in the stack. Null when none applied. */
   coupon: { code: string; discountLabel: string; scope?: string; appliedTo?: string[] } | null;
+  /** Every applied promotion, in the order the engine priced them. */
+  coupons: AppliedPromotion[];
+  /** True when a promotion waived the shipping charge. */
+  freeShippingFromCoupon: boolean;
   freeShippingThresholdPaise: number;
   /** How much more to spend for free shipping; 0 when already qualified. */
   amountToFreeShippingPaise: number;
   /** Populated when a line cannot be fulfilled at the requested quantity. */
-  issues: { sku: string; code: string; message: string; availableStock: number }[];
+  issues: {
+    sku: string;
+    code: string;
+    message: string;
+    availableStock: number;
+    /** Which code failed, when sku is the `__coupon__` sentinel. */
+    couponCode?: string;
+  }[];
   deliveryText: string;
   deliveryNote?: string;
   deliveryDays?: number;
@@ -141,8 +155,12 @@ export function getDeliveryEstimateForState(state?: string | null): {
  */
 export async function priceCart(input: {
   lines: CartLineInput[];
+  /** Single code — the original contract, still honoured. */
   couponCode?: string | null;
+  /** Several codes, oldest first. Merged with `couponCode` when both are given. */
+  couponCodes?: string[] | null;
   email?: string;
+  customerId?: string | null;
   state?: string;
 }): Promise<PricedCart> {
   if (input.lines.length === 0) {
@@ -179,6 +197,7 @@ export async function priceCart(input: {
           name: true,
           slug: true,
           status: true,
+          category: true,
           deletedAt: true,
           media: {
             where: { status: MediaStatus.READY },
@@ -253,6 +272,7 @@ export async function priceCart(input: {
     lines.push({
       variantId: variant.id,
       familyId: variant.family.id,
+      category: variant.family.category,
       sku: variant.sku,
       productName: variant.family.name,
       productSlug: variant.family.slug,
@@ -270,43 +290,57 @@ export async function priceCart(input: {
 
   const subtotalPaise = lines.reduce((sum, l) => sum + l.lineTotalPaise, 0);
 
-  // Coupon failures do not fail the whole quote — the cart is still valid without
-  // it, and the storefront needs the reason to explain itself.
-  let coupon: PricedCart['coupon'] = null;
-  let discountPaise = 0;
-  if (input.couponCode) {
-    try {
-      const result = await couponsService.validateForCart(
-        input.couponCode,
-        subtotalPaise,
-        input.email,
-        // Lines are required for SPECIFIC_PRODUCTS scope, so the discount lands
-        // only on eligible products.
-        lines.map((l) => ({
-          familyId: l.familyId,
-          productName: l.productName,
-          lineTotalPaise: l.lineTotalPaise,
-        })),
-      );
-      discountPaise = result.discountPaise;
-      coupon = {
-        code: result.code,
-        discountLabel: result.discountLabel,
-        scope: result.scope,
-        appliedTo: result.appliedTo,
-      };
-    } catch (err) {
-      if (err instanceof AppError) {
-        issues.push({
-          sku: '__coupon__',
-          code: err.code,
-          message: err.message,
-          availableStock: 0,
-        });
-      } else {
-        throw err;
+  /*
+   * Promotions.
+   *
+   * A failure here does NOT fail the quote — the cart is still valid without a
+   * discount, and the storefront needs the reason in order to explain itself.
+   * Rejections ride in `issues` under the sentinel sku `__coupon__`, which cart
+   * and checkout both filter on to decide fulfillability; the sku string is part
+   * of that contract, so each rejection carries the offending `code` alongside
+   * rather than encoding it into the sku.
+   */
+  const requestedCodes = [
+    ...(input.couponCode ? [input.couponCode] : []),
+    ...(input.couponCodes ?? []),
+  ];
+
+  const promotions = await promotionEngine.evaluate({
+    lines: lines.map((l) => ({
+      variantId: l.variantId,
+      familyId: l.familyId,
+      category: l.category,
+      sku: l.sku,
+      productName: l.productName,
+      qty: l.qty,
+      unitPricePaise: l.unitPricePaise,
+      lineTotalPaise: l.lineTotalPaise,
+    })),
+    subtotalPaise,
+    email: input.email,
+    customerId: input.customerId,
+    state: input.state,
+    requestedCodes,
+  });
+
+  const discountPaise = promotions.totalDiscountPaise;
+  const primary = promotions.applied[0];
+  const coupon: PricedCart['coupon'] = primary
+    ? {
+        code: primary.code,
+        discountLabel: primary.discountLabel,
+        appliedTo: primary.appliedTo,
       }
-    }
+    : null;
+
+  for (const rejection of promotions.rejected) {
+    issues.push({
+      sku: '__coupon__',
+      code: rejection.errorCode,
+      message: rejection.message,
+      availableStock: 0,
+      couponCode: rejection.code,
+    });
   }
 
   // ---- Authoritative Weight & Shipping Calculation ----
@@ -335,7 +369,15 @@ export async function priceCart(input: {
 
   const payable = subtotalPaise - discountPaise;
   const isFreeShipping = shipping.freeThresholdPaise > 0 && payable >= shipping.freeThresholdPaise;
-  const shippingPaise = isFreeShipping ? 0 : (hasState ? calculatedShippingPaise : 0);
+  /*
+   * A FREE_SHIPPING promotion WAIVES the charge; it does not compute one.
+   *
+   * The weight, slab and per-kg rate above are untouched and still decide what
+   * shipping costs — this only zeroes the result, exactly as the CMS free-shipping
+   * threshold does. There is deliberately no second free-shipping configuration.
+   */
+  const shippingPaise =
+    isFreeShipping || promotions.freeShipping ? 0 : hasState ? calculatedShippingPaise : 0;
   const totalPaise = payable + shippingPaise;
 
   const deliveryInfo = getDeliveryEstimateForState(input.state);
@@ -359,6 +401,8 @@ export async function priceCart(input: {
     taxPaise: taxSummary.totalTaxPaise,
     totalPaise,
     coupon,
+    coupons: promotions.applied,
+    freeShippingFromCoupon: promotions.freeShipping,
     freeShippingThresholdPaise: shipping.freeThresholdPaise,
     amountToFreeShippingPaise: Math.max(0, shipping.freeThresholdPaise - payable),
     issues,

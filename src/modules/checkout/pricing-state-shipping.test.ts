@@ -17,6 +17,15 @@ vi.mock('@/lib/prisma', () => ({
     productVariant: {
       findMany: vi.fn(),
     },
+    /*
+     * `priceCart` now runs the promotion engine, which sweeps for automatic
+     * promotions on every quote. These suites are about weight, slabs and
+     * thumbnails, so the sweep finds nothing — but the model still has to exist
+     * on the mock for the call to be made at all.
+     */
+    coupon: { findMany: vi.fn().mockResolvedValue([]) },
+    couponRedemption: { findMany: vi.fn().mockResolvedValue([]) },
+    order: { count: vi.fn().mockResolvedValue(0) },
   },
 }));
 

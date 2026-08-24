@@ -12,7 +12,7 @@
 // ============================================================================
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // "native" covers local dev (macOS). The debian target is what Render and
   // most Linux hosts run — without it the deployed client fails at startup
   // with "Query engine binary for current platform could not be found".
@@ -124,12 +124,63 @@ enum ReviewState {
 enum DiscountType {
   FLAT
   PERCENTAGE
+  /// Zeroes the shipping charge. The weight/slab calculation still runs — this
+  /// only waives what it produced, so CMS shipping config stays authoritative.
+  FREE_SHIPPING
+  /// Free or discounted units of a target product. See CouponBxgy.
+  BUY_X_GET_Y
 }
 
 /// Which products a coupon applies to (§10.2 extension).
 enum CouponScope {
   ALL_PRODUCTS
   SPECIFIC_PRODUCTS
+}
+
+/// Whether a coupon may be combined with others.
+///
+/// STACKABLE      combines freely with other STACKABLE promotions.
+/// NON_STACKABLE  applies alone; any other code alongside it is refused.
+/// EXCLUSIVE      applies alone AND outranks everything else when the engine
+///                has to choose between eligible promotions.
+///
+/// NON_STACKABLE is the default because it is what the system did before this
+/// setting existed — one coupon per cart. Stacking is opt-in, per coupon.
+enum CouponStacking {
+  STACKABLE
+  NON_STACKABLE
+  EXCLUSIVE
+}
+
+/// Does the customer type a code, or does the engine apply it on its own?
+enum CouponTrigger {
+  CODE
+  AUTOMATIC
+}
+
+/// Which customers a promotion is for, by order history or by name.
+enum CustomerEligibility {
+  ALL_CUSTOMERS
+  /// No qualifying orders yet.
+  FIRST_ORDER
+  /// Fewer than `firstNOrders` qualifying orders.
+  FIRST_N_ORDERS
+  /// At least one qualifying order.
+  EXISTING_CUSTOMER
+  /// Only the emails listed in CouponCustomer.
+  SPECIFIC_CUSTOMERS
+}
+
+/// What a targeting row means.
+///
+/// The distinction that stops a qualifying product being discounted by accident:
+/// DISCOUNT rows say what the money comes off, QUALIFY rows say what must be in
+/// the cart for the promotion to fire at all, EXCLUDE rows carve exceptions out
+/// of a broader DISCOUNT selection.
+enum CouponTargetRole {
+  DISCOUNT
+  QUALIFY
+  EXCLUDE
 }
 
 enum ContentStatus {
@@ -211,7 +262,7 @@ model ProductFamily {
   /// Many-valued on purpose: one feed suits several species, so this is what
   /// powers a "find feed for my fish" filter. Sourced from the PDP master doc's
   /// "Primary Species" / "Also Suitable For" rows.
-  tags       String[] @default([])
+  tags String[] @default([])
 
   // Feeding guide (§5.2 tab 5)
   feedFreq      String?
@@ -219,7 +270,7 @@ model ProductFamily {
   feedNotesHtml String?
 
   /// { fat, fibre, moisture, ash, astaxanthin } — free-form, varies per product.
-  nutrition Json @default("{}")
+  nutrition    Json @default("{}")
   /// Storefront-only presentation the CMS does not edit yet: gallery, highlights,
   /// feature grid, FAQ, accent colours. Parked here so schema churn isn't a blocker.
   presentation Json @default("{}")
@@ -254,13 +305,13 @@ model ProductFamily {
   representativeVariantId String?
   representativeVariant   ProductVariant? @relation("FamilyRepresentative", fields: [representativeVariantId], references: [id], onDelete: SetNull)
 
-  variants   ProductVariant[]
-  draft      ProductDraft?
-  reviews    Review[]
-  spotlights Spotlight[]
+  variants      ProductVariant[]
+  draft         ProductDraft?
+  reviews       Review[]
+  spotlights    Spotlight[]
   /// Ordered gallery — photos AND video interleaved. See ProductMedia.
-  media      ProductMedia[]
-  coupons    CouponProduct[]
+  media         ProductMedia[]
+  coupons       CouponProduct[]
   /// Upload signatures minted while editing this product. See UploadTicket.
   uploadTickets UploadTicket[]
 
@@ -304,16 +355,17 @@ model ProductVariant {
   /// SetNull rather than Cascade: retiring the base pack must not delete the
   /// multipack. It leaves a dangling inheritance the CMS can surface and the
   /// resolver treats as "no source", which is visible rather than silent.
-  baseVariantId String?
+  baseVariantId  String?
   /// How many base units this pack contains. 2 for "45g x 2". Display only —
   /// the resolver keys on baseVariantId, never on this.
-  packMultiplier Int @default(1)
+  packMultiplier Int     @default(1)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  family     ProductFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  family     ProductFamily   @relation(fields: [familyId], references: [id], onDelete: Cascade)
   orderItems OrderItem[]
+  coupons    CouponVariant[]
   /// Pack-specific photography. Shared assets have variantId = NULL instead.
   media      ProductMedia[]
 
@@ -334,8 +386,8 @@ model ProductVariant {
   representativeFor ProductFamily[] @relation("FamilyRepresentative")
 
   /// Self-relation for multipack inheritance.
-  baseVariant   ProductVariant?  @relation("PackInheritance", fields: [baseVariantId], references: [id], onDelete: SetNull)
-  derivedPacks  ProductVariant[] @relation("PackInheritance")
+  baseVariant  ProductVariant?  @relation("PackInheritance", fields: [baseVariantId], references: [id], onDelete: SetNull)
+  derivedPacks ProductVariant[] @relation("PackInheritance")
 
   @@index([familyId])
   @@index([stock])
@@ -397,10 +449,10 @@ model ProductMedia {
 
   /// Alt text. Required-in-spirit for images (a11y + SEO); videos use it as a
   /// caption/label, so it stays nullable at the DB level.
-  alt      String?
+  alt String?
 
   /// Position in the gallery. Contiguous from 0, rewritten wholesale on save.
-  position Int       @default(0)
+  position Int @default(0)
 
   /// Poster frame for a VIDEO, derived from Cloudinary rather than uploaded
   /// separately. Null for IMAGE rows. Without one, a <video> paints black until
@@ -408,8 +460,8 @@ model ProductMedia {
   posterUrl String?
 
   /// Intrinsic dimensions, used to reserve layout space and avoid CLS.
-  width  Int?
-  height Int?
+  width       Int?
+  height      Int?
   /// VIDEO only — surfaced in the CMS so an accidental 10-minute upload is obvious.
   durationSec Float?
 
@@ -514,7 +566,12 @@ model Order {
   taxPaise      Int @default(0)
   totalPaise    Int
 
-  couponCode String?
+  /// The primary code — first in the applied stack. Kept as a scalar because
+  /// invoices, emails and the order list all read a single code, and every
+  /// order placed before stacking existed has exactly one.
+  couponCode  String?
+  /// Every code applied to this order, in the order the engine accepted them.
+  couponCodes String[] @default([])
 
   /// Snapshot at purchase time: { name, line1, line2, city, state, pincode, phone }.
   shippingAddress Json
@@ -560,6 +617,9 @@ model Order {
   @@index([customerId])
   // Supports the stock-release sweep for abandoned Razorpay orders.
   @@index([status, paymentStatus, placedAt])
+  /// Order-history eligibility: "how many qualifying orders has this email
+  /// placed?" runs on every coupon evaluation, so it gets its own index.
+  @@index([email, status, paymentStatus])
 }
 
 model OrderItem {
@@ -607,10 +667,10 @@ model Refund {
   id      String @id @default(uuid())
   orderId String
 
-  amountPaise     Int
-  reason          String
+  amountPaise      Int
+  reason           String
   razorpayRefundId String?
-  processedById   String?
+  processedById    String?
 
   createdAt DateTime @default(now())
 
@@ -638,8 +698,8 @@ model OrderCounter {
 // ============================================================================
 
 model Customer {
-  id    String @id @default(uuid())
-  email String @unique
+  id    String  @id @default(uuid())
+  email String  @unique
   phone String?
 
   firstName String
@@ -713,13 +773,13 @@ model Address {
   id         String @id @default(uuid())
   customerId String
 
-  name     String
-  phone    String
-  line1    String
-  line2    String?
-  city     String
-  state    String
-  pincode  String
+  name      String
+  phone     String
+  line1     String
+  line2     String?
+  city      String
+  state     String
+  pincode   String
   isDefault Boolean @default(false)
 
   createdAt DateTime @default(now())
@@ -773,38 +833,38 @@ model CmsUser {
   invitation      CmsInvitation?
   invitationsSent CmsInvitation[] @relation("InvitedBy")
 
-  sessions        CmsSession[]
-  backupCodes     BackupCode[]
-  emailOtps       CmsEmailOtp[]
-  auditLogs       AuditLog[]
-  refundsHandled  Refund[]
-  productsUpdated ProductFamily[]
-  productDrafts   ProductDraft[]
-  articles        Article[]
+  sessions         CmsSession[]
+  backupCodes      BackupCode[]
+  emailOtps        CmsEmailOtp[]
+  auditLogs        AuditLog[]
+  refundsHandled   Refund[]
+  productsUpdated  ProductFamily[]
+  productDrafts    ProductDraft[]
+  articles         Article[]
   reviewsModerated Review[]
-
-  @@index([status])
-  @@index([deletedAt])
 
   /// Upload signatures this operator requested. See UploadTicket.
   uploadTickets UploadTicket[]
+
+  @@index([status])
+  @@index([deletedAt])
 }
 
 model CmsInvitation {
-  id          String    @id @default(uuid())
-  userId      String    @unique
-  user        CmsUser   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String  @id @default(uuid())
+  userId String  @unique
+  user   CmsUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  tokenHash   String    @unique
-  expiresAt   DateTime
-  usedAt      DateTime?
-  revokedAt   DateTime?
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  revokedAt DateTime?
 
   invitedById String?
-  invitedBy   CmsUser?  @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
+  invitedBy   CmsUser? @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: SetNull)
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([tokenHash])
   @@index([userId])
@@ -818,10 +878,10 @@ model CmsSession {
   ip               String
   userAgent        String?
 
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime  @default(now())
-  lastSeenAt DateTime @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
 
   user CmsUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -834,9 +894,9 @@ model BackupCode {
   id     String @id @default(uuid())
   userId String
 
-  codeHash String
-  usedAt   DateTime?
-  createdAt DateTime @default(now())
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
 
   user CmsUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -906,7 +966,7 @@ model Coupon {
   /// Uppercase alphanumeric + hyphens only (§10.2).
   code String @unique
 
-  discountType DiscountType
+  discountType  DiscountType
   /// Paise when FLAT, whole percent when PERCENTAGE.
   discountValue Int
 
@@ -927,6 +987,45 @@ model Coupon {
   /// computed on the ELIGIBLE portion of the cart only.
   scope CouponScope @default(ALL_PRODUCTS)
 
+  // ---- Presentation (CMS only; never shown to a customer) ------------------
+  /// Internal name, e.g. "Monsoon 2026 winback". Falls back to the code.
+  name        String?
+  /// What this promotion is for, for whoever inherits it.
+  description String?
+
+  // ---- Discount shaping ----------------------------------------------------
+  /// Ceiling on a percentage discount, in paise. Null means uncapped.
+  /// Ignored for FLAT, which is already an absolute amount.
+  maxDiscountPaise Int?
+
+  // ---- Combination ---------------------------------------------------------
+  /// Enforced server-side in modules/promotions/stacking.ts. The storefront
+  /// never decides this.
+  stackingMode          CouponStacking @default(NON_STACKABLE)
+  /// Tie-break when several promotions are eligible and the customer expressed
+  /// no order. Lower wins; ties fall back to code A→Z so the result is always
+  /// deterministic.
+  priority              Int            @default(0)
+  /// Whether a code the customer typed may sit alongside automatic promotions.
+  combinesWithAutomatic Boolean        @default(true)
+
+  /// CODE means the customer must enter it; AUTOMATIC applies on eligibility.
+  trigger CouponTrigger @default(CODE)
+
+  // ---- Eligibility ---------------------------------------------------------
+  customerEligibility  CustomerEligibility @default(ALL_CUSTOMERS)
+  /// N for FIRST_N_ORDERS. Ignored otherwise.
+  firstNOrders         Int?
+  /// Minimum total units in the cart (or in the qualifying set, when one exists).
+  minQty               Int?
+  /// Upper bound on units, for a promotion meant to stay small.
+  maxQty               Int?
+  /// Delivery states this promotion is offered in. Empty means everywhere.
+  allowedStates        String[]            @default([])
+  /// When qualifying products are listed: must the cart contain ALL of them
+  /// (A + B), or is ANY one enough?
+  requireAllQualifiers Boolean             @default(false)
+
   // ---- Revenue attribution -------------------------------------------------
   // Denormalised running totals, incremented when an order is CONFIRMED (paid,
   // or accepted for COD) — not at checkout. A coupon on an abandoned or
@@ -935,7 +1034,7 @@ model Coupon {
   // Kept as columns rather than computed on read because the coupon list shows
   // them for every row; a per-row aggregate would be N queries.
   /// Cart value of confirmed orders that used this coupon, in paise.
-  revenuePaise  Int @default(0)
+  revenuePaise    Int @default(0)
   /// Discount actually given away on those orders, in paise.
   discountedPaise Int @default(0)
   /// Confirmed orders that used it. May trail `usedCount`, which counts attempts.
@@ -947,8 +1046,15 @@ model Coupon {
 
   redemptions CouponRedemption[]
   products    CouponProduct[]
+  variants    CouponVariant[]
+  categories  CouponCategory[]
+  customers   CouponCustomer[]
+  bxgy        CouponBxgy?
 
   @@index([isActive, startsAt, endsAt])
+  /// The automatic-promotion sweep: every live AUTOMATIC promotion, in the
+  /// order the engine will consider them.
+  @@index([trigger, isActive, priority])
 }
 
 /// Join table for SPECIFIC_PRODUCTS scope. A row means "this coupon applies to
@@ -956,12 +1062,76 @@ model Coupon {
 model CouponProduct {
   couponId String
   familyId String
+  /// DISCOUNT is the default because it is what every pre-existing row meant:
+  /// SPECIFIC_PRODUCTS restricted where the discount landed.
+  role     CouponTargetRole @default(DISCOUNT)
 
   coupon Coupon        @relation(fields: [couponId], references: [id], onDelete: Cascade)
   family ProductFamily @relation(fields: [familyId], references: [id], onDelete: Cascade)
 
-  @@id([couponId, familyId])
+  /// Includes `role`, so one family can both qualify a promotion and receive it.
+  @@id([couponId, familyId, role])
   @@index([familyId])
+}
+
+/// Pack-level targeting — "45g only", not the whole product.
+model CouponVariant {
+  couponId  String
+  variantId String
+  role      CouponTargetRole @default(DISCOUNT)
+
+  coupon  Coupon         @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, variantId, role])
+  @@index([variantId])
+}
+
+/// Category targeting. Category is an enum on ProductFamily, so this stores the
+/// value rather than joining a table.
+model CouponCategory {
+  couponId String
+  category Category
+  role     CouponTargetRole @default(DISCOUNT)
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, category, role])
+}
+
+/// Named customers, for SPECIFIC_CUSTOMERS eligibility.
+///
+/// Keyed on lowercased EMAIL rather than customerId, because that is the
+/// identity checkout actually resolves — a guest has an email before they have
+/// an account, and registration later claims the same row.
+model CouponCustomer {
+  couponId String
+  email    String
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, email])
+  @@index([email])
+}
+
+/// Buy X Get Y configuration. One row per BUY_X_GET_Y coupon.
+///
+/// The X side is the coupon's QUALIFY targeting rows; this describes the Y side:
+/// how many qualifying units are needed, how many reward units that earns, and
+/// how deeply those reward units are discounted.
+model CouponBxgy {
+  couponId String @id
+
+  /// Units of the qualifying set needed to earn one reward batch.
+  buyQty           Int
+  /// Reward units granted per batch.
+  getQty           Int
+  /// 100 means the reward units are free; 50 means half price.
+  rewardPercentOff Int  @default(100)
+  /// How many times the offer may repeat in one cart. Null means unlimited.
+  maxRepeats       Int?
+
+  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
 }
 
 model CouponRedemption {
@@ -980,6 +1150,11 @@ model CouponRedemption {
   /// Set when the order is confirmed (paid, or COD accepted). Null while the
   /// order is still pending — only confirmed rows count toward revenue.
   confirmedAt DateTime?
+
+  /// Set when the order was cancelled or fully refunded and the coupon use was
+  /// handed back. A released row keeps its history but stops counting against
+  /// the customer's per-customer allowance.
+  releasedAt DateTime?
 
   redeemedAt DateTime @default(now())
 
@@ -1002,9 +1177,9 @@ model Article {
   tag         String
   readMinutes Int    @default(5)
 
-  excerpt  String
+  excerpt       String
   /// Sanitised Tiptap HTML.
-  bodyHtml String @default("")
+  bodyHtml      String @default("")
   /// The storefront's structured block array (lead / h2 / p / stat-block /
   /// pullquote). Kept so the existing renderer in Frontend/lib/articles.js works.
   contentBlocks Json?
@@ -1094,7 +1269,7 @@ model Setting {
 model AuditLog {
   id BigInt @id @default(autoincrement())
 
-  actorId String?
+  actorId   String?
   /// Denormalised so entries survive a user delete (§11.3: the name stays
   /// visible in the log against past actions).
   actorName String
@@ -1106,7 +1281,7 @@ model AuditLog {
 
   recordId String?
   /// Before/after, when a diff is meaningful.
-  diff Json?
+  diff     Json?
 
   ip        String
   userAgent String?
@@ -1150,14 +1325,14 @@ model UploadTicket {
 
   /// Set when Cloudinary confirms the bytes landed — either the webhook or the
   /// reconciliation sweep. Until then we do not know the asset exists.
-  uploadedAt DateTime?
+  uploadedAt    DateTime?
   /// Set when a ProductMedia row starts referencing this publicId.
-  attachedAt DateTime?
+  attachedAt    DateTime?
   /// Cloudinary's own message when it rejected the upload.
   failureReason String?
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
   requestedById String?
   requestedBy   CmsUser? @relation(fields: [requestedById], references: [id], onDelete: SetNull)
 

@@ -13,9 +13,9 @@ import { ContentStatus, ContentVersion, ProductStatus, ReviewState } from '@pris
 import { z } from 'zod';
 import { asyncHandler } from '@/middleware/asyncHandler';
 import { validate, emailSchema, slugSchema } from '@/middleware/validate';
-import { couponLimiter, reviewLimiter } from '@/middleware/rateLimit';
+import { cartCouponLimiter, couponLimiter, reviewLimiter } from '@/middleware/rateLimit';
 import { prisma } from '@/lib/prisma';
-import { notFound } from '@/lib/errors';
+import { AppError, ErrorCode, notFound } from '@/lib/errors';
 import { plainText } from '@/lib/sanitize';
 import {
   CATEGORY_LABELS,
@@ -25,7 +25,6 @@ import {
   toRupees,
 } from '@/modules/products/products.serializer';
 import * as settingsService from '@/modules/settings/settings.service';
-import * as couponsService from '@/modules/coupons/coupons.service';
 import * as reviewsService from '@/modules/reviews/reviews.service';
 import { priceCart } from '@/modules/checkout/pricing.service';
 import { enabledPaymentMethods } from '@/integrations/razorpay/payment.service';
@@ -326,7 +325,10 @@ const cartLinesSchema = z.object({
     )
     .min(1, 'Your cart is empty.')
     .max(50),
+  /** Single code — the original contract, still honoured. */
   couponCode: z.string().trim().max(30).optional().nullable(),
+  /** Several codes, oldest first. The backend decides which may combine. */
+  couponCodes: z.array(z.string().trim().max(30)).max(10).optional(),
   email: emailSchema.optional(),
   state: z.string().trim().max(60).optional(),
 });
@@ -339,6 +341,9 @@ const cartLinesSchema = z.object({
  */
 catalogRouter.post(
   '/cart/validate',
+  // Only counts against the budget when a coupon code is attached, so ordinary
+  // re-pricing is unthrottled while code-guessing is not.
+  cartCouponLimiter,
   validate({ body: cartLinesSchema }),
   asyncHandler(async (req, res) => {
     const cart = await priceCart(req.body);
@@ -346,24 +351,81 @@ catalogRouter.post(
   }),
 );
 
-/** §10.2 dependency — the checkout "Have a coupon?" input. */
+/**
+ * §10.2 dependency — the checkout "Have a coupon?" input.
+ *
+ * Takes cart LINES, never a subtotal. It used to accept `subtotalPaise` from the
+ * request body and check the coupon's minimum-order rule against it, so a client
+ * could claim any cart value it liked and be told a coupon was valid for a cart
+ * that never met the minimum. Checkout re-priced from SKUs and refused the
+ * coupon, so no discount was ever wrongly given — but the quote was a lie.
+ *
+ * The subtotal is now derived by `priceCart`, the same function that prices the
+ * cart and the order, so this endpoint cannot disagree with either.
+ */
 catalogRouter.post(
   '/coupons/validate',
   couponLimiter,
   validate({
     body: z.object({
       code: z.string().trim().min(1).max(30),
-      subtotalPaise: z.coerce.number().int().positive(),
+      lines: cartLinesSchema.shape.lines,
+      /** Codes already on the cart, so stacking conflicts are reported here too. */
+      applied: z.array(z.string().trim().max(30)).max(10).optional(),
       email: emailSchema.optional(),
+      state: z.string().trim().max(60).optional(),
     }),
   }),
   asyncHandler(async (req, res) => {
-    const result = await couponsService.validateForCart(
-      req.body.code,
-      req.body.subtotalPaise,
-      req.body.email,
-    );
-    res.json({ data: result });
+    /*
+     * Priced from SKUs, never from a client-supplied total. The endpoint used to
+     * accept `subtotalPaise` and check the minimum-order rule against it, so a
+     * client could claim any cart value and be told a coupon was valid for a cart
+     * that never met the minimum.
+     */
+    const cart = await priceCart({
+      lines: req.body.lines,
+      // Codes already on the cart, plus the one being tried. Passing the whole
+      // set is what lets the engine report a stacking conflict here rather than
+      // letting the customer discover it at checkout.
+      couponCodes: [...(req.body.applied ?? []), req.body.code],
+      email: req.body.email,
+      state: req.body.state,
+    });
+
+    const code = String(req.body.code).toUpperCase().trim();
+    const applied = cart.coupons.find((c) => c.code === code);
+
+    if (!applied) {
+      const issue = cart.issues.find((i) => i.sku === '__coupon__' && i.couponCode === code);
+      throw new AppError(
+        issue?.code === ErrorCode.COUPON_NOT_FOUND ? 404 : 409,
+        (issue?.code ?? ErrorCode.COUPON_NOT_FOUND) as never,
+        issue?.message ?? 'That coupon code is not recognised.',
+      );
+    }
+
+    res.json({
+      data: {
+        code: applied.code,
+        discountPaise: applied.discountPaise,
+        discountLabel: applied.discountLabel,
+        newSubtotalPaise: cart.subtotalPaise - cart.discountPaise,
+        scope: applied.appliedTo.length > 0 ? 'SPECIFIC_PRODUCTS' : 'ALL_PRODUCTS',
+        eligibleSubtotalPaise: cart.subtotalPaise,
+        appliedTo: applied.appliedTo,
+        stackingMode: applied.stackingMode,
+        freeShipping: applied.freeShipping,
+        /** Every promotion now on the cart, so the storefront can render the stack. */
+        stack: cart.coupons.map((c) => ({
+          code: c.code,
+          discountPaise: c.discountPaise,
+          discountLabel: c.discountLabel,
+          automatic: c.automatic,
+        })),
+        totalDiscountPaise: cart.discountPaise,
+      },
+    });
   }),
 );
 

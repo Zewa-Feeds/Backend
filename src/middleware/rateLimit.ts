@@ -152,6 +152,40 @@ export const couponLimiter = base('coupon', {
   message: 'Too many coupon attempts. Please wait a moment.',
 });
 
+/** True when this request is trying a coupon code, rather than just re-pricing. */
+export const carriesCouponCode = (req: { body?: unknown }): boolean => {
+  const body = req.body as { couponCode?: unknown } | undefined;
+  return typeof body?.couponCode === 'string' && body.couponCode.trim().length > 0;
+};
+
+/**
+ * Cart re-pricing that carries a coupon code.
+ *
+ * `POST /cart/validate` accepts a coupon code and reports per-code rejection
+ * reasons, so it answers the same question `couponLimiter` exists to protect —
+ * but it sat behind the 200/min public ceiling, making it a far cheaper way to
+ * discover valid codes than the endpoint that was actually guarded.
+ *
+ * It cannot simply wear the 20/min coupon budget: the storefront re-prices on
+ * every cart mutation, so an honest shopper with a coupon applied would be
+ * throttled mid-checkout. Instead the counter SKIPS requests carrying no coupon
+ * code — quantity edits are never counted — and only code-carrying calls spend
+ * budget.
+ *
+ * 30/min is chosen against the storefront's actual behaviour: re-pricing is
+ * debounced at 300ms and fires roughly one call per cart change, so 30 covers
+ * sustained interactive editing with a coupon applied, while cutting the
+ * enumeration channel to 15% of what the public ceiling allowed. Deliberate
+ * coupon entry stays on the tighter 20/min `couponLimiter`.
+ */
+export const cartCouponLimiter = base('cart-coupon', {
+  windowMs: 60 * 1000,
+  limit: 30,
+  message: 'Too many coupon attempts. Please wait a moment.',
+  // `base` sets skip to env.isTest; overriding it means re-stating that.
+  skip: (req) => env.isTest || !carriesCouponCode(req),
+});
+
 /** Checkout — narrow, because each call touches Razorpay and locks stock rows. */
 export const checkoutLimiter = base('checkout', {
   windowMs: 60 * 1000,

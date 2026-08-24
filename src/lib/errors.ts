@@ -42,6 +42,19 @@ export const ErrorCode = {
   COUPON_MIN_ORDER: 'COUPON_MIN_ORDER',
   COUPON_LIMIT_REACHED: 'COUPON_LIMIT_REACHED',
   COUPON_ALREADY_USED: 'COUPON_ALREADY_USED',
+  /* Promotion engine. Distinct codes so the storefront can say WHY a coupon was
+     refused — "exclusive offer", "cannot be combined" and "not for your account"
+     read very differently to a customer, and the frontend must never have to
+     infer any of them. */
+  COUPON_NOT_STACKABLE: 'COUPON_NOT_STACKABLE',
+  COUPON_EXCLUSIVE: 'COUPON_EXCLUSIVE',
+  COUPON_STACK_LIMIT: 'COUPON_STACK_LIMIT',
+  COUPON_DUPLICATE: 'COUPON_DUPLICATE',
+  COUPON_NOT_ELIGIBLE: 'COUPON_NOT_ELIGIBLE',
+  COUPON_MIN_QTY: 'COUPON_MIN_QTY',
+  COUPON_MAX_QTY: 'COUPON_MAX_QTY',
+  COUPON_PRODUCT_REQUIRED: 'COUPON_PRODUCT_REQUIRED',
+  COUPON_STATE_RESTRICTED: 'COUPON_STATE_RESTRICTED',
 
   // Orders
   INVALID_TRANSITION: 'INVALID_TRANSITION',
