@@ -121,6 +121,20 @@ function wrapAddress(address: string, maxChars = 60): string[] {
   return lines;
 }
 
+/**
+ * Sanitize and format invoice download filename as:
+ * {invoiceNumber}-{customerName}.pdf
+ * e.g. 27ZFI003-Nikhildev M.pdf
+ */
+export function formatInvoiceFilename(
+  invoiceNumber: string | null | undefined,
+  customerName?: string | null | undefined,
+): string {
+  const cleanInv = (invoiceNumber || 'invoice').trim().replace(/[/\\?%*:|"<>]/g, '-');
+  const cleanName = (customerName || '').trim().replace(/[/\\?%*:|"<>]/g, '');
+  return cleanName ? `${cleanInv}-${cleanName}.pdf` : `${cleanInv}.pdf`;
+}
+
 export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConfig): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   doc.setTitle(`Invoice ${order.invoiceNumber ?? order.orderNo}`);
@@ -193,9 +207,8 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
   if (logo) {
     try {
       const img = await doc.embedPng(logo);
-      // 26pt read as an afterthought beside an 18pt title; 44 gives the mark
-      // presence without competing with "TAX INVOICE".
-      const LOGO_H = 44;
+      // 54pt gives the mark a prominent, clear brand presentation.
+      const LOGO_H = 54;
       const scaled = img.scale(LOGO_H / img.height);
       y -= LOGO_H;
       page.drawImage(img, { x: MARGIN, y, width: scaled.width, height: scaled.height });
@@ -379,7 +392,7 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
     { size: 7.5, color: MUTED },
   );
   text('This is a computer-generated invoice.', MARGIN, footerY - 5, { size: 7.5, color: MUTED });
-  textRight(`${env.COMPANY_NAME} · ${env.COMPANY_GSTIN}`, PAGE_WIDTH - MARGIN, footerY - 5, {
+  textRight(env.COMPANY_NAME, PAGE_WIDTH - MARGIN, footerY - 5, {
     size: 7.5,
     color: MUTED,
   });

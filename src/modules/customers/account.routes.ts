@@ -36,7 +36,7 @@ import {
   customerCancelBlockedReason,
   isCustomerCancellable,
 } from '@/modules/orders/lifecycle';
-import { generateInvoicePdf } from '@/integrations/pdf/invoice';
+import { formatInvoiceFilename, generateInvoicePdf } from '@/integrations/pdf/invoice';
 import { getTaxConfig } from '@/modules/settings/settings.service';
 import type { RequestHandler } from 'express';
 
@@ -845,11 +845,13 @@ accountRouter.get(
 
     const pdf = await generateInvoicePdf(order, await getTaxConfig());
 
+    const customerName =
+      (order.shippingAddress as any)?.name ||
+      (req.customer ? `${req.customer.firstName} ${req.customer.lastName}`.trim() : '');
+    const filename = formatInvoiceFilename(order.invoiceNumber, customerName);
+
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="invoice-${order.invoiceNumber.replace(/[^\w.-]/g, '-')}.pdf"`,
-    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(Buffer.from(pdf));
   }),
 );

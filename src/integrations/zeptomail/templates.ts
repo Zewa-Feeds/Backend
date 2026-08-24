@@ -23,19 +23,24 @@ function esc(value: unknown): string {
 }
 
 /*
- * Email palette.
+ * Email palette & typography matching the Frontend website theme (§6.3, §15).
  *
- * The storefront's mint (#44E5C2) is a dark-ground accent — on the white card an
- * email needs, it fails contrast badly. BRAND is that hue taken down to a weight
- * that reads as the same brand while staying legible on white, which is the
- * trade every email version of a dark UI has to make.
+ * Primary CTA Button: Frontend Mint (#44E5C2) with dark forest green text (#00382D)
+ * Brand Accent: High-contrast emerald teal (#00755F) for links and totals
+ * Surface: Clean white card (#FFFFFF) on subtle off-white canvas (#F2F5F8)
+ * Typography: Playfair Display for headings & wordmark, Montserrat for body/buttons
  */
-const BRAND = '#0E8C77';
-const BRAND_SOFT = '#E7F5F1';
-const INK = '#0B1620';
-const MUTED = '#64748B';
-const HAIRLINE = '#E6EBF0';
-const CANVAS = '#F4F6F8';
+const BRAND_PRIMARY = '#44E5C2';
+const BRAND_BUTTON_TEXT = '#00382D';
+const BRAND = '#00755F';
+const BRAND_SOFT = '#EBFBF8';
+const BRAND_BORDER = '#C7F2E9';
+const INK = '#080E1C';
+const MUTED = '#5A6B82';
+const HAIRLINE = '#E2E8F0';
+const CANVAS = '#F2F5F8';
+const FONT_HEADING = "'Playfair Display', Georgia, 'Times New Roman', serif";
+const FONT_BODY = "'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
 export interface OrderEmailContext {
   orderNo: string;
@@ -116,7 +121,7 @@ function shell(heading: string, intro: string, body: string, preheader?: string)
     <tr>
       <td align="center" style="padding:32px 16px;">
 
-        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:#ffffff;border:1px solid ${HAIRLINE};border-radius:14px;overflow:hidden;">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:#ffffff;border:1px solid ${HAIRLINE};border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(8,14,28,0.06);">
 
           <!-- Wordmark -->
           <tr>
@@ -124,26 +129,26 @@ function shell(heading: string, intro: string, body: string, preheader?: string)
               <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                   <td style="padding-bottom:8px;">
-                    <span style="font-family:Georgia,'Times New Roman',serif;font-size:19px;font-weight:700;color:${INK};letter-spacing:-0.2px;">Zewa&nbsp;Feeds</span>
+                    <span style="font-family:${FONT_HEADING};font-size:21px;font-weight:700;color:${INK};letter-spacing:-0.2px;">Zewa&nbsp;Feeds</span>
                   </td>
                 </tr>
-                <tr><td style="height:2px;background:${BRAND};font-size:0;line-height:0;">&nbsp;</td></tr>
+                <tr><td style="height:2.5px;background:${BRAND_PRIMARY};font-size:0;line-height:0;border-radius:2px;">&nbsp;</td></tr>
               </table>
             </td>
           </tr>
 
           <!-- Body -->
           <tr>
-            <td style="padding:28px 32px 32px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-              <h1 style="margin:0 0 12px;font-size:23px;line-height:1.28;font-weight:700;color:${INK};letter-spacing:-0.35px;">${heading}</h1>
-              <p style="margin:0 0 24px;font-size:15px;line-height:1.65;color:${MUTED};">${intro}</p>
+            <td style="padding:28px 32px 32px;font-family:${FONT_BODY};">
+              <h1 style="margin:0 0 12px;font-family:${FONT_HEADING};font-size:24px;line-height:1.28;font-weight:700;color:${INK};letter-spacing:-0.35px;">${heading}</h1>
+              <p style="margin:0 0 24px;font-size:14.5px;line-height:1.65;color:${MUTED};">${intro}</p>
               ${body}
             </td>
           </tr>
 
           <!-- Footer -->
           <tr>
-            <td style="padding:20px 32px 24px;background:#FBFCFD;border-top:1px solid ${HAIRLINE};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+            <td style="padding:20px 32px 24px;background:#F8FAFC;border-top:1px solid ${HAIRLINE};font-family:${FONT_BODY};">
               <p style="margin:0 0 8px;font-size:12.5px;line-height:1.6;color:${MUTED};">
                 Need a hand? Just reply to this email — it reaches a person.
               </p>
@@ -181,14 +186,14 @@ function factsBlock(pairs: [string, string][]): string {
     .map(
       ([k, v]) => `
         <td style="padding:14px 16px;vertical-align:top;">
-          <div style="font-size:10.5px;letter-spacing:0.09em;text-transform:uppercase;color:${MUTED};margin-bottom:4px;">${esc(k)}</div>
-          <div style="font-size:14px;font-weight:600;color:${INK};">${esc(v)}</div>
+          <div style="font-size:10.5px;letter-spacing:0.1em;text-transform:uppercase;color:${BRAND};margin-bottom:4px;font-weight:600;">${esc(k)}</div>
+          <div style="font-size:14px;font-weight:700;color:${INK};">${esc(v)}</div>
         </td>`,
     )
     .join('');
 
   return `
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${BRAND_SOFT};border-radius:10px;margin:0 0 24px;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:${BRAND_SOFT};border:1px solid ${BRAND_BORDER};border-radius:12px;margin:0 0 24px;">
     <tr>${cells}</tr>
   </table>`;
 }
@@ -393,21 +398,27 @@ function staffOrderBlock(ctx: OrderEmailContext): string {
 /**
  * Call to action.
  *
- * A padded table cell rather than a styled <a>: Outlook ignores padding on
- * inline elements, which collapses a CSS button into bare underlined text.
+ * Styled to match the Frontend website primary button:
+ * mint (#44E5C2) background, bold dark forest-green (#00382D) text, Montserrat uppercase.
+ * Outlook ignores padding on inline elements, so we use a padded table cell.
  */
 const button = (label: string, url: string) => `
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:26px 0 0;">
     <tr>
-      <td style="background:${BRAND};border-radius:8px;">
-        <a href="${esc(url)}" style="display:inline-block;padding:13px 26px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#ffffff;text-decoration:none;letter-spacing:0.2px;">${esc(label)}</a>
+      <td style="background:${BRAND_PRIMARY};border-radius:10px;box-shadow:0 2px 10px rgba(68,229,194,0.35);">
+        <a href="${esc(url)}" style="display:inline-block;padding:13px 26px;font-family:${FONT_BODY};font-size:12.5px;font-weight:700;color:${BRAND_BUTTON_TEXT};text-decoration:none;letter-spacing:0.12em;text-transform:uppercase;">${esc(label)}</a>
       </td>
     </tr>
   </table>`;
 
 /** Muted note under a CTA — tracking numbers, expiry, fallback links. */
 const note = (html: string) => `
-  <p style="margin:20px 0 0;font-size:12.5px;line-height:1.65;color:${MUTED};">${html}</p>`;
+  <p style="margin:20px 0 0;font-size:12.5px;line-height:1.65;color:${MUTED};font-family:${FONT_BODY};">${html}</p>`;
+
+const orderSustainabilityNote = () =>
+  note(
+    `Thank you for your order. Every pack replaces extractive protein with insect protein — a small shift toward feed that's functional, proven and sustainable.`,
+  );
 
 const trackUrl = (orderNo: string, email: string) =>
   `${env.STOREFRONT_ORIGIN}/orders/track?orderNo=${encodeURIComponent(orderNo)}&email=${encodeURIComponent(email)}`;
@@ -430,7 +441,8 @@ export const templates = {
         ['Payment', ctx.paymentMethod === 'COD' ? 'On delivery' : 'Paid online'],
       ]) +
         itemsBlock(ctx) +
-        button('Track your order', trackUrl(ctx.orderNo, email)),
+        button('Track your order', trackUrl(ctx.orderNo, email)) +
+        orderSustainabilityNote(),
       `Order ${ctx.orderNo} · ${formatInr(ctx.totalPaise)} · we'll email again when it ships`,
     ),
   }),
@@ -449,7 +461,8 @@ export const templates = {
         ['Total', formatInr(ctx.totalPaise)],
       ]) +
         itemsBlock(ctx) +
-        button('Track your order', trackUrl(ctx.orderNo, email)),
+        button('Track your order', trackUrl(ctx.orderNo, email)) +
+        orderSustainabilityNote(),
       `${ctx.orderNo} accepted and being packed`,
     ),
   }),

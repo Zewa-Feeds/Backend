@@ -16,7 +16,7 @@ import { currentUser, requirePermission } from '@/middleware/auth';
 import { enumFilter, paginationSchema, validate } from '@/middleware/validate';
 import { plainText } from '@/lib/sanitize';
 import { auditContext } from '@/modules/audit/audit.service';
-import { generateInvoicePdf } from '@/integrations/pdf/invoice';
+import { formatInvoiceFilename, generateInvoicePdf } from '@/integrations/pdf/invoice';
 import * as settingsService from '@/modules/settings/settings.service';
 import * as ordersService from './orders.service';
 
@@ -135,11 +135,13 @@ ordersRouter.get(
     const taxConfig = await settingsService.getTaxConfig();
     const pdf = await generateInvoicePdf(order, taxConfig);
 
+    const customerName =
+      (order.shippingAddress as any)?.name ||
+      (order.customer ? `${order.customer.firstName} ${order.customer.lastName}`.trim() : '');
+    const filename = formatInvoiceFilename(order.invoiceNumber, customerName);
+
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename="invoice-${order.invoiceNumber.replace(/[^\w.-]/g, '-')}.pdf"`,
-    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(Buffer.from(pdf));
   }),
 );

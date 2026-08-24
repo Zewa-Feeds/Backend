@@ -101,6 +101,21 @@ describe('Customer "Order Placed" Email Template', () => {
     expect(rendered.html).toContain('pay on delivery');
     expect(rendered.html).toContain('in cash when it arrives');
   });
+
+  it('renders the sustainability footer note below the track your order button', () => {
+    const rendered = templates['order-placed'](mockContext, mockContext.customerEmail!);
+
+    expect(rendered.html).toContain(
+      "Thank you for your order. Every pack replaces extractive protein with insect protein — a small shift toward feed that's functional, proven and sustainable.",
+    );
+  });
+
+  it('styles CTA buttons with Frontend theme colors (#44E5C2 background and #00382D text)', () => {
+    const rendered = templates['order-placed'](mockContext, mockContext.customerEmail!);
+
+    expect(rendered.html).toContain('#44E5C2');
+    expect(rendered.html).toContain('#00382D');
+  });
 });
 
 describe('Internal "New Order Placed" Email Template (info@zewafeeds.com)', () => {

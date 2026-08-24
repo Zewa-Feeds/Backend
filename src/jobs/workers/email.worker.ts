@@ -15,7 +15,7 @@ import { prisma } from '@/lib/prisma';
 import { logger } from '@/lib/logger';
 import { sendEmail } from '@/integrations/zeptomail/zeptomail.client';
 import { accountTemplates, staffTemplates, templates, type OrderEmailContext } from '@/integrations/zeptomail/templates';
-import { generateInvoicePdf } from '@/integrations/pdf/invoice';
+import { formatInvoiceFilename, generateInvoicePdf } from '@/integrations/pdf/invoice';
 import * as settingsService from '@/modules/settings/settings.service';
 import { formatAddress } from '@/modules/orders/orders.serializer';
 import { QUEUE_NAMES, type EmailJob } from '@/jobs/queues';
@@ -136,8 +136,9 @@ async function handleCustomerEmail(job: Job<EmailJob>): Promise<void> {
       },
     });
     const pdf = await generateInvoicePdf(order, await settingsService.getTaxConfig());
+    const customerName = ctx.customerName || (order.shippingAddress as any)?.name;
     attachments.push({
-      name: `invoice-${ctx.invoiceNumber.replace(/[^\w.-]/g, '-')}.pdf`,
+      name: formatInvoiceFilename(ctx.invoiceNumber, customerName),
       content: Buffer.from(pdf).toString('base64'),
       mimeType: 'application/pdf',
     });
