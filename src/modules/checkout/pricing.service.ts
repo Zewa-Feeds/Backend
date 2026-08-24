@@ -56,6 +56,80 @@ export interface PricedCart {
   /** Populated when a line cannot be fulfilled at the requested quantity. */
   issues: { sku: string; code: string; message: string; availableStock: number }[];
   deliveryText: string;
+  deliveryNote?: string;
+  deliveryDays?: number;
+  billableWeightGrams?: number;
+  chargeableWeightKg?: number;
+  isKerala?: boolean;
+}
+
+/** Helper to extract net weight in grams from variant or pack string. */
+export function getVariantNetWeightGrams(variant: {
+  weightGrams?: number | null;
+  pack?: string | null;
+  packMultiplier?: number | null;
+}): number {
+  if (typeof variant.weightGrams === 'number' && variant.weightGrams > 0) {
+    return variant.weightGrams;
+  }
+  const packStr = (variant.pack || '').toLowerCase();
+  const kgMatch = packStr.match(/(\d+(?:\.\d+)?)\s*kg/);
+  if (kgMatch && kgMatch[1]) {
+    return Math.round(parseFloat(kgMatch[1]) * 1000);
+  }
+  const gMatch = packStr.match(/(\d+(?:\.\d+)?)\s*g/);
+  if (gMatch && gMatch[1]) {
+    let grams = parseFloat(gMatch[1]);
+    const multMatch = packStr.match(/x\s*(\d+)/i) || packStr.match(/(\d+)\s*pack/i);
+    if (multMatch && multMatch[1]) {
+      grams *= parseInt(multMatch[1], 10);
+    } else if (variant.packMultiplier && variant.packMultiplier > 1) {
+      grams *= variant.packMultiplier;
+    }
+    return Math.round(grams);
+  }
+  return 50;
+}
+
+/**
+ * State-based delivery day estimation:
+ * Kerala: 2 days
+ * Karnataka, Tamil Nadu: 3 days
+ * Telangana, Andhra Pradesh, Maharashtra: 4 days
+ * Rest of India: 5 days
+ * Rural note: *Rural areas may take 1 additional day.
+ */
+export function getDeliveryEstimateForState(state?: string | null): {
+  days: number;
+  deliveryText: string;
+  ruralNote: string;
+} {
+  if (!state || !state.trim()) {
+    return {
+      days: 5,
+      deliveryText: 'Enter your state to calculate shipping',
+      ruralNote: '*Rural areas may take 1 additional day.',
+    };
+  }
+
+  const s = state.trim().toLowerCase().replace(/\band\b/g, '&').replace(/[^a-z&]/g, '');
+
+  let days = 5;
+  if (s === 'kerala') {
+    days = 2;
+  } else if (s === 'karnataka' || s === 'tamilnadu') {
+    days = 3;
+  } else if (s === 'telangana' || s === 'andhrapradesh' || s === 'maharashtra') {
+    days = 4;
+  } else {
+    days = 5;
+  }
+
+  return {
+    days,
+    deliveryText: `Estimated delivery: ${days} days*`,
+    ruralNote: '*Rural areas may take 1 additional day.',
+  };
 }
 
 /**
@@ -93,6 +167,8 @@ export async function priceCart(input: {
       mrpPaise: true,
       stock: true,
       hsn: true,
+      weightGrams: true,
+      packMultiplier: true,
       /* Inheritance and the chosen main image, so the thumbnail is resolved for
          THIS pack rather than for the product as a whole. */
       baseVariantId: true,
@@ -104,21 +180,7 @@ export async function priceCart(input: {
           slug: true,
           status: true,
           deletedAt: true,
-          /*
-           * The whole live gallery, resolved per pack below.
-           *
-           * This used to take the family's first IMAGE by position — the same
-           * picture for every pack of a product. Someone adding Cichlid C4's
-           * 45g bottle to their basket saw a 1kg pouch in the cart, at
-           * checkout, and in the confirmation, after a listing and a product
-           * page that both correctly showed the 45g.
-           *
-           * ARCHIVED is excluded: an asset an operator removed must not
-           * reappear as a cart thumbnail.
-           */
           media: {
-            /* READY only: a PENDING video has no playable derivative and a
-               FAILED asset's URL 404s. Same rule the storefront applies. */
             where: { status: MediaStatus.READY },
             select: {
               id: true,
@@ -184,6 +246,10 @@ export async function priceCart(input: {
       // than silently dropping it from the cart.
     }
 
+    const unitPricePaise = variant.pricePaise;
+    const lineTotalPaise = unitPricePaise * qty;
+    const taxRatePct = (taxSettings.gstRatePct ?? 0);
+
     lines.push({
       variantId: variant.id,
       familyId: variant.family.id,
@@ -192,11 +258,11 @@ export async function priceCart(input: {
       productSlug: variant.family.slug,
       pack: variant.pack,
       qty,
-      unitPricePaise: variant.pricePaise,
+      unitPricePaise,
       mrpPaise: variant.mrpPaise,
-      lineTotalPaise: variant.pricePaise * qty,
+      lineTotalPaise,
       hsn: variant.hsn,
-      taxRatePct: taxSettings.gstRatePct,
+      taxRatePct,
       availableStock: variant.stock,
       imageUrl: packThumbnail(variant),
     });
@@ -206,8 +272,8 @@ export async function priceCart(input: {
 
   // Coupon failures do not fail the whole quote — the cart is still valid without
   // it, and the storefront needs the reason to explain itself.
-  let discountPaise = 0;
   let coupon: PricedCart['coupon'] = null;
+  let discountPaise = 0;
   if (input.couponCode) {
     try {
       const result = await couponsService.validateForCart(
@@ -243,13 +309,36 @@ export async function priceCart(input: {
     }
   }
 
-  // Shipping is assessed on the post-discount value, so a coupon can drop an
-  // order below the free-shipping threshold. That is the intended reading of
-  // "free shipping on orders over ₹X".
-  const payable = subtotalPaise - discountPaise;
-  const shippingPaise = payable >= shipping.freeThresholdPaise ? 0 : shipping.standardRatePaise;
+  // ---- Authoritative Weight & Shipping Calculation ----
+  let totalProductWeightGrams = 0;
+  for (const line of lines) {
+    const variant = bySku.get(line.sku);
+    if (variant) {
+      const unitWeight = getVariantNetWeightGrams(variant);
+      totalProductWeightGrams += unitWeight * line.qty;
+    }
+  }
 
+  const packagingWeightGrams = shipping.packagingWeightGrams ?? 100;
+  const totalShipmentWeightGrams = totalProductWeightGrams + packagingWeightGrams;
+  const slabGrams = shipping.slabWeightGrams && shipping.slabWeightGrams > 0 ? shipping.slabWeightGrams : 500;
+  const chargeableWeightGrams = Math.max(slabGrams, Math.ceil(totalShipmentWeightGrams / slabGrams) * slabGrams);
+  const chargeableWeightKg = chargeableWeightGrams / 1000;
+
+  const hasState = Boolean(input.state && input.state.trim());
+  const isKerala = hasState && input.state!.trim().toLowerCase() === 'kerala';
+  const ratePerKgPaise = isKerala
+    ? (shipping.keralaRatePerKgPaise ?? 4500)
+    : (shipping.outsideKeralaRatePerKgPaise ?? 7000);
+
+  const calculatedShippingPaise = Math.round(chargeableWeightKg * ratePerKgPaise);
+
+  const payable = subtotalPaise - discountPaise;
+  const isFreeShipping = shipping.freeThresholdPaise > 0 && payable >= shipping.freeThresholdPaise;
+  const shippingPaise = isFreeShipping ? 0 : (hasState ? calculatedShippingPaise : 0);
   const totalPaise = payable + shippingPaise;
+
+  const deliveryInfo = getDeliveryEstimateForState(input.state);
 
   // GST is informational at cart stage; the invoice recomputes it from snapshots.
   const taxSummary = computeInvoiceTax(
@@ -273,7 +362,12 @@ export async function priceCart(input: {
     freeShippingThresholdPaise: shipping.freeThresholdPaise,
     amountToFreeShippingPaise: Math.max(0, shipping.freeThresholdPaise - payable),
     issues,
-    deliveryText: shipping.deliveryText,
+    deliveryText: deliveryInfo.deliveryText,
+    deliveryNote: deliveryInfo.ruralNote,
+    deliveryDays: deliveryInfo.days,
+    billableWeightGrams: totalShipmentWeightGrams,
+    chargeableWeightKg,
+    isKerala,
   };
 }
 

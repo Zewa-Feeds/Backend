@@ -30,7 +30,13 @@ import {
   TRANSITIONS,
   validateTransitionFields,
 } from './lifecycle';
-import { ORDER_SELECT, ORDER_STATUS_LABELS, serializeListRow, serializeOrder } from './orders.serializer';
+import {
+  ORDER_LIST_SELECT,
+  ORDER_SELECT,
+  ORDER_STATUS_LABELS,
+  serializeListRow,
+  serializeOrder,
+} from './orders.serializer';
 import { logger } from '@/lib/logger';
 import { emailQueue } from '@/jobs/queues';
 import type { CustomerTemplateName } from '@/integrations/zeptomail/templates';
@@ -81,7 +87,7 @@ export async function list(params: ListParams) {
   const [rows, total] = await Promise.all([
     prisma.order.findMany({
       where,
-      select: ORDER_SELECT,
+      select: ORDER_LIST_SELECT,
       orderBy: { placedAt: 'desc' },
       ...toSkipTake(params),
     }),

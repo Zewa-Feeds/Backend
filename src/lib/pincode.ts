@@ -54,7 +54,7 @@ const PREFIX_STATES: Record<string, string[]> = {
   36: ['Gujarat'],
   37: ['Gujarat'],
   38: ['Gujarat'],
-  39: ['Gujarat'],
+  39: ['Gujarat', 'Dadra & Nagar Haveli and Daman & Diu'],
   40: ['Maharashtra', 'Goa'],
   41: ['Maharashtra'],
   42: ['Maharashtra'],
@@ -81,13 +81,13 @@ const PREFIX_STATES: Record<string, string[]> = {
   65: ['Tamil Nadu'],
   66: ['Tamil Nadu'],
   67: ['Kerala'],
-  68: ['Kerala'],
+  68: ['Kerala', 'Lakshadweep'],
   69: ['Kerala', 'Puducherry'],
   70: ['West Bengal'],
   71: ['West Bengal'],
   72: ['West Bengal'],
   73: ['West Bengal', 'Sikkim'],
-  74: ['West Bengal', 'Odisha'],
+  74: ['West Bengal', 'Odisha', 'Andaman & Nicobar Islands'],
   75: ['Odisha'],
   76: ['Odisha'],
   77: ['Odisha'],
@@ -130,3 +130,16 @@ export function pincodeMatchesState(pincode: string, state: string): boolean {
 export function likelyStateForPincode(pincode: string): string | null {
   return statesForPincode(pincode)[0] ?? null;
 }
+
+/**
+ * States and union territories offered across the store and CMS.
+ */
+export const INDIAN_STATES = [
+  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh',
+  'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka',
+  'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram',
+  'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu',
+  'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal',
+  'Andaman & Nicobar Islands', 'Chandigarh', 'Dadra & Nagar Haveli and Daman & Diu',
+  'Delhi', 'Jammu & Kashmir', 'Ladakh', 'Lakshadweep', 'Puducherry',
+] as const;

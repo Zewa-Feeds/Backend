@@ -80,6 +80,30 @@ export const ORDER_SELECT = {
   customer: { select: { id: true, firstName: true, lastName: true } },
 } satisfies Prisma.OrderSelect;
 
+export const ORDER_LIST_SELECT = {
+  orderNo: true,
+  placedAt: true,
+  customerId: true,
+  email: true,
+  phone: true,
+  status: true,
+  paymentStatus: true,
+  paymentMethod: true,
+  razorpayPaymentId: true,
+  totalPaise: true,
+  invoiceNumber: true,
+  shippingAddress: true,
+  customer: { select: { firstName: true, lastName: true } },
+  items: {
+    select: {
+      productName: true,
+      sku: true,
+      qty: true,
+    },
+  },
+} satisfies Prisma.OrderSelect;
+
+export type OrderListRow = Prisma.OrderGetPayload<{ select: typeof ORDER_LIST_SELECT }>;
 type OrderRow = Prisma.OrderGetPayload<{ select: typeof ORDER_SELECT }>;
 
 interface ShippingAddress {
@@ -99,7 +123,7 @@ export function formatAddress(addr: unknown): string {
 }
 
 /** Compact row for the §6.1 list. */
-export function serializeListRow(order: OrderRow) {
+export function serializeListRow(order: OrderListRow | OrderRow) {
   return {
     orderNo: order.orderNo,
     placedAt: order.placedAt,

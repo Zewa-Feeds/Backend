@@ -26,7 +26,17 @@ const CACHE_TTL_SECONDS = 60;
 // ---- Schemas (also the source of defaults) ---------------------------------
 
 export const shippingSchema = z.object({
+  /** ₹/kg in paise for deliveries within Kerala (default 4500 = ₹45/kg). */
+  keralaRatePerKgPaise: z.number().int().nonnegative().default(4500),
+  /** ₹/kg in paise for deliveries outside Kerala (default 7000 = ₹70/kg). */
+  outsideKeralaRatePerKgPaise: z.number().int().nonnegative().default(7000),
+  /** Packaging weight overhead in grams added to net product weight (default 100g). */
+  packagingWeightGrams: z.number().int().nonnegative().default(100),
+  /** Weight slab granularity in grams (default 500g = 0.5kg). */
+  slabWeightGrams: z.number().int().positive().default(500),
+  /** Free shipping threshold in paise (0 = disabled, default 99900 = ₹999). */
   freeThresholdPaise: z.number().int().nonnegative().default(99900),
+  /** Fallback flat rate in paise if weight cannot be determined. */
   standardRatePaise: z.number().int().nonnegative().default(6000),
   deliveryText: z.string().max(200).transform(plainText).default('3–5 business days across India'),
   /** PIN codes we do not deliver to (§13). */
@@ -137,6 +147,10 @@ export async function getPublic() {
   const { shipping, announcement, maintenance, tax } = await getAll();
   return {
     shipping: {
+      keralaRatePerKgPaise: shipping.keralaRatePerKgPaise,
+      outsideKeralaRatePerKgPaise: shipping.outsideKeralaRatePerKgPaise,
+      packagingWeightGrams: shipping.packagingWeightGrams,
+      slabWeightGrams: shipping.slabWeightGrams,
       freeThresholdPaise: shipping.freeThresholdPaise,
       standardRatePaise: shipping.standardRatePaise,
       deliveryText: shipping.deliveryText,
