@@ -561,6 +561,40 @@ export type CustomerTemplateName = keyof typeof templates;
 
 export const accountTemplates = {
   /**
+   * CMS login verification OTP.
+   */
+  'cms-login-otp': (ctx: {
+    recipientName: string;
+    otpCode: string;
+    expiresInMinutes: number;
+    requestedAt?: Date | string | null;
+  }) => ({
+    subject: `Your Zewa Feeds CMS verification code is ${ctx.otpCode}`,
+    html: shell(
+      'CMS Sign-In Verification Code',
+      `Hi ${esc(ctx.recipientName)}, use the 6-digit verification code below to complete your sign-in to Zewa Feeds Content Management System.`,
+      `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 24px;">
+         <tr>
+           <td align="center" style="padding:24px;background:${BRAND_SOFT};border:1px solid ${HAIRLINE};border-radius:12px;">
+             <div style="font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:${BRAND};margin-bottom:8px;">Verification Code</div>
+             <div style="font-family:'Courier New',Courier,monospace;font-size:36px;font-weight:700;letter-spacing:0.3em;color:${INK};line-height:1;padding-left:0.3em;">${esc(ctx.otpCode)}</div>
+             <div style="font-size:12px;color:${MUTED};margin-top:10px;">Expires in ${esc(ctx.expiresInMinutes)} minutes · Single-use only</div>
+           </td>
+         </tr>
+       </table>` +
+        factsBlock([
+          ['Time of Request', formatDate(ctx.requestedAt || new Date())],
+          ['Validity', `${ctx.expiresInMinutes} minutes`],
+          ['Protection', 'Single-use / 2FA'],
+        ]) +
+        note(
+          `<strong style="color:${INK};">Security notice:</strong> If you did not attempt to sign in to the Zewa Feeds CMS, please contact an administrator immediately. Do not share this verification code with anyone.`,
+        ),
+      `Your verification code is ${esc(ctx.otpCode)} (valid for ${ctx.expiresInMinutes} mins)`,
+    ),
+  }),
+
+  /**
    * CMS staff invitation link.
    */
   'cms-user-invitation': (ctx: {

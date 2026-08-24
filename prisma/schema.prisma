@@ -112,6 +112,7 @@ enum CmsUserStatus {
 enum TwofaMethod {
   TOTP
   SMS_OTP
+  EMAIL_OTP
 }
 
 enum ReviewState {
@@ -774,6 +775,7 @@ model CmsUser {
 
   sessions        CmsSession[]
   backupCodes     BackupCode[]
+  emailOtps       CmsEmailOtp[]
   auditLogs       AuditLog[]
   refundsHandled  Refund[]
   productsUpdated ProductFamily[]
@@ -839,6 +841,27 @@ model BackupCode {
   user CmsUser @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+/// Email OTP verification codes for CMS users (§14).
+///
+/// Plaintext 6-digit code is emailed; only the sha256 hash is stored in the database.
+/// Rows are single-use (`usedAt`), short-lived (`expiresAt`), limited by attempts (`maxAttempts`),
+/// and cascade-deleted if the user is deleted.
+model CmsEmailOtp {
+  id          String    @id @default(uuid())
+  userId      String
+  otpHash     String
+  expiresAt   DateTime
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  user CmsUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
 }
 
 // ============================================================================

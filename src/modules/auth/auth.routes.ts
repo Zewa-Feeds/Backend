@@ -125,6 +125,17 @@ authRouter.post(
   }),
 );
 
+/** Resend Email OTP verification code. Rate-limited with 60s cooldown. */
+authRouter.post(
+  '/otp/resend',
+  twofaLimiter,
+  validate({ body: z.object({ challengeToken: z.string().min(10) }) }),
+  asyncHandler(async (req, res) => {
+    const result = await authService.resendEmailOtp(req.body.challengeToken, auditContext(req));
+    res.json({ data: result });
+  }),
+);
+
 /** Step 2 — 2FA code. Returns the session. */
 authRouter.post(
   '/2fa/verify',
@@ -243,6 +254,31 @@ authRouter.post(
     res.cookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOptions(rememberCookieMaxAge()));
     const { refreshToken: _omit, ...body } = session;
     res.json({ data: body });
+  }),
+);
+
+/** Begin in-profile Authenticator (TOTP) setup. */
+authRouter.post(
+  '/totp/setup',
+  requireAuth,
+  twofaLimiter,
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    const result = await authService.setupTotpForUser(user.id);
+    res.json({ data: result });
+  }),
+);
+
+/** Confirm in-profile Authenticator (TOTP) setup with code. */
+authRouter.post(
+  '/totp/enroll',
+  requireAuth,
+  twofaLimiter,
+  validate({ body: z.object({ code: z.string().trim().min(6).max(20) }) }),
+  asyncHandler(async (req, res) => {
+    const user = currentUser(req);
+    const result = await authService.confirmTotpForUser(user.id, req.body.code, auditContext(req));
+    res.json({ data: result });
   }),
 );
 

@@ -68,8 +68,8 @@ function serialize(user: UserRow) {
     status: user.status,
     phone: user.phone ?? null,
     activatedAt: user.activatedAt ?? null,
-    // "Pending setup" is what §11.1 shows before enrolment completes.
-    twofa: user.twofaEnrolledAt ? (user.twofaMethod ?? 'TOTP') : 'Pending setup',
+    // Email OTP is primary for all users; TOTP is an additional enrolled method.
+    twofa: user.twofaEnrolledAt ? 'Email OTP + Authenticator' : 'Email OTP',
     lastLoginAt: user.lastLoginAt,
     createdAt: user.createdAt,
     invitation: inv

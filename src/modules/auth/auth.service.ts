@@ -9,6 +9,7 @@
  * The challenge token exists so step 1 never issues a usable session. A correct
  * password alone gets you nothing.
  */
+import crypto from 'node:crypto';
 import { AuditModule, CmsUserStatus, type CmsUser, type Role, TwofaMethod } from '@prisma/client';
 import { authenticator } from 'otplib';
 import { prisma } from '@/lib/prisma';
@@ -32,6 +33,7 @@ import { AppError, ErrorCode, notFound, unauthenticated } from '@/lib/errors';
 import { permissionsFor, ROLE_LABELS } from '@/rbac/permissions';
 import { type AuditContext, writeAudit, writeAuditSafe } from '@/modules/audit/audit.service';
 import { assertNotReused, assertPasswordPolicy, pushHistory } from './password.policy';
+import { sendCmsLoginOtp } from './auth.mailer';
 import { env } from '@/config/env';
 import { logger } from '@/lib/logger';
 
@@ -41,6 +43,55 @@ const log = logger.child({ module: 'auth.service' });
 authenticator.options = { window: 1 };
 
 const APP_NAME = 'Zewa Feeds CMS';
+export const OTP_TTL_MINUTES = 10;
+export const MAX_OTP_ATTEMPTS = 5;
+export const OTP_RESEND_COOLDOWN_SECONDS = 60;
+
+/** Mask email safely for user feedback in authentication screens (e.g., ad***@zewafeeds.com). */
+export function maskEmail(email: string): string {
+  const [name, domain] = email.split('@');
+  if (!domain || !name) return '***';
+  if (name.length <= 2) return `${name[0]}***@${domain}`;
+  return `${name.slice(0, 2)}***@${domain}`;
+}
+
+/**
+ * Generate, hash, and persist a single-use 6-digit numeric OTP, then send it via email.
+ */
+export async function createAndSendEmailOtp(user: CmsUser): Promise<{ otpHash: string; expiresAt: Date }> {
+  // Cryptographically secure 6-digit numeric OTP (100000..999999)
+  const code = crypto.randomInt(100000, 1000000).toString();
+  const otpHash = hashToken(code);
+  const expiresAt = new Date(Date.now() + OTP_TTL_MINUTES * 60 * 1000);
+
+  await prisma.$transaction(async (tx) => {
+    // Invalidate any existing unused OTPs for this user
+    await tx.cmsEmailOtp.updateMany({
+      where: { userId: user.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+
+    await tx.cmsEmailOtp.create({
+      data: {
+        userId: user.id,
+        otpHash,
+        expiresAt,
+        attempts: 0,
+        maxAttempts: MAX_OTP_ATTEMPTS,
+      },
+    });
+  });
+
+  // Dispatch email directly via ZeptoMail
+  await sendCmsLoginOtp({
+    email: user.email,
+    name: user.name,
+    code,
+    expiresInMinutes: OTP_TTL_MINUTES,
+  });
+
+  return { otpHash, expiresAt };
+}
 
 /**
  * Parse a TTL like "8h" / "7d" into milliseconds.
@@ -61,9 +112,12 @@ export function ttlToMs(ttl: string): number {
 
 export interface LoginResult {
   challengeToken: string;
-  /** False when the user has never completed 2FA setup — forces enrolment (§14.3). */
+  /** True because Email OTP is active for every user by default. */
   twofaEnrolled: boolean;
   twofaMethod: TwofaMethod | null;
+  /** Whether the user also has an Authenticator app (TOTP) enrolled. */
+  hasTotp: boolean;
+  maskedEmail: string;
 }
 
 export interface SessionResult {
@@ -84,6 +138,7 @@ export interface SessionResult {
 /**
  * Step 1 — email + password.
  *
+ * Validates credentials and automatically dispatches a 6-digit Email OTP to the user.
  * Every failure returns the same message and takes comparable time, so the
  * response cannot be used to enumerate which emails have CMS accounts.
  * §14.4 requires logging every attempt, successful or not.
@@ -136,12 +191,22 @@ export async function login(
     throw new AppError(403, ErrorCode.ACCOUNT_DEACTIVATED, 'This account has been deactivated.');
   }
 
-  const enrolled = Boolean(user.twofaEnrolledAt);
+  // Automatically dispatch Email OTP
+  await createAndSendEmailOtp(user);
+
+  writeAuditSafe(
+    { ...ctx, actorId: user.id, actorName: user.name, actorRole: ROLE_LABELS[user.role] },
+    { module: AuditModule.AUTH, action: 'Password verified; Email OTP dispatched', recordId: user.email },
+  );
+
+  const hasTotp = Boolean(user.twofaSecret && user.twofaEnrolledAt);
 
   return {
-    challengeToken: signChallengeToken({ sub: user.id, enrol: !enrolled }),
-    twofaEnrolled: enrolled,
-    twofaMethod: user.twofaMethod,
+    challengeToken: signChallengeToken({ sub: user.id, enrol: false }),
+    twofaEnrolled: true,
+    twofaMethod: TwofaMethod.EMAIL_OTP,
+    hasTotp,
+    maskedEmail: maskEmail(user.email),
   };
 }
 
@@ -161,9 +226,48 @@ async function userFromChallenge(challengeToken: string): Promise<CmsUser> {
 }
 
 /**
- * Step 2 — verify the 2FA code and open a session.
- *
- * Accepts a TOTP code or a single-use backup code (§14.3).
+ * Resend Email OTP code with rate limiting and cooldown guard.
+ */
+export async function resendEmailOtp(
+  challengeToken: string,
+  ctx: AuditContext,
+): Promise<{ ok: boolean; maskedEmail: string; cooldownSeconds: number }> {
+  const user = await userFromChallenge(challengeToken);
+
+  const latestOtp = await prisma.cmsEmailOtp.findFirst({
+    where: { userId: user.id },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (latestOtp) {
+    const elapsedSeconds = Math.floor((Date.now() - latestOtp.createdAt.getTime()) / 1000);
+    if (elapsedSeconds < OTP_RESEND_COOLDOWN_SECONDS) {
+      const waitSeconds = OTP_RESEND_COOLDOWN_SECONDS - elapsedSeconds;
+      throw new AppError(
+        429,
+        ErrorCode.RATE_LIMITED,
+        `Please wait ${waitSeconds} seconds before requesting another verification code.`,
+        { details: { waitSeconds } },
+      );
+    }
+  }
+
+  await createAndSendEmailOtp(user);
+
+  writeAuditSafe(
+    { ...ctx, actorId: user.id, actorName: user.name, actorRole: ROLE_LABELS[user.role] },
+    { module: AuditModule.AUTH, action: 'Resent Email OTP verification code', recordId: user.email },
+  );
+
+  return {
+    ok: true,
+    maskedEmail: maskEmail(user.email),
+    cooldownSeconds: OTP_RESEND_COOLDOWN_SECONDS,
+  };
+}
+
+/**
+ * Step 2 — verify 2FA code (Email OTP by default, or TOTP / backup code).
  */
 export async function verifyTwofa(
   challengeToken: string,
@@ -172,25 +276,70 @@ export async function verifyTwofa(
   remember: boolean,
 ): Promise<SessionResult> {
   const user = await userFromChallenge(challengeToken);
+  const trimmed = code.trim().replace(/\s/g, '');
 
-  if (!user.twofaEnrolledAt || !user.twofaSecret) {
-    throw new AppError(
-      403,
-      ErrorCode.TWOFA_NOT_ENROLLED,
-      'Two-factor authentication setup is required.',
-    );
+  // 1. Check if input matches active Email OTP
+  const activeOtp = await prisma.cmsEmailOtp.findFirst({
+    where: {
+      userId: user.id,
+      usedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (activeOtp) {
+    if (activeOtp.attempts >= activeOtp.maxAttempts) {
+      await prisma.cmsEmailOtp.update({
+        where: { id: activeOtp.id },
+        data: { usedAt: new Date() },
+      });
+      writeAuditSafe(
+        { ...ctx, actorId: user.id, actorName: user.name, actorRole: ROLE_LABELS[user.role] },
+        { module: AuditModule.AUTH, action: 'Email OTP locked out due to excessive attempts', recordId: user.email },
+      );
+      throw new AppError(
+        401,
+        ErrorCode.TWOFA_INVALID,
+        'Maximum verification attempts exceeded. Please request a new verification code.',
+      );
+    }
+
+    const hashedInput = hashToken(trimmed);
+    if (hashedInput === activeOtp.otpHash) {
+      await prisma.cmsEmailOtp.update({
+        where: { id: activeOtp.id },
+        data: { usedAt: new Date() },
+      });
+      return openSession(user, ctx, remember, 'Signed in via Email OTP');
+    } else {
+      await prisma.cmsEmailOtp.update({
+        where: { id: activeOtp.id },
+        data: { attempts: { increment: 1 } },
+      });
+    }
   }
 
-  const ok = await consumeTwofaCode(user, code);
-  if (!ok) {
-    writeAuditSafe(
-      { ...ctx, actorId: user.id, actorName: user.name, actorRole: ROLE_LABELS[user.role] },
-      { module: AuditModule.AUTH, action: 'Failed 2FA verification', recordId: user.email },
-    );
-    throw new AppError(401, ErrorCode.TWOFA_INVALID, 'That code is not valid. Try again.');
+  // 2. If user has TOTP configured, check TOTP or backup code
+  if (user.twofaSecret && user.twofaEnrolledAt) {
+    const totpOk = await consumeTwofaCode(user, code);
+    if (totpOk) {
+      if (activeOtp) {
+        await prisma.cmsEmailOtp.update({
+          where: { id: activeOtp.id },
+          data: { usedAt: new Date() },
+        });
+      }
+      return openSession(user, ctx, remember, 'Signed in via Authenticator App');
+    }
   }
 
-  return openSession(user, ctx, remember, 'Signed in');
+  writeAuditSafe(
+    { ...ctx, actorId: user.id, actorName: user.name, actorRole: ROLE_LABELS[user.role] },
+    { module: AuditModule.AUTH, action: 'Failed 2FA verification attempt', recordId: user.email },
+  );
+
+  throw new AppError(401, ErrorCode.TWOFA_INVALID, 'That verification code is not valid. Try again.');
 }
 
 /**
@@ -365,6 +514,64 @@ export async function completeTwofaEnrolment(
 
   const session = await openSession(user, ctx, remember, 'Signed in (first login)');
   return { ...session, backupCodes: codes };
+}
+
+/**
+ * Begin in-profile Authenticator (TOTP) setup for an authenticated user.
+ */
+export async function setupTotpForUser(userId: string): Promise<EnrolStart> {
+  const user = await prisma.cmsUser.findUniqueOrThrow({ where: { id: userId } });
+  const secret = authenticator.generateSecret();
+
+  await prisma.cmsUser.update({
+    where: { id: user.id },
+    data: { twofaSecret: encryptSecret(secret), twofaMethod: TwofaMethod.TOTP },
+  });
+
+  return {
+    secret,
+    otpauthUrl: authenticator.keyuri(user.email, APP_NAME, secret),
+  };
+}
+
+/**
+ * Confirm in-profile Authenticator (TOTP) setup for an authenticated user.
+ */
+export async function confirmTotpForUser(
+  userId: string,
+  code: string,
+  ctx: AuditContext,
+): Promise<{ ok: boolean; backupCodes: string[] }> {
+  const user = await prisma.cmsUser.findUniqueOrThrow({ where: { id: userId } });
+
+  if (!user.twofaSecret) {
+    throw new AppError(400, ErrorCode.TWOFA_INVALID, 'Start Authenticator setup first.');
+  }
+
+  const secret = decryptSecret(user.twofaSecret);
+  if (!authenticator.check(code.trim().replace(/\s/g, ''), secret)) {
+    throw new AppError(401, ErrorCode.TWOFA_INVALID, 'That code is not valid. Try again.');
+  }
+
+  const codes = generateBackupCodes();
+
+  await prisma.$transaction(async (tx) => {
+    await tx.cmsUser.update({
+      where: { id: user.id },
+      data: { twofaEnrolledAt: new Date(), twofaMethod: TwofaMethod.TOTP },
+    });
+    await tx.backupCode.deleteMany({ where: { userId: user.id } });
+    await tx.backupCode.createMany({
+      data: codes.map((c) => ({ userId: user.id, codeHash: hashToken(normaliseBackupCode(c)) })),
+    });
+    await writeAudit(
+      ctx,
+      { module: AuditModule.AUTH, action: 'Configured Authenticator App (TOTP) 2FA', recordId: user.email },
+      tx,
+    );
+  });
+
+  return { ok: true, backupCodes: codes };
 }
 
 /** Regenerate backup codes for an already-enrolled user (§14.3). */
