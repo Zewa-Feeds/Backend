@@ -9,16 +9,21 @@ import {
   Category,
   CouponScope,
   CouponStacking,
+  CouponTargetRole,
   CouponTrigger,
   CustomerEligibility,
   DiscountType,
 } from '@prisma/client';
 import { z } from 'zod';
+import { prisma } from '@/lib/prisma';
 import { asyncHandler } from '@/middleware/asyncHandler';
 import { requirePermission } from '@/middleware/auth';
 import { paginationSchema, validate } from '@/middleware/validate';
 import { auditContext } from '@/modules/audit/audit.service';
 import { priceCart } from '@/modules/checkout/pricing.service';
+import { PROMOTION_SELECT, type PromotionRow } from '@/modules/promotions/types';
+import { resolveTargeting } from '@/modules/promotions/targeting';
+import { promotionStatus } from '@/modules/promotions/eligibility';
 import * as couponsService from './coupons.service';
 
 export const couponsRouter = Router();
@@ -266,44 +271,260 @@ couponsRouter.get(
 couponsRouter.post(
   '/preview',
   validate({
-    body: z.object({
-      code: z.string().trim().toUpperCase().min(1).max(30),
-      lines: z
-        .array(
-          z.object({
-            sku: z.string().trim().max(40),
-            qty: z.coerce.number().int().min(1).max(99),
-          }),
-        )
-        .min(1, 'Add at least one product.')
-        .max(50),
-      /** Whose eligibility to test — order history is read for this address. */
-      email: z.string().trim().toLowerCase().email().optional(),
-      state: z.string().trim().max(60).optional(),
-      /** Codes to treat as already applied, for testing stacking. */
-      applied: z.array(z.string().trim().max(30)).max(10).default([]),
-    }),
+    body: z
+      .object({
+        code: z.string().trim().toUpperCase().min(1).max(30).optional(),
+        coupon: couponBodySchema.optional(),
+        lines: z
+          .array(
+            z.object({
+              sku: z.string().trim().max(40),
+              qty: z.coerce.number().int().min(1).max(99),
+            }),
+          )
+          .min(1, 'Add at least one product.')
+          .max(50),
+        /** Whose eligibility to test — order history is read for this address. */
+        email: z.string().trim().toLowerCase().email().optional(),
+        state: z.string().trim().max(60).optional(),
+        /** Codes to treat as already applied, for testing stacking. */
+        applied: z.array(z.string().trim().max(30)).max(10).default([]),
+      })
+      .refine((v) => Boolean(v.code || v.coupon), {
+        message: 'Provide either a coupon code or a promotion configuration.',
+        path: ['code'],
+      }),
   }),
   asyncHandler(async (req, res) => {
     const body = req.body as {
-      code: string;
+      code?: string;
+      coupon?: ReturnType<typeof couponBodySchema.parse>;
       lines: { sku: string; qty: number }[];
       email?: string;
       state?: string;
       applied: string[];
     };
 
+    const overlayPromotions: PromotionRow[] = [];
+    let targetCode = body.code ?? '';
+    let targetCouponRow: PromotionRow | null = null;
+
+    if (body.coupon) {
+      const c = body.coupon;
+      targetCode = c.code;
+      const row: PromotionRow = {
+        id: 'preview-coupon',
+        code: c.code,
+        name: c.name,
+        description: c.description,
+        discountType: c.discountType,
+        discountValue: c.discountValue,
+        maxDiscountPaise: c.maxDiscountPaise,
+        minOrderPaise: c.minOrderPaise,
+        minQty: c.minQty,
+        maxQty: c.maxQty,
+        startsAt: c.startsAt,
+        endsAt: c.endsAt,
+        totalUsageLimit: c.totalUsageLimit,
+        perCustomerLimit: c.perCustomerLimit,
+        usedCount: 0,
+        isActive: c.isActive,
+        scope: c.scope,
+        stackingMode: c.stackingMode,
+        priority: c.priority,
+        trigger: c.trigger,
+        combinesWithAutomatic: c.combinesWithAutomatic,
+        customerEligibility: c.customerEligibility,
+        firstNOrders: c.firstNOrders,
+        allowedStates: c.allowedStates,
+        requireAllQualifiers: c.requireAllQualifiers,
+        products: [
+          ...c.productIds.map((id) => ({ familyId: id, role: CouponTargetRole.DISCOUNT })),
+          ...c.qualifyingProductIds.map((id) => ({ familyId: id, role: CouponTargetRole.QUALIFY })),
+          ...c.excludedProductIds.map((id) => ({ familyId: id, role: CouponTargetRole.EXCLUDE })),
+        ],
+        variants: [
+          ...c.variantIds.map((id) => ({ variantId: id, role: CouponTargetRole.DISCOUNT })),
+          ...c.qualifyingVariantIds.map((id) => ({ variantId: id, role: CouponTargetRole.QUALIFY })),
+        ],
+        categories: [
+          ...c.categories.map((cat) => ({ category: cat, role: CouponTargetRole.DISCOUNT })),
+          ...c.qualifyingCategories.map((cat) => ({ category: cat, role: CouponTargetRole.QUALIFY })),
+        ],
+        customers: c.customerEmails.map((email) => ({ email })),
+        bxgy: c.bxgy
+          ? {
+              buyQty: c.bxgy.buyQty,
+              getQty: c.bxgy.getQty,
+              rewardPercentOff: c.bxgy.rewardPercentOff,
+              maxRepeats: c.bxgy.maxRepeats ?? null,
+            }
+          : null,
+      };
+      targetCouponRow = row;
+      overlayPromotions.push(row);
+    }
+
     const cart = await priceCart({
       lines: body.lines,
-      couponCodes: [...body.applied, body.code],
+      couponCodes: [...body.applied, targetCode],
       email: body.email,
       state: body.state,
+      overlayPromotions,
     });
 
-    const applied = cart.coupons.find((c) => c.code === body.code);
+    const couponRow = targetCouponRow ?? (await prisma.coupon.findUnique({
+      where: { code: targetCode, deletedAt: null },
+      select: PROMOTION_SELECT,
+    }));
+
+    const applied = cart.coupons.find((c) => c.code === targetCode);
     const rejection = cart.issues.find(
-      (i) => i.sku === '__coupon__' && i.couponCode === body.code,
+      (i) => i.sku === '__coupon__' && i.couponCode === targetCode,
     );
+
+    const promoLines = cart.lines.map((l) => ({
+      variantId: l.variantId,
+      familyId: l.familyId,
+      category: l.category,
+      sku: l.sku,
+      productName: l.productName,
+      qty: l.qty,
+      unitPricePaise: l.unitPricePaise,
+      lineTotalPaise: l.lineTotalPaise,
+    }));
+
+    const targeting = couponRow ? resolveTargeting(couponRow, promoLines) : null;
+
+    let evaluationChecks: { key: string; label: string; passed: boolean; detail: string }[] = [];
+    let linesBreakdown: {
+      sku: string;
+      name: string;
+      pack: string;
+      qty: number;
+      unitPricePaise: number;
+      lineTotalPaise: number;
+      isQualifying: boolean;
+      isDiscounted: boolean;
+      isExcluded: boolean;
+      excludeReason: string | null;
+    }[] = [];
+
+    if (couponRow && targeting) {
+      const status = promotionStatus(couponRow);
+      const statusPassed = status === 'Active';
+      const statusDetail = status === 'Active'
+        ? 'Promotion is active and within valid schedule dates.'
+        : (status === 'Expired' ? 'Promotion schedule has expired.' : 'Promotion is currently inactive or start date is in the future.');
+
+      const minOrderPassed = couponRow.minOrderPaise === 0 || cart.subtotalPaise >= couponRow.minOrderPaise;
+      const minOrderDetail = couponRow.minOrderPaise === 0
+        ? 'No minimum spend requirement.'
+        : (minOrderPassed
+            ? `Cart subtotal (₹${cart.subtotalPaise / 100}) meets the ₹${couponRow.minOrderPaise / 100} minimum.`
+            : `Cart subtotal (₹${cart.subtotalPaise / 100}) is below the required ₹${couponRow.minOrderPaise / 100} minimum.`);
+
+      const qtyPassed = (couponRow.minQty === null || targeting.qualifyingQty >= couponRow.minQty) &&
+                        (couponRow.maxQty === null || targeting.qualifyingQty <= couponRow.maxQty);
+      const qtyDetail = couponRow.minQty === null && couponRow.maxQty === null
+        ? 'No item quantity restriction.'
+        : (qtyPassed
+            ? `Cart has ${targeting.qualifyingQty} qualifying item(s), satisfying quantity requirements.`
+            : (couponRow.minQty !== null && targeting.qualifyingQty < couponRow.minQty
+                ? `Cart has ${targeting.qualifyingQty} qualifying item(s), below the minimum requirement of ${couponRow.minQty}.`
+                : `Cart has ${targeting.qualifyingQty} qualifying item(s), exceeding the maximum allowed ${couponRow.maxQty}.`));
+
+      const productPassed = targeting.qualifies && (couponRow.discountType === DiscountType.FREE_SHIPPING || targeting.discountableIdx.length > 0);
+      const productDetail = targeting.qualifies
+        ? (couponRow.discountType === DiscountType.FREE_SHIPPING
+            ? 'Promotion waives shipping fees across eligible items.'
+            : (targeting.discountableIdx.length > 0
+                ? `${targeting.discountableIdx.length} product(s) in cart qualify to receive the discount.`
+                : 'No items in cart qualify to receive the discount.'))
+        : 'Required qualifying products are not present in cart.';
+
+      let customerPassed = true;
+      let customerDetail = 'Eligible for all customers.';
+      if (couponRow.customerEligibility === CustomerEligibility.FIRST_ORDER) {
+        customerDetail = 'Valid on customer\'s first order.';
+        if (rejection?.code === 'COUPON_NOT_ELIGIBLE') customerPassed = false;
+      } else if (couponRow.customerEligibility === CustomerEligibility.FIRST_N_ORDERS) {
+        customerDetail = `Valid on first ${couponRow.firstNOrders ?? 1} orders.`;
+        if (rejection?.code === 'COUPON_NOT_ELIGIBLE') customerPassed = false;
+      } else if (couponRow.customerEligibility === CustomerEligibility.SPECIFIC_CUSTOMERS) {
+        const allowed = new Set(couponRow.customers.map((c) => c.email.toLowerCase()));
+        customerPassed = Boolean(body.email && allowed.has(body.email.toLowerCase()));
+        customerDetail = customerPassed
+          ? `Customer email ${body.email} is authorized.`
+          : (body.email ? `Customer email ${body.email} is not authorized for this specific customer offer.` : 'Customer email required to test customer eligibility.');
+      } else if (couponRow.customerEligibility === CustomerEligibility.EXISTING_CUSTOMER) {
+        customerDetail = 'Valid for returning customers.';
+        if (rejection?.code === 'COUPON_NOT_ELIGIBLE') customerPassed = false;
+      }
+
+      let locationPassed = true;
+      let locationDetail = 'Available for delivery nationwide.';
+      if (couponRow.allowedStates && couponRow.allowedStates.length > 0) {
+        if (body.state) {
+          const norm = (s: string) => s.trim().toLowerCase().replace(/[^a-z]/g, '');
+          const allowed = couponRow.allowedStates.map(norm);
+          locationPassed = allowed.includes(norm(body.state));
+          locationDetail = locationPassed
+            ? `Delivery to ${body.state} is eligible.`
+            : `Delivery to ${body.state} is restricted (Allowed: ${couponRow.allowedStates.join(', ')}).`;
+        } else {
+          locationDetail = `Restricted to states: ${couponRow.allowedStates.join(', ')}.`;
+        }
+      }
+
+      const stackingPassed = !cart.issues.some((i) => i.sku === '__coupon__' && i.couponCode === targetCode && i.code === 'COUPON_STACKING_CONFLICT');
+      const stackingDetail = stackingPassed
+        ? (couponRow.stackingMode === CouponStacking.STACKABLE
+            ? 'Configured as stackable with eligible promotions.'
+            : (couponRow.stackingMode === CouponStacking.EXCLUSIVE ? 'Exclusive offer outranking other promotions.' : 'Cannot be combined with other offers.'))
+        : 'Cannot be combined with other active promotion(s) in cart.';
+
+      evaluationChecks = [
+        { key: 'status', label: 'Active Status & Dates', passed: statusPassed, detail: statusDetail },
+        { key: 'minOrder', label: 'Minimum Spend', passed: minOrderPassed, detail: minOrderDetail },
+        { key: 'quantity', label: 'Item Quantity', passed: qtyPassed, detail: qtyDetail },
+        { key: 'targeting', label: 'Product Targeting', passed: productPassed, detail: productDetail },
+        { key: 'customer', label: 'Customer Eligibility', passed: customerPassed, detail: customerDetail },
+        { key: 'location', label: 'Delivery Location', passed: locationPassed, detail: locationDetail },
+        { key: 'stacking', label: 'Stacking & Combinations', passed: stackingPassed, detail: stackingDetail },
+      ];
+
+      linesBreakdown = cart.lines.map((l, i) => {
+        const isQualifying = targeting.qualifyingIdx.includes(i);
+        const isDiscounted = targeting.discountableIdx.includes(i);
+        const isExcluded = couponRow.products.some(p => p.role === CouponTargetRole.EXCLUDE && p.familyId === l.familyId);
+        return {
+          sku: l.sku,
+          name: l.productName,
+          pack: l.pack,
+          qty: l.qty,
+          unitPricePaise: l.unitPricePaise,
+          lineTotalPaise: l.lineTotalPaise,
+          isQualifying,
+          isDiscounted,
+          isExcluded,
+          excludeReason: isExcluded ? 'Product excluded from discount by rule' : null,
+        };
+      });
+    } else {
+      linesBreakdown = cart.lines.map((l) => ({
+        sku: l.sku,
+        name: l.productName,
+        pack: l.pack,
+        qty: l.qty,
+        unitPricePaise: l.unitPricePaise,
+        lineTotalPaise: l.lineTotalPaise,
+        isQualifying: false,
+        isDiscounted: false,
+        isExcluded: false,
+        excludeReason: null,
+      }));
+    }
 
     res.json({
       data: {
@@ -322,7 +543,9 @@ couponsRouter.post(
           shippingPaise: cart.shippingPaise,
           taxPaise: cart.taxPaise,
           totalPaise: cart.totalPaise,
+          lines: linesBreakdown,
         },
+        evaluationChecks,
         stack: cart.coupons.map((c) => ({
           code: c.code,
           discountPaise: c.discountPaise,
@@ -331,7 +554,7 @@ couponsRouter.post(
           stackingMode: c.stackingMode,
         })),
         otherRejections: cart.issues
-          .filter((i) => i.sku === '__coupon__' && i.couponCode !== body.code)
+          .filter((i) => i.sku === '__coupon__' && i.couponCode !== targetCode)
           .map((i) => ({ code: i.couponCode, reason: i.message })),
       },
     });

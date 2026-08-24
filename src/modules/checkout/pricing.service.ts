@@ -17,7 +17,7 @@ import { prisma } from '@/lib/prisma';
 import { AppError, ErrorCode } from '@/lib/errors';
 import * as settingsService from '@/modules/settings/settings.service';
 import * as promotionEngine from '@/modules/promotions/engine';
-import type { AppliedPromotion } from '@/modules/promotions/types';
+import type { AppliedPromotion, PromotionRow } from '@/modules/promotions/types';
 import { computeInvoiceTax } from '@/modules/orders/tax';
 
 export interface CartLineInput {
@@ -162,6 +162,7 @@ export async function priceCart(input: {
   email?: string;
   customerId?: string | null;
   state?: string;
+  overlayPromotions?: PromotionRow[];
 }): Promise<PricedCart> {
   if (input.lines.length === 0) {
     throw new AppError(400, ErrorCode.CART_EMPTY, 'Your cart is empty.');
@@ -321,6 +322,8 @@ export async function priceCart(input: {
     customerId: input.customerId,
     state: input.state,
     requestedCodes,
+  }, {
+    overlayPromotions: input.overlayPromotions,
   });
 
   const discountPaise = promotions.totalDiscountPaise;

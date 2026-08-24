@@ -52,9 +52,10 @@ const MAX_CODES_PER_REQUEST = 10;
  */
 export async function evaluate(
   ctx: PromotionContext,
-  opts: { includeAutomatic?: boolean } = {},
+  opts: { includeAutomatic?: boolean; overlayPromotions?: PromotionRow[] } = {},
 ): Promise<PromotionOutcome> {
   const includeAutomatic = opts.includeAutomatic ?? true;
+  const overlayPromotions = opts.overlayPromotions ?? [];
 
   const wanted: string[] = [];
   for (const raw of ctx.requestedCodes.slice(0, MAX_CODES_PER_REQUEST)) {
@@ -68,11 +69,12 @@ export async function evaluate(
     totalDiscountPaise: 0,
     freeShipping: false,
   };
-  if (wanted.length === 0 && !includeAutomatic) return empty;
+  if (wanted.length === 0 && !includeAutomatic && overlayPromotions.length === 0) return empty;
   if (ctx.lines.length === 0) return empty;
 
   // ---- 1. Load -------------------------------------------------------------
-  const distinct = [...new Set(wanted)];
+  const overlayCodes = new Set(overlayPromotions.map((o) => o.code));
+  const distinct = [...new Set(wanted)].filter((code) => !overlayCodes.has(code));
   const where: Prisma.CouponWhereInput[] = [];
   if (distinct.length > 0) where.push({ code: { in: distinct } });
   if (includeAutomatic) {
@@ -86,9 +88,12 @@ export async function evaluate(
       })
     : [];
 
-  if (rows.length === 0 && wanted.length === 0) return empty;
+  if (rows.length === 0 && wanted.length === 0 && overlayPromotions.length === 0) return empty;
 
   const byCode = new Map(rows.map((r) => [r.code, r]));
+  for (const overlay of overlayPromotions) {
+    byCode.set(overlay.code, overlay);
+  }
   const identified = Boolean(ctx.email);
 
   /*
@@ -206,8 +211,11 @@ export async function evaluate(
   const requestedCodes = new Set(wanted);
   const automaticCandidates: Candidate[] = [];
   if (includeAutomatic) {
-    for (const coupon of rows) {
-      if (coupon.trigger !== CouponTrigger.AUTOMATIC) continue;
+    const allAuto = [
+      ...rows.filter((r) => r.trigger === CouponTrigger.AUTOMATIC),
+      ...overlayPromotions.filter((r) => r.trigger === CouponTrigger.AUTOMATIC),
+    ];
+    for (const coupon of allAuto) {
       if (requestedCodes.has(coupon.code)) continue;
       const candidate = judge(coupon, true);
       if (candidate) automaticCandidates.push(candidate);
