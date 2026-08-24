@@ -35,6 +35,7 @@ import {
   dashboardRouter,
   searchRouter,
 } from '@/modules/dashboard/dashboard.routes';
+import { analyticsRouter } from '@/modules/analytics/analytics.routes';
 import { uploadsRouter } from '@/modules/uploads/uploads.routes';
 import { catalogRouter } from '@/modules/catalog/catalog.routes';
 import { previewRouter } from '@/modules/catalog/preview.routes';
@@ -92,6 +93,7 @@ adminRouter.use('/content', contentRouter); // articles.* / banners.edit / homep
 adminRouter.use('/uploads', uploadsRouter); // articles.create
 adminRouter.use('/audit-log', auditRouter); // audit.own (row-filtered) / audit.all
 adminRouter.use('/settings', settingsRouter); // settings.manage
+adminRouter.use('/analytics', analyticsRouter); // orders.view
 
 // ============================================================================
 // WEBHOOKS — no CORS, no auth. Verified by HMAC signature over the RAW body.
