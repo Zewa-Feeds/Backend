@@ -338,4 +338,58 @@ describe('CMS Email OTP & Optional Authenticator Auth', () => {
     expect(confirmResult.ok).toBe(true);
     expect(confirmResult.backupCodes).toHaveLength(8);
   });
+
+  it('Issues 7-day session when remember=true, and 8-hour session when remember=false', async () => {
+    const challengeToken = signChallengeToken({ sub: 'usr-123', enrol: false });
+
+    userFindUnique.mockResolvedValue({
+      id: 'usr-123',
+      email: 'admin@zewafeeds.com',
+      name: 'Admin User',
+      role: Role.ADMIN,
+      status: CmsUserStatus.ACTIVE,
+      twofaSecret: null,
+      twofaEnrolledAt: null,
+      deletedAt: null,
+      tokenVersion: 0,
+    });
+
+    otpFindFirst.mockResolvedValue({
+      id: 'otp-row-remember',
+      userId: 'usr-123',
+      otpHash: hashToken('112233'),
+      attempts: 0,
+      maxAttempts: 5,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      usedAt: null,
+    });
+    otpUpdate.mockResolvedValue({ id: 'otp-row-remember' });
+    sessionCreate.mockResolvedValue({ id: 'sess-remember-1' });
+    userUpdate.mockResolvedValue({ id: 'usr-123' });
+
+    // 1. remember=true
+    const rememberSession = await authService.verifyTwofa(challengeToken, '112233', dummyCtx, true);
+    expect(rememberSession.isRemembered).toBe(true);
+    expect(sessionCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'usr-123',
+          expiresAt: expect.any(Date),
+        }),
+      }),
+    );
+
+    // 2. remember=false
+    otpFindFirst.mockResolvedValueOnce({
+      id: 'otp-row-no-remember',
+      userId: 'usr-123',
+      otpHash: hashToken('112233'),
+      attempts: 0,
+      maxAttempts: 5,
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000),
+      usedAt: null,
+    });
+    const noRememberSession = await authService.verifyTwofa(challengeToken, '112233', dummyCtx, false);
+    expect(noRememberSession.isRemembered).toBe(false);
+  });
 });

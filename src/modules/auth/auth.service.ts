@@ -124,6 +124,7 @@ export interface SessionResult {
   accessToken: string;
   refreshToken: string;
   expiresIn: number;
+  isRemembered?: boolean;
   user: {
     id: string;
     email: string;
@@ -425,6 +426,7 @@ async function openSession(
     accessToken,
     refreshToken,
     expiresIn: ttlToMs(env.ACCESS_TOKEN_TTL) / 1000,
+    isRemembered: remember,
     user: {
       id: user.id,
       email: user.email,
@@ -481,7 +483,7 @@ export async function completeTwofaEnrolment(
   challengeToken: string,
   code: string,
   ctx: AuditContext,
-  remember: boolean,
+  remember = false,
 ): Promise<EnrolComplete> {
   const user = await userFromChallenge(challengeToken);
 
@@ -491,6 +493,10 @@ export async function completeTwofaEnrolment(
 
   const secret = decryptSecret(user.twofaSecret);
   if (!authenticator.check(code.trim().replace(/\s/g, ''), secret)) {
+    writeAuditSafe(
+      { ...ctx, actorId: user.id, actorName: user.name, actorRole: ROLE_LABELS[user.role] },
+      { module: AuditModule.AUTH, action: 'Failed 2FA enrolment confirmation', recordId: user.email },
+    );
     throw new AppError(401, ErrorCode.TWOFA_INVALID, 'That code is not valid. Try again.');
   }
 
@@ -620,6 +626,8 @@ export async function refresh(refreshToken: string, ctx: AuditContext): Promise<
 
   const newToken = generateToken();
   const remainingMs = session.expiresAt.getTime() - Date.now();
+  const defaultTtlMs = ttlToMs(env.REFRESH_TOKEN_TTL);
+  const isRemembered = remainingMs > defaultTtlMs;
 
   const rotated = await prisma.$transaction(async (tx) => {
     await tx.cmsSession.update({
@@ -651,6 +659,7 @@ export async function refresh(refreshToken: string, ctx: AuditContext): Promise<
     }),
     refreshToken: newToken,
     expiresIn: ttlToMs(env.ACCESS_TOKEN_TTL) / 1000,
+    isRemembered,
     user: {
       id: user.id,
       email: user.email,

@@ -34,7 +34,7 @@ export const authRouter = Router();
 /** Name kept generic — it should not advertise what it holds. */
 const REFRESH_COOKIE = 'zewa_rt';
 
-const refreshCookieOptions = (maxAgeMs: number) =>
+const refreshCookieOptions = (maxAgeMs?: number) =>
   ({
     httpOnly: true,
     // Required for SameSite=None in cross-site production; harmless locally.
@@ -42,18 +42,13 @@ const refreshCookieOptions = (maxAgeMs: number) =>
     // The CSRF defence for the refresh endpoint.
     sameSite: env.isProd ? ('none' as const) : ('lax' as const),
     path: '/api/v1/admin/auth',
-    maxAge: maxAgeMs,
+    ...(maxAgeMs !== undefined ? { maxAge: maxAgeMs } : {}),
   }) as const;
 
 /**
  * Cookie lifetime for a "stay signed in" session, taken from the same env value
  * that signs the refresh token (REFRESH_TOKEN_TTL_REMEMBER, default 7d) so the
  * cookie can never outlive the token it carries.
- *
- * Sessions without "remember me" deliberately keep this same cookie maxAge: the
- * shorter REFRESH_TOKEN_TTL (8h) is enforced by the token itself and by
- * CmsSession.expiresAt, so an expired one is rejected server-side regardless of
- * how long the browser holds the cookie.
  */
 const rememberCookieMaxAge = () => ttlToMs(env.REFRESH_TOKEN_TTL_REMEMBER);
 
@@ -150,7 +145,8 @@ authRouter.post(
       remember,
     );
 
-    res.cookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOptions(rememberCookieMaxAge()));
+    const cookieMaxAge = remember ? rememberCookieMaxAge() : undefined;
+    res.cookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOptions(cookieMaxAge));
     // The refresh token is in the cookie only — never echoed in the body.
     const { refreshToken: _omit, ...body } = session;
     res.json({ data: body });
@@ -182,7 +178,8 @@ authRouter.post(
       remember,
     );
 
-    res.cookie(REFRESH_COOKIE, result.refreshToken, refreshCookieOptions(rememberCookieMaxAge()));
+    const cookieMaxAge = remember ? rememberCookieMaxAge() : undefined;
+    res.cookie(REFRESH_COOKIE, result.refreshToken, refreshCookieOptions(cookieMaxAge));
     const { refreshToken: _omit, ...body } = result;
     res.json({ data: body });
   }),
@@ -197,7 +194,8 @@ authRouter.post(
 
     const session = await authService.refresh(token, auditContext(req));
 
-    res.cookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOptions(rememberCookieMaxAge()));
+    const cookieMaxAge = session.isRemembered ? rememberCookieMaxAge() : undefined;
+    res.cookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOptions(cookieMaxAge));
     const { refreshToken: _omit, ...body } = session;
     res.json({ data: body });
   }),
