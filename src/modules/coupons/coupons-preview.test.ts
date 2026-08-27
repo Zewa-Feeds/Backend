@@ -93,8 +93,8 @@ describe('Promotion Preview Engine with Overlay Promotions', () => {
     );
 
     expect(outcome.applied.length).toBe(1);
-    expect(outcome.applied[0].code).toBe('UNSAVED10');
-    expect(outcome.applied[0].discountPaise).toBe(15_000); // 10% of 1500
+    expect(outcome.applied[0]?.code).toBe('UNSAVED10');
+    expect(outcome.applied[0]?.discountPaise).toBe(15_000); // 10% of 1500
     expect(outcome.totalDiscountPaise).toBe(15_000);
     expect(outcome.rejected.length).toBe(0);
   });
@@ -120,8 +120,8 @@ describe('Promotion Preview Engine with Overlay Promotions', () => {
 
     expect(outcome.applied.length).toBe(0);
     expect(outcome.rejected.length).toBe(1);
-    expect(outcome.rejected[0].code).toBe('MIN999');
-    expect(outcome.rejected[0].errorCode).toBe('COUPON_MIN_ORDER');
+    expect(outcome.rejected[0]?.code).toBe('MIN999');
+    expect(outcome.rejected[0]?.errorCode).toBe('COUPON_MIN_ORDER');
   });
 
   it('evaluates Specific Products targeting with exclusions on unsaved promotion', async () => {
@@ -151,8 +151,8 @@ describe('Promotion Preview Engine with Overlay Promotions', () => {
     );
 
     expect(outcome.applied.length).toBe(1);
-    expect(outcome.applied[0].appliedTo).toEqual(['Product f1']);
-    expect(outcome.applied[0].discountPaise).toBe(10_000);
+    expect(outcome.applied[0]?.appliedTo).toEqual(['Product f1']);
+    expect(outcome.applied[0]?.discountPaise).toBe(10_000);
   });
 
   it('evaluates unsaved BXGY promotion', async () => {
@@ -181,7 +181,7 @@ describe('Promotion Preview Engine with Overlay Promotions', () => {
     );
 
     expect(outcome.applied.length).toBe(1);
-    expect(outcome.applied[0].discountPaise).toBe(20_000); // 1 free unit
+    expect(outcome.applied[0]?.discountPaise).toBe(20_000); // 1 free unit
   });
 
   it('evaluates customer email eligibility on unsaved promotion', async () => {
@@ -206,7 +206,7 @@ describe('Promotion Preview Engine with Overlay Promotions', () => {
       { overlayPromotions: [promo] },
     );
     expect(failedOutcome.applied.length).toBe(0);
-    expect(failedOutcome.rejected[0].errorCode).toBe('COUPON_NOT_ELIGIBLE');
+    expect(failedOutcome.rejected[0]?.errorCode).toBe('COUPON_NOT_ELIGIBLE');
 
     // Matching email
     const successOutcome = await evaluate(
@@ -242,7 +242,7 @@ describe('Promotion Preview Engine with Overlay Promotions', () => {
       { overlayPromotions: [promo] },
     );
     expect(nonKerala.applied.length).toBe(0);
-    expect(nonKerala.rejected[0].errorCode).toBe('COUPON_STATE_RESTRICTED');
+    expect(nonKerala.rejected[0]?.errorCode).toBe('COUPON_STATE_RESTRICTED');
 
     // Kerala
     const kerala = await evaluate(

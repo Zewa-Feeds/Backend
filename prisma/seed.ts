@@ -282,6 +282,30 @@ const PRODUCTS = [
 // ============================================================================
 const COUPONS = [
   {
+    code: 'SPECIAL10',
+    discountType: DiscountType.PERCENTAGE,
+    discountValue: 10,
+    minOrder: 0,
+    startsAt: '2026-01-01',
+    endsAt: '2027-12-31',
+    usedCount: 0,
+    totalUsageLimit: null,
+    perCustomerLimit: 1,
+    isActive: true,
+  },
+  {
+    code: 'ZEWA10',
+    discountType: DiscountType.PERCENTAGE,
+    discountValue: 10,
+    minOrder: 0,
+    startsAt: '2026-01-01',
+    endsAt: '2027-12-31',
+    usedCount: 0,
+    totalUsageLimit: null,
+    perCustomerLimit: 1,
+    isActive: true,
+  },
+  {
     code: 'MONSOON10',
     discountType: DiscountType.PERCENTAGE,
     discountValue: 10,
