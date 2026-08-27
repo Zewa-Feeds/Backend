@@ -13,6 +13,9 @@ const otpCreate = vi.fn();
 const otpUpdate = vi.fn();
 const otpUpdateMany = vi.fn();
 const sessionCreate = vi.fn();
+const sessionFindUnique = vi.fn();
+const sessionFindFirst = vi.fn();
+const sessionUpdate = vi.fn();
 const backupCodeDeleteMany = vi.fn();
 const backupCodeCreateMany = vi.fn();
 const backupCodeFindFirst = vi.fn();
@@ -27,6 +30,10 @@ const transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({
   },
   cmsUser: {
     update: (...args: unknown[]) => userUpdate(...args),
+  },
+  cmsSession: {
+    update: (...args: unknown[]) => sessionUpdate(...args),
+    create: (...args: unknown[]) => sessionCreate(...args),
   },
   backupCode: {
     deleteMany: (...args: unknown[]) => backupCodeDeleteMany(...args),
@@ -52,6 +59,9 @@ vi.mock('@/lib/prisma', () => ({
     },
     cmsSession: {
       create: (...args: unknown[]) => sessionCreate(...args),
+      findUnique: (...args: unknown[]) => sessionFindUnique(...args),
+      findFirst: (...args: unknown[]) => sessionFindFirst(...args),
+      update: (...args: unknown[]) => sessionUpdate(...args),
     },
     backupCode: {
       findFirst: (...args: unknown[]) => backupCodeFindFirst(...args),
@@ -391,5 +401,90 @@ describe('CMS Email OTP & Optional Authenticator Auth', () => {
     });
     const noRememberSession = await authService.verifyTwofa(challengeToken, '112233', dummyCtx, false);
     expect(noRememberSession.isRemembered).toBe(false);
+  });
+
+  it('Session Refresh: rotates token and preserves remember=true status', async () => {
+    const rawRefreshToken = 'valid_refresh_token_123';
+    const now = Date.now();
+    const createdAt = new Date(now - 1000 * 60 * 60 * 24); // 1 day ago
+    const expiresAt = new Date(now + 1000 * 60 * 60 * 24 * 6); // 6 days remaining (7d total)
+
+    sessionFindUnique.mockResolvedValue({
+      id: 'sess-active-1',
+      userId: 'usr-123',
+      refreshTokenHash: hashToken(rawRefreshToken),
+      revokedAt: null,
+      createdAt,
+      expiresAt,
+      user: {
+        id: 'usr-123',
+        email: 'admin@zewafeeds.com',
+        name: 'Admin User',
+        role: Role.ADMIN,
+        status: CmsUserStatus.ACTIVE,
+        twofaMethod: TwofaMethod.EMAIL_OTP,
+        tokenVersion: 0,
+        deletedAt: null,
+      },
+    });
+
+    sessionUpdate.mockResolvedValue({ id: 'sess-active-1' });
+    sessionCreate.mockResolvedValue({ id: 'sess-rotated-2' });
+
+    const refreshed = await authService.refresh(rawRefreshToken, dummyCtx);
+
+    expect(refreshed.accessToken).toBeDefined();
+    expect(refreshed.refreshToken).toBeDefined();
+    expect(refreshed.isRemembered).toBe(true);
+    expect(refreshed.user.email).toBe('admin@zewafeeds.com');
+  });
+
+  it('Session Refresh: reuses active session during multi-tab grace window', async () => {
+    const rawRefreshToken = 'just_rotated_token_123';
+    const now = Date.now();
+
+    // Session that was rotated 5 seconds ago (within 30s grace window)
+    sessionFindUnique.mockResolvedValue({
+      id: 'sess-old-1',
+      userId: 'usr-123',
+      refreshTokenHash: hashToken(rawRefreshToken),
+      revokedAt: new Date(now - 5000),
+      createdAt: new Date(now - 10000),
+      expiresAt: new Date(now + 1000 * 60 * 60 * 24 * 7),
+      user: {
+        id: 'usr-123',
+        email: 'admin@zewafeeds.com',
+        name: 'Admin User',
+        role: Role.ADMIN,
+        status: CmsUserStatus.ACTIVE,
+        twofaMethod: TwofaMethod.EMAIL_OTP,
+        tokenVersion: 0,
+        deletedAt: null,
+      },
+    });
+
+    // The new active session replacing it
+    sessionFindFirst.mockResolvedValue({
+      id: 'sess-new-2',
+      userId: 'usr-123',
+      revokedAt: null,
+      createdAt: new Date(now - 5000),
+      expiresAt: new Date(now + 1000 * 60 * 60 * 24 * 7),
+      user: {
+        id: 'usr-123',
+        email: 'admin@zewafeeds.com',
+        name: 'Admin User',
+        role: Role.ADMIN,
+        status: CmsUserStatus.ACTIVE,
+        twofaMethod: TwofaMethod.EMAIL_OTP,
+        tokenVersion: 0,
+        deletedAt: null,
+      },
+    });
+
+    const result = await authService.refresh(rawRefreshToken, dummyCtx);
+
+    expect(result.accessToken).toBeDefined();
+    expect(result.user.email).toBe('admin@zewafeeds.com');
   });
 });

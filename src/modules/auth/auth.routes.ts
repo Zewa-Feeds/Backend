@@ -147,9 +147,7 @@ authRouter.post(
 
     const cookieMaxAge = remember ? rememberCookieMaxAge() : undefined;
     res.cookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOptions(cookieMaxAge));
-    // The refresh token is in the cookie only — never echoed in the body.
-    const { refreshToken: _omit, ...body } = session;
-    res.json({ data: body });
+    res.json({ data: session });
   }),
 );
 
@@ -180,24 +178,25 @@ authRouter.post(
 
     const cookieMaxAge = remember ? rememberCookieMaxAge() : undefined;
     res.cookie(REFRESH_COOKIE, result.refreshToken, refreshCookieOptions(cookieMaxAge));
-    const { refreshToken: _omit, ...body } = result;
-    res.json({ data: body });
+    res.json({ data: result });
   }),
 );
 
-/** Rotate the refresh token. Reads the cookie, not the body. */
+/** Rotate the refresh token. Reads from cookie, request body, or header. */
 authRouter.post(
   '/refresh',
   asyncHandler(async (req, res) => {
-    const token = req.cookies?.[REFRESH_COOKIE];
+    const token =
+      req.cookies?.[REFRESH_COOKIE] ||
+      req.body?.refreshToken ||
+      (req.headers['x-refresh-token'] as string | undefined);
     if (!token) throw unauthenticated('No session. Please sign in.');
 
     const session = await authService.refresh(token, auditContext(req));
 
     const cookieMaxAge = session.isRemembered ? rememberCookieMaxAge() : undefined;
     res.cookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOptions(cookieMaxAge));
-    const { refreshToken: _omit, ...body } = session;
-    res.json({ data: body });
+    res.json({ data: session });
   }),
 );
 
@@ -205,7 +204,11 @@ authRouter.post(
 authRouter.post(
   '/logout',
   asyncHandler(async (req, res) => {
-    await authService.logout(req.cookies?.[REFRESH_COOKIE]);
+    const token =
+      req.cookies?.[REFRESH_COOKIE] ||
+      req.body?.refreshToken ||
+      (req.headers['x-refresh-token'] as string | undefined);
+    await authService.logout(token);
     res.clearCookie(REFRESH_COOKIE, { path: '/api/v1/admin/auth' });
     res.json({ data: { ok: true } });
   }),
@@ -250,8 +253,7 @@ authRouter.post(
     );
 
     res.cookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOptions(rememberCookieMaxAge()));
-    const { refreshToken: _omit, ...body } = session;
-    res.json({ data: body });
+    res.json({ data: session });
   }),
 );
 

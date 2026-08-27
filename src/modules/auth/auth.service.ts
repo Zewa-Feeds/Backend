@@ -612,10 +612,62 @@ export async function regenerateBackupCodes(
  * and fails — which both blocks the attacker and surfaces the theft.
  */
 export async function refresh(refreshToken: string, ctx: AuditContext): Promise<SessionResult> {
-  const session = await prisma.cmsSession.findUnique({
-    where: { refreshTokenHash: hashToken(refreshToken) },
+  const tokenHash = hashToken(refreshToken);
+  let session = await prisma.cmsSession.findUnique({
+    where: { refreshTokenHash: tokenHash },
     include: { user: true },
   });
+
+  // If token was revoked recently (within a 30s grace window), reuse the active session replacing it.
+  // This allows concurrent requests or multiple open tabs to refresh smoothly without locking the user out.
+  const REFRESH_GRACE_MS = 30_000;
+  if (
+    session &&
+    session.revokedAt &&
+    !session.user.deletedAt &&
+    session.user.status !== CmsUserStatus.DEACTIVATED
+  ) {
+    const elapsedSinceRevoke = Date.now() - session.revokedAt.getTime();
+    if (elapsedSinceRevoke < REFRESH_GRACE_MS && session.expiresAt > new Date()) {
+      const latestSession = await prisma.cmsSession.findFirst({
+        where: {
+          userId: session.userId,
+          revokedAt: null,
+          expiresAt: { gt: new Date() },
+        },
+        orderBy: { createdAt: 'desc' },
+        include: { user: true },
+      });
+      if (latestSession) {
+        const user = latestSession.user;
+        const defaultTtlMs = ttlToMs(env.REFRESH_TOKEN_TTL);
+        const originalLifetimeMs = latestSession.expiresAt.getTime() - latestSession.createdAt.getTime();
+        const isRemembered = originalLifetimeMs > defaultTtlMs * 1.5;
+
+        return {
+          accessToken: signAccessToken({
+            sub: user.id,
+            email: user.email,
+            role: user.role,
+            sid: latestSession.id,
+            ver: user.tokenVersion,
+          }),
+          refreshToken,
+          expiresIn: ttlToMs(env.ACCESS_TOKEN_TTL) / 1000,
+          isRemembered,
+          user: {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            roleLabel: ROLE_LABELS[user.role],
+            permissions: permissionsFor(user.role),
+            twofaMethod: user.twofaMethod,
+          },
+        };
+      }
+    }
+  }
 
   if (!session || session.revokedAt || session.expiresAt < new Date()) {
     throw unauthenticated('Session expired. Please sign in again.', ErrorCode.TOKEN_EXPIRED);
@@ -627,7 +679,8 @@ export async function refresh(refreshToken: string, ctx: AuditContext): Promise<
   const newToken = generateToken();
   const remainingMs = session.expiresAt.getTime() - Date.now();
   const defaultTtlMs = ttlToMs(env.REFRESH_TOKEN_TTL);
-  const isRemembered = remainingMs > defaultTtlMs;
+  const originalLifetimeMs = session.expiresAt.getTime() - session.createdAt.getTime();
+  const isRemembered = originalLifetimeMs > defaultTtlMs * 1.5;
 
   const rotated = await prisma.$transaction(async (tx) => {
     await tx.cmsSession.update({
