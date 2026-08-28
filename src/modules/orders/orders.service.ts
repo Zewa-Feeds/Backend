@@ -778,3 +778,140 @@ export async function exportCsv(params: ListParams): Promise<string> {
 
   return [headers.map(csvCell).join(','), ...rows.map((r) => r.join(','))].join('\r\n');
 }
+
+// ============================================================================
+// PAYMENT RECONCILIATION
+// ============================================================================
+
+export async function reconcilePayment(
+  orderNo: string,
+  gatewayPaymentIdInput: string | undefined,
+  ctx: AuditContext,
+): Promise<{
+  reconciled: boolean;
+  message: string;
+  order?: ReturnType<typeof serializeOrder>;
+  paymentId?: string;
+  amountPaise?: number;
+}> {
+  const order = await prisma.order.findUnique({
+    where: { orderNo },
+    select: ORDER_SELECT,
+  });
+  if (!order) throw notFound('Order');
+
+  const provider = paymentProvider();
+  if (!provider) {
+    throw new AppError(503, ErrorCode.INTEGRATION_NOT_CONFIGURED, 'Payment gateway not configured.');
+  }
+
+  let capturedPaymentId: string | null = gatewayPaymentIdInput || null;
+  let capturedAmountPaise: number = order.totalPaise;
+
+  if (!capturedPaymentId && order.razorpayOrderId) {
+    const payments = await provider.fetchOrderPayments(order.razorpayOrderId);
+    const captured = payments.find((p) => p.status === 'captured' || p.status === 'authorized');
+    if (captured) {
+      capturedPaymentId = captured.id;
+      capturedAmountPaise = captured.amountPaise;
+    }
+  }
+
+  if (!capturedPaymentId) {
+    return {
+      reconciled: false,
+      message: 'No captured payment was found on the gateway for this order.',
+    };
+  }
+
+  // If order is already settled and paid with this paymentId
+  if (order.paymentStatus === PaymentStatus.PAID && order.razorpayPaymentId === capturedPaymentId) {
+    return {
+      reconciled: true,
+      message: 'Order payment is already recorded and verified.',
+      order: serializeOrder(order),
+      paymentId: capturedPaymentId,
+      amountPaise: capturedAmountPaise,
+    };
+  }
+
+  // Restore and confirm
+  const updated = await prisma.$transaction(async (tx) => {
+    // If order was cancelled, re-decrement stock for items
+    if (order.status === OrderStatus.CANCELLED) {
+      for (const item of order.items) {
+        if (item.variantId) {
+          await tx.productVariant.updateMany({
+            where: { id: item.variantId },
+            data: { stock: { decrement: item.qty } },
+          });
+        }
+      }
+    }
+
+    const nextStatus = order.status === OrderStatus.CANCELLED ? OrderStatus.PENDING : order.status;
+
+    await tx.order.update({
+      where: { id: order.id },
+      data: {
+        status: nextStatus,
+        paymentStatus: PaymentStatus.PAID,
+        razorpayPaymentId: capturedPaymentId,
+      },
+    });
+
+    await writeAudit(
+      ctx,
+      {
+        module: AuditModule.ORDERS,
+        action: `Payment reconciled with gateway (${capturedPaymentId}) — Order restored & confirmed`,
+        recordId: orderNo,
+      },
+      tx,
+    );
+
+    await couponsService.confirmRedemption(order.id, tx);
+
+    const emailRow = await tx.orderEmail.create({
+      data: {
+        orderId: order.id,
+        subject: `We've received your order ${orderNo}`,
+        toEmail: order.email,
+        status: EmailStatus.QUEUED,
+      },
+      select: { id: true },
+    });
+
+    return {
+      order: await tx.order.findUniqueOrThrow({ where: { id: order.id }, select: ORDER_SELECT }),
+      emailId: emailRow.id,
+    };
+  });
+
+  await emailQueue
+    .add('customer-email', {
+      kind: 'customer',
+      orderEmailId: updated.emailId,
+      orderNo,
+      template: 'order-placed',
+    })
+    .catch((err) => log.error({ err, orderNo }, 'failed to enqueue reconciled customer email'));
+
+  await emailQueue
+    .add('staff-email', {
+      kind: 'staff',
+      template: 'staff-new-order',
+      context: { orderNo },
+    })
+    .catch((err) => log.error({ err, orderNo }, 'failed to enqueue reconciled staff email'));
+
+  log.info({ orderNo, capturedPaymentId }, 'order payment reconciled successfully');
+
+  return {
+    reconciled: true,
+    message: `Payment ${capturedPaymentId} verified and order successfully confirmed!`,
+    order: serializeOrder(updated.order),
+    paymentId: capturedPaymentId,
+    amountPaise: capturedAmountPaise,
+  };
+}

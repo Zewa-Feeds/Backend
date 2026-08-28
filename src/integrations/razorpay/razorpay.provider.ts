@@ -149,4 +149,25 @@ export class RazorpayProvider implements PaymentProvider {
       throw upstreamFailed('Razorpay');
     }
   }
+
+  async fetchOrderPayments(gatewayOrderId: string): Promise<Array<{
+    id: string;
+    amountPaise: number;
+    status: string;
+    method?: string;
+  }>> {
+    try {
+      const response = (await this.client.orders.fetchPayments(gatewayOrderId)) as any;
+      const items = (response?.items ?? []) as Array<any>;
+      return items.map((p) => ({
+        id: String(p.id),
+        amountPaise: Number(p.amount),
+        status: String(p.status),
+        method: p.method ? String(p.method) : undefined,
+      }));
+    } catch (err) {
+      log.error({ err, gatewayOrderId }, 'failed to fetch payments for razorpay order');
+      return [];
+    }
+  }
 }

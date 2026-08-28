@@ -79,4 +79,12 @@ export interface PaymentProvider {
     amountPaise: number;
     notes?: Record<string, string>;
   }): Promise<RefundResult>;
+
+  /** Fetch payment attempts from the gateway for an order. */
+  fetchOrderPayments(gatewayOrderId: string): Promise<Array<{
+    id: string;
+    amountPaise: number;
+    status: string;
+    method?: string;
+  }>>;
 }

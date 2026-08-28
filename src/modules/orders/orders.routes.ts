@@ -204,3 +204,28 @@ ordersRouter.patch(
     res.json({ data: order });
   }),
 );
+
+/**
+ * Reconcile / verify payment with gateway.
+ * Checks Razorpay for captured payment and confirms/restores order.
+ */
+ordersRouter.post(
+  '/:orderNo/reconcile-payment',
+  requirePermission('orders.status'),
+  validate({
+    params: orderNoParam,
+    body: z
+      .object({
+        paymentId: z.string().trim().optional(),
+      })
+      .default({}),
+  }),
+  asyncHandler(async (req, res) => {
+    const result = await ordersService.reconcilePayment(
+      req.params.orderNo as string,
+      req.body.paymentId,
+      auditContext(req),
+    );
+    res.json(result);
+  }),
+);

@@ -98,7 +98,7 @@ async function handleReleaseUnpaid(job: Job<PaymentJob>): Promise<void> {
 
   const order = await prisma.order.findUnique({
     where: { orderNo: data.orderNo },
-    select: { paymentStatus: true, status: true, paymentMethod: true },
+    select: { paymentStatus: true, status: true, paymentMethod: true, razorpayOrderId: true },
   });
   if (!order) return;
 
@@ -109,6 +109,25 @@ async function handleReleaseUnpaid(job: Job<PaymentJob>): Promise<void> {
   }
   // COD orders are legitimately unpaid until delivery — never sweep them.
   if (order.paymentMethod === 'COD') return;
+
+  // CRITICAL SAFETY CHECK: Query gateway before cancelling. If customer paid on Razorpay, confirm the order instead.
+  const provider = paymentProvider();
+  if (provider && order.razorpayOrderId) {
+    try {
+      const payments = await provider.fetchOrderPayments(order.razorpayOrderId);
+      const captured = payments.find((p) => p.status === 'captured' || p.status === 'authorized');
+      if (captured) {
+        log.info(
+          { orderNo: data.orderNo, paymentId: captured.id },
+          'found captured gateway payment during release sweep — confirming order instead of cancelling',
+        );
+        await confirmPayment(data.orderNo, captured.id, systemCtx);
+        return;
+      }
+    } catch (err) {
+      log.error({ err, orderNo: data.orderNo }, 'failed to query gateway during release sweep');
+    }
+  }
 
   await transition(
     data.orderNo,

@@ -155,4 +155,13 @@ export class MockPaymentProvider implements PaymentProvider {
     );
     return { gatewayRefundId: `${MOCK_PREFIX}rfnd_${randomBytes(7).toString('hex')}`, settled: true };
   }
+
+  async fetchOrderPayments(): Promise<Array<{
+    id: string;
+    amountPaise: number;
+    status: string;
+    method?: string;
+  }>> {
+    return [];
+  }
 }
