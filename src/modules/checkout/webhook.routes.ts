@@ -18,6 +18,7 @@
 import { Router, type Request } from 'express';
 import { asyncHandler } from '@/middleware/asyncHandler';
 import { logger } from '@/lib/logger';
+import { prisma } from '@/lib/prisma';
 import { paymentProvider } from '@/integrations/razorpay/payment.service';
 import { auditContext } from '@/modules/audit/audit.service';
 import * as checkoutService from '@/modules/checkout/checkout.service';
@@ -76,9 +77,15 @@ webhookRouter.post(
 
     try {
       if (event === 'payment.captured' || event === 'order.paid') {
-        // `notes.orderNo` is set when the gateway order is created, so our order
-        // number travels with the payment.
-        const orderNo = payment?.notes?.orderNo;
+        let orderNo = payment?.notes?.orderNo;
+        if (!orderNo && payment?.order_id) {
+          const matching = await prisma.order.findFirst({
+            where: { razorpayOrderId: payment.order_id },
+            select: { orderNo: true },
+          });
+          if (matching) orderNo = matching.orderNo;
+        }
+
         if (orderNo && payment?.id) {
           await checkoutService.confirmPayment(orderNo, payment.id, {
             ...auditContext(req),
@@ -87,7 +94,7 @@ webhookRouter.post(
             actorRole: 'System',
           });
         } else {
-          log.warn({ event, paymentId: payment?.id }, 'webhook missing orderNo in notes');
+          log.warn({ event, paymentId: payment?.id, orderId: payment?.order_id }, 'webhook missing order reference');
         }
       } else {
         // payment.failed and others need no action — the release sweep handles
