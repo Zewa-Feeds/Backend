@@ -182,14 +182,14 @@ authRouter.post(
   }),
 );
 
-/** Rotate the refresh token. Reads from cookie, request body, or header. */
+/** Rotate the refresh token. Reads from body, header, or cookie. */
 authRouter.post(
   '/refresh',
   asyncHandler(async (req, res) => {
     const token =
-      req.cookies?.[REFRESH_COOKIE] ||
       req.body?.refreshToken ||
-      (req.headers['x-refresh-token'] as string | undefined);
+      (req.headers['x-refresh-token'] as string | undefined) ||
+      req.cookies?.[REFRESH_COOKIE];
     if (!token) throw unauthenticated('No session. Please sign in.');
 
     const session = await authService.refresh(token, auditContext(req));

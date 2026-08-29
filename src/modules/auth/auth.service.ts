@@ -618,54 +618,53 @@ export async function refresh(refreshToken: string, ctx: AuditContext): Promise<
     include: { user: true },
   });
 
-  // If token was revoked recently (within a 30s grace window), reuse the active session replacing it.
-  // This allows concurrent requests or multiple open tabs to refresh smoothly without locking the user out.
-  const REFRESH_GRACE_MS = 30_000;
-  if (
-    session &&
-    session.revokedAt &&
-    !session.user.deletedAt &&
-    session.user.status !== CmsUserStatus.DEACTIVATED
-  ) {
-    const elapsedSinceRevoke = Date.now() - session.revokedAt.getTime();
-    if (elapsedSinceRevoke < REFRESH_GRACE_MS && session.expiresAt > new Date()) {
-      const latestSession = await prisma.cmsSession.findFirst({
-        where: {
-          userId: session.userId,
-          revokedAt: null,
-          expiresAt: { gt: new Date() },
-        },
-        orderBy: { createdAt: 'desc' },
-        include: { user: true },
-      });
-      if (latestSession) {
-        const user = latestSession.user;
-        const defaultTtlMs = ttlToMs(env.REFRESH_TOKEN_TTL);
-        const originalLifetimeMs = latestSession.expiresAt.getTime() - latestSession.createdAt.getTime();
-        const isRemembered = originalLifetimeMs > defaultTtlMs * 1.5;
+  const defaultTtlMs = ttlToMs(env.REFRESH_TOKEN_TTL);
+  const rememberTtlMs = ttlToMs(env.REFRESH_TOKEN_TTL_REMEMBER);
 
-        return {
-          accessToken: signAccessToken({
-            sub: user.id,
-            email: user.email,
-            role: user.role,
-            sid: latestSession.id,
-            ver: user.tokenVersion,
-          }),
-          refreshToken,
-          expiresIn: ttlToMs(env.ACCESS_TOKEN_TTL) / 1000,
-          isRemembered,
-          user: {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            role: user.role,
-            roleLabel: ROLE_LABELS[user.role],
-            permissions: permissionsFor(user.role),
-            twofaMethod: user.twofaMethod,
-          },
-        };
-      }
+  // If token is already revoked, check if the user has an active session that hasn't expired
+  if (session && session.revokedAt) {
+    if (session.user.deletedAt || session.user.status === CmsUserStatus.DEACTIVATED) {
+      throw new AppError(403, ErrorCode.ACCOUNT_DEACTIVATED, 'This account has been deactivated.');
+    }
+
+    // Look for the user's latest active session
+    const activeSession = await prisma.cmsSession.findFirst({
+      where: {
+        userId: session.userId,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: { user: true },
+    });
+
+    if (activeSession) {
+      const user = activeSession.user;
+      const wasRemembered =
+        activeSession.expiresAt.getTime() - activeSession.createdAt.getTime() > defaultTtlMs * 1.5 ||
+        activeSession.expiresAt.getTime() - Date.now() > defaultTtlMs;
+
+      return {
+        accessToken: signAccessToken({
+          sub: user.id,
+          email: user.email,
+          role: user.role,
+          sid: activeSession.id,
+          ver: user.tokenVersion,
+        }),
+        refreshToken,
+        expiresIn: ttlToMs(env.ACCESS_TOKEN_TTL) / 1000,
+        isRemembered: wasRemembered,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          roleLabel: ROLE_LABELS[user.role],
+          permissions: permissionsFor(user.role),
+          twofaMethod: user.twofaMethod,
+        },
+      };
     }
   }
 
@@ -677,10 +676,13 @@ export async function refresh(refreshToken: string, ctx: AuditContext): Promise<
   }
 
   const newToken = generateToken();
-  const remainingMs = session.expiresAt.getTime() - Date.now();
-  const defaultTtlMs = ttlToMs(env.REFRESH_TOKEN_TTL);
-  const originalLifetimeMs = session.expiresAt.getTime() - session.createdAt.getTime();
-  const isRemembered = originalLifetimeMs > defaultTtlMs * 1.5;
+  const wasRemembered =
+    session.expiresAt.getTime() - session.createdAt.getTime() > defaultTtlMs * 1.5 ||
+    session.expiresAt.getTime() - Date.now() > defaultTtlMs;
+
+  // Extend sliding expiration: 7 days if remembered, 8 hours if regular session
+  const slidingTtlMs = wasRemembered ? rememberTtlMs : defaultTtlMs;
+  const newExpiresAt = new Date(Date.now() + slidingTtlMs);
 
   const rotated = await prisma.$transaction(async (tx) => {
     await tx.cmsSession.update({
@@ -693,9 +695,7 @@ export async function refresh(refreshToken: string, ctx: AuditContext): Promise<
         refreshTokenHash: hashToken(newToken),
         ip: ctx.ip,
         userAgent: ctx.userAgent,
-        // Sliding window is capped by the original expiry — refreshing forever
-        // must not extend a session indefinitely.
-        expiresAt: new Date(Date.now() + remainingMs),
+        expiresAt: newExpiresAt,
       },
       select: { id: true },
     });
@@ -712,7 +712,7 @@ export async function refresh(refreshToken: string, ctx: AuditContext): Promise<
     }),
     refreshToken: newToken,
     expiresIn: ttlToMs(env.ACCESS_TOKEN_TTL) / 1000,
-    isRemembered,
+    isRemembered: wasRemembered,
     user: {
       id: user.id,
       email: user.email,
