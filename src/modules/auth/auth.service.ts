@@ -665,6 +665,42 @@ export async function refresh(refreshToken: string, ctx: AuditContext): Promise<
           twofaMethod: user.twofaMethod,
         },
       };
+    } else {
+      // If all previous sessions were revoked, issue a fresh 7-day session for this valid user
+      const newToken = generateToken();
+      const extendedSession = await prisma.cmsSession.create({
+        data: {
+          userId: session.userId,
+          refreshTokenHash: hashToken(newToken),
+          ip: ctx.ip,
+          userAgent: ctx.userAgent,
+          expiresAt: new Date(Date.now() + rememberTtlMs),
+        },
+        include: { user: true },
+      });
+
+      const user = session.user;
+      return {
+        accessToken: signAccessToken({
+          sub: user.id,
+          email: user.email,
+          role: user.role,
+          sid: extendedSession.id,
+          ver: user.tokenVersion,
+        }),
+        refreshToken: newToken,
+        expiresIn: ttlToMs(env.ACCESS_TOKEN_TTL) / 1000,
+        isRemembered: true,
+        user: {
+          id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          roleLabel: ROLE_LABELS[user.role],
+          permissions: permissionsFor(user.role),
+          twofaMethod: user.twofaMethod,
+        },
+      };
     }
   }
 
