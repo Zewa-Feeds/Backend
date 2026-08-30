@@ -18,6 +18,10 @@ const sessionFindFirst = vi.fn();
 const sessionUpdate = vi.fn();
 const backupCodeDeleteMany = vi.fn();
 const backupCodeCreateMany = vi.fn();
+const sessionTokenFindUnique = vi.fn();
+const sessionTokenCreate = vi.fn();
+const sessionTokenUpdateMany = vi.fn();
+const sessionTokenDeleteMany = vi.fn();
 const backupCodeFindFirst = vi.fn();
 const backupCodeUpdate = vi.fn();
 const auditCreate = vi.fn();
@@ -34,6 +38,11 @@ const transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({
   cmsSession: {
     update: (...args: unknown[]) => sessionUpdate(...args),
     create: (...args: unknown[]) => sessionCreate(...args),
+  },
+  cmsSessionToken: {
+    create: (...args: unknown[]) => sessionTokenCreate(...args),
+    updateMany: (...args: unknown[]) => sessionTokenUpdateMany(...args),
+    deleteMany: (...args: unknown[]) => sessionTokenDeleteMany(...args),
   },
   backupCode: {
     deleteMany: (...args: unknown[]) => backupCodeDeleteMany(...args),
@@ -62,6 +71,12 @@ vi.mock('@/lib/prisma', () => ({
       findUnique: (...args: unknown[]) => sessionFindUnique(...args),
       findFirst: (...args: unknown[]) => sessionFindFirst(...args),
       update: (...args: unknown[]) => sessionUpdate(...args),
+    },
+    cmsSessionToken: {
+      findUnique: (...args: unknown[]) => sessionTokenFindUnique(...args),
+      create: (...args: unknown[]) => sessionTokenCreate(...args),
+      updateMany: (...args: unknown[]) => sessionTokenUpdateMany(...args),
+      deleteMany: (...args: unknown[]) => sessionTokenDeleteMany(...args),
     },
     backupCode: {
       findFirst: (...args: unknown[]) => backupCodeFindFirst(...args),
@@ -403,88 +418,135 @@ describe('CMS Email OTP & Optional Authenticator Auth', () => {
     expect(noRememberSession.isRemembered).toBe(false);
   });
 
-  it('Session Refresh: rotates token and preserves remember=true status', async () => {
+  /*
+   * These two replace tests that pinned the OLD refresh behaviour, in which a
+   * REVOKED token was honoured by finding some other live session for the user —
+   * and, failing that, by minting a brand new 7-day session. That made logout
+   * meaningless, so the behaviour is gone and so are the tests asserting it.
+   */
+
+  const activeUser = {
+    id: 'usr-123',
+    email: 'admin@zewafeeds.com',
+    name: 'Admin User',
+    role: Role.ADMIN,
+    status: CmsUserStatus.ACTIVE,
+    twofaMethod: TwofaMethod.EMAIL_OTP,
+    tokenVersion: 0,
+    deletedAt: null,
+  };
+
+  it('Session Refresh: rotates the token and keeps remember=true', async () => {
     const rawRefreshToken = 'valid_refresh_token_123';
     const now = Date.now();
-    const createdAt = new Date(now - 1000 * 60 * 60 * 24); // 1 day ago
-    const expiresAt = new Date(now + 1000 * 60 * 60 * 24 * 6); // 6 days remaining (7d total)
 
-    sessionFindUnique.mockResolvedValue({
-      id: 'sess-active-1',
-      userId: 'usr-123',
-      refreshTokenHash: hashToken(rawRefreshToken),
-      revokedAt: null,
-      createdAt,
-      expiresAt,
-      user: {
-        id: 'usr-123',
-        email: 'admin@zewafeeds.com',
-        name: 'Admin User',
-        role: Role.ADMIN,
-        status: CmsUserStatus.ACTIVE,
-        twofaMethod: TwofaMethod.EMAIL_OTP,
-        tokenVersion: 0,
-        deletedAt: null,
+    sessionTokenFindUnique.mockResolvedValue({
+      tokenHash: hashToken(rawRefreshToken),
+      sessionId: 'sess-active-1',
+      // The current token expires with its session, not in a replay window.
+      expiresAt: new Date(now + 1000 * 60 * 60 * 24 * 6),
+      supersededAt: null,
+      session: {
+        id: 'sess-active-1',
+        userId: 'usr-123',
+        // Read from the COLUMN now — never inferred from expiry arithmetic.
+        rememberMe: true,
+        revokedAt: null,
+        createdAt: new Date(now - 1000 * 60 * 60 * 24),
+        expiresAt: new Date(now + 1000 * 60 * 60 * 24 * 6),
+        user: activeUser,
       },
     });
-
+    sessionTokenCreate.mockResolvedValue({ id: 'tok-2' });
     sessionUpdate.mockResolvedValue({ id: 'sess-active-1' });
-    sessionCreate.mockResolvedValue({ id: 'sess-rotated-2' });
+
+    const refreshed = await authService.refresh(rawRefreshToken, dummyCtx);
+
+    expect(refreshed.refreshToken).toBeDefined();
+    expect(refreshed.refreshToken).not.toBe(rawRefreshToken);
+    expect(refreshed.isRemembered).toBe(true);
+    expect(refreshed.user.email).toBe('admin@zewafeeds.com');
+
+    // Rotation must UPDATE the existing session, never create a second one —
+    // a stable session id is what keeps other tabs' access tokens valid.
+    expect(sessionCreate).not.toHaveBeenCalled();
+    expect(sessionUpdate).toHaveBeenCalled();
+  });
+
+  it('Session Refresh: a superseded token inside its window still rotates', async () => {
+    // The multi-tab case: another tab rotated a moment ago, and this one arrives
+    // holding the token that rotation superseded.
+    const rawRefreshToken = 'just_superseded_token_123';
+    const now = Date.now();
+
+    sessionTokenFindUnique.mockResolvedValue({
+      tokenHash: hashToken(rawRefreshToken),
+      sessionId: 'sess-active-1',
+      supersededAt: new Date(now - 5000),
+      expiresAt: new Date(now + 55_000), // still inside the replay window
+      session: {
+        id: 'sess-active-1',
+        userId: 'usr-123',
+        rememberMe: true,
+        revokedAt: null,
+        createdAt: new Date(now - 10000),
+        expiresAt: new Date(now + 1000 * 60 * 60 * 24 * 7),
+        user: activeUser,
+      },
+    });
+    sessionTokenCreate.mockResolvedValue({ id: 'tok-3' });
+    sessionUpdate.mockResolvedValue({ id: 'sess-active-1' });
 
     const refreshed = await authService.refresh(rawRefreshToken, dummyCtx);
 
     expect(refreshed.accessToken).toBeDefined();
-    expect(refreshed.refreshToken).toBeDefined();
-    expect(refreshed.isRemembered).toBe(true);
     expect(refreshed.user.email).toBe('admin@zewafeeds.com');
+    expect(sessionCreate).not.toHaveBeenCalled();
   });
 
-  it('Session Refresh: reuses active session during multi-tab grace window', async () => {
-    const rawRefreshToken = 'just_rotated_token_123';
+  it('Session Refresh: a token past its replay window revokes the family', async () => {
+    const rawRefreshToken = 'long_dead_token_123';
     const now = Date.now();
 
-    // Session that was rotated 5 seconds ago (within 30s grace window)
-    sessionFindUnique.mockResolvedValue({
-      id: 'sess-old-1',
-      userId: 'usr-123',
-      refreshTokenHash: hashToken(rawRefreshToken),
-      revokedAt: new Date(now - 5000),
-      createdAt: new Date(now - 10000),
-      expiresAt: new Date(now + 1000 * 60 * 60 * 24 * 7),
-      user: {
-        id: 'usr-123',
-        email: 'admin@zewafeeds.com',
-        name: 'Admin User',
-        role: Role.ADMIN,
-        status: CmsUserStatus.ACTIVE,
-        twofaMethod: TwofaMethod.EMAIL_OTP,
-        tokenVersion: 0,
-        deletedAt: null,
+    sessionTokenFindUnique.mockResolvedValue({
+      tokenHash: hashToken(rawRefreshToken),
+      sessionId: 'sess-active-1',
+      supersededAt: new Date(now - 600_000),
+      expiresAt: new Date(now - 540_000), // window closed nine minutes ago
+      session: {
+        id: 'sess-active-1',
+        userId: 'usr-123',
+        rememberMe: true,
+        revokedAt: null,
+        createdAt: new Date(now - 1000 * 60 * 60),
+        expiresAt: new Date(now + 1000 * 60 * 60 * 24 * 7),
+        user: activeUser,
       },
     });
+    sessionUpdate.mockResolvedValue({ id: 'sess-active-1' });
 
-    // The new active session replacing it
-    sessionFindFirst.mockResolvedValue({
-      id: 'sess-new-2',
-      userId: 'usr-123',
-      revokedAt: null,
-      createdAt: new Date(now - 5000),
-      expiresAt: new Date(now + 1000 * 60 * 60 * 24 * 7),
-      user: {
-        id: 'usr-123',
-        email: 'admin@zewafeeds.com',
-        name: 'Admin User',
-        role: Role.ADMIN,
-        status: CmsUserStatus.ACTIVE,
-        twofaMethod: TwofaMethod.EMAIL_OTP,
-        tokenVersion: 0,
-        deletedAt: null,
-      },
-    });
+    await expect(authService.refresh(rawRefreshToken, dummyCtx)).rejects.toThrow(
+      /Session expired/i,
+    );
 
-    const result = await authService.refresh(rawRefreshToken, dummyCtx);
+    // Reuse detection: the session is revoked, not merely refused.
+    expect(sessionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ revokedReason: 'rotation_reuse' }),
+      }),
+    );
+  });
 
-    expect(result.accessToken).toBeDefined();
-    expect(result.user.email).toBe('admin@zewafeeds.com');
+  it('Session Refresh: an unknown token is refused and mints nothing', async () => {
+    // The old code answered this case by CREATING a fresh 7-day session, which
+    // let any token ever issued be replayed into a new login.
+    sessionTokenFindUnique.mockResolvedValue(null);
+
+    await expect(authService.refresh('never_issued_token', dummyCtx)).rejects.toThrow(
+      /Session expired/i,
+    );
+
+    expect(sessionCreate).not.toHaveBeenCalled();
+    expect(sessionTokenCreate).not.toHaveBeenCalled();
   });
 });

@@ -34,14 +34,35 @@ export const authRouter = Router();
 /** Name kept generic — it should not advertise what it holds. */
 const REFRESH_COOKIE = 'zewa_rt';
 
+/**
+ * The refresh cookie, and why it is a CONVENIENCE rather than the session.
+ *
+ * In production the CMS is `cms.zewafeeds.com` and this API is
+ * `zewa-api.onrender.com` — different registrable domains, so `zewa_rt` is a
+ * THIRD-PARTY cookie. `SameSite=None; Secure` is the most that can be asked for
+ * and it still is not enough: Safari's ITP blocks it outright, Chrome blocks it
+ * in Incognito and under its third-party cookie controls, and Firefox partitions
+ * it. A session that depends on this cookie is a session that vanishes for a
+ * large share of users with no error to show for it.
+ *
+ * So the cookie is set, and used when the browser allows it, but the CMS treats
+ * the refresh token it holds itself as authoritative and sends it in the request
+ * body. This is not two competing mechanisms: it is one credential, with the
+ * cookie as an additional carrier for it.
+ *
+ * The durable fix is to serve this API from a sibling subdomain — `api.zewafeeds.com`
+ * — which makes `zewa_rt` first-party, at which point the body copy can be
+ * dropped and the token can go back to being httpOnly-only.
+ */
 const refreshCookieOptions = (maxAgeMs?: number) =>
   ({
     httpOnly: true,
-    // Required for SameSite=None in cross-site production; harmless locally.
+    // SameSite=None is only honoured on a Secure cookie.
     secure: env.isProd,
-    // The CSRF defence for the refresh endpoint.
     sameSite: env.isProd ? ('none' as const) : ('lax' as const),
     path: '/api/v1/admin/auth',
+    // Omitting maxAge makes this a SESSION cookie, which dies when the browser
+    // closes — correct only when "remember me" was not ticked.
     ...(maxAgeMs !== undefined ? { maxAge: maxAgeMs } : {}),
   }) as const;
 
@@ -209,7 +230,18 @@ authRouter.post(
       req.body?.refreshToken ||
       (req.headers['x-refresh-token'] as string | undefined);
     await authService.logout(token);
-    res.clearCookie(REFRESH_COOKIE, { path: '/api/v1/admin/auth' });
+    /*
+     * Clearing MUST repeat the attributes the cookie was set with.
+     *
+     * A browser matches a deletion against name + domain + path, and it will not
+     * accept a SameSite=None cookie delivered without Secure. Passing only
+     * `path` here — as this did — produced
+     *   `zewa_rt=; Path=/api/v1/admin/auth; Expires=Thu, 01 Jan 1970 …`
+     * with no Secure and no SameSite, which a cross-site browser is entitled to
+     * ignore. Sign-out revoked the session server-side but could leave the dead
+     * cookie sitting in the browser.
+     */
+    res.clearCookie(REFRESH_COOKIE, refreshCookieOptions());
     res.json({ data: { ok: true } });
   }),
 );
@@ -245,14 +277,23 @@ authRouter.post(
     const user = currentUser(req);
     const { currentPassword, newPassword } = req.body;
 
+    // The caller's own session id, so the re-issued session keeps their
+    // "remember me" choice instead of silently dropping to the short TTL.
+    const claims = verifyAccessToken(req.get('authorization')?.slice(7) ?? '');
+
     const session = await authService.changePassword(
       user.id,
       currentPassword,
       newPassword,
       auditContext(req),
+      claims.sid,
     );
 
-    res.cookie(REFRESH_COOKIE, session.refreshToken, refreshCookieOptions(rememberCookieMaxAge()));
+    res.cookie(
+      REFRESH_COOKIE,
+      session.refreshToken,
+      refreshCookieOptions(session.isRemembered ? rememberCookieMaxAge() : undefined),
+    );
     res.json({ data: session });
   }),
 );

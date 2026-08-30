@@ -870,22 +870,80 @@ model CmsInvitation {
   @@index([userId])
 }
 
+/// One row per SESSION FAMILY — created at sign-in, and kept for the life of the
+/// session. Refresh-token rotation UPDATES this row rather than creating a new
+/// one, which is what makes `id` a stable session identity.
+///
+/// That stability is load-bearing. Access tokens carry the session id as `sid`
+/// and middleware/auth.ts rejects a token whose session row is revoked. When
+/// rotation created a new row and revoked the old one, every OTHER tab's access
+/// token died the instant any one tab refreshed — so N tabs stampeded the
+/// refresh endpoint, each revoking the others. Rotating in place ends that:
+/// other tabs keep working until their own 15-minute token expires normally.
 model CmsSession {
   id     String @id @default(uuid())
   userId String
 
+  /// sha256 of the CURRENT refresh token.
   refreshTokenHash String  @unique
   ip               String
   userAgent        String?
 
-  expiresAt  DateTime
-  revokedAt  DateTime?
-  createdAt  DateTime  @default(now())
-  lastSeenAt DateTime  @default(now())
+  rotatedAt DateTime?
 
-  user CmsUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Whether "Remember me for 7 days" was ticked at sign-in.
+  ///
+  /// Stored, not inferred. This used to be reverse-engineered by comparing
+  /// expiresAt against createdAt, which quietly misclassified a session whenever
+  /// the two TTLs were close and had no answer at all on the rotation path.
+  rememberMe Boolean @default(false)
+
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  /// Why the session ended — 'logout' | 'rotation_reuse' | 'password_change' | …
+  revokedReason String?
+  createdAt     DateTime  @default(now())
+  lastSeenAt    DateTime  @default(now())
+
+  user   CmsUser           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokens CmsSessionToken[]
 
   @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Every refresh token ever issued for a session, with its own expiry.
+///
+/// ── WHY A TABLE AND NOT A COLUMN ────────────────────────────────────────────
+/// Rotation has to stay safe when two tabs act at the same instant. Both hold
+/// token T1; one rotates to T2, the other arrives still holding T1. Keeping only
+/// "current" and "previous" on the session cannot express that safely — the
+/// second tab's rotation overwrites the link, and T2, which the FIRST tab is
+/// still holding, stops resolving to anything. That tab is then logged out by
+/// the very mechanism meant to protect it.
+///
+/// With a row per token, every token issued inside the replay window resolves to
+/// its family, so no tab is orphaned by another tab's rotation. Rotating marks
+/// the outstanding tokens superseded and gives them a short expiry; redeeming a
+/// token PAST that expiry is genuine reuse and revokes the family.
+model CmsSessionToken {
+  id        String @id @default(uuid())
+  sessionId String
+
+  /// sha256 of the opaque token. The plaintext is never stored, which is also
+  /// why a superseded token cannot simply be handed back to a racing caller —
+  /// each redemption issues its own successor instead.
+  tokenHash String @unique
+
+  /// The current token expires with its session; a superseded one expires at the
+  /// end of its short replay window.
+  expiresAt    DateTime
+  supersededAt DateTime?
+  createdAt    DateTime  @default(now())
+
+  session CmsSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
   @@index([expiresAt])
 }
 

@@ -10,7 +10,14 @@
  * password alone gets you nothing.
  */
 import crypto from 'node:crypto';
-import { AuditModule, CmsUserStatus, type CmsUser, type Role, TwofaMethod } from '@prisma/client';
+import {
+  AuditModule,
+  CmsUserStatus,
+  type CmsUser,
+  Prisma,
+  type Role,
+  TwofaMethod,
+} from '@prisma/client';
 import { authenticator } from 'otplib';
 import { prisma } from '@/lib/prisma';
 import {
@@ -393,13 +400,19 @@ async function openSession(
   const refreshToken = generateToken();
   const ttl = ttlToMs(remember ? env.REFRESH_TOKEN_TTL_REMEMBER : env.REFRESH_TOKEN_TTL);
 
+  const expiresAt = new Date(Date.now() + ttl);
   const session = await prisma.cmsSession.create({
     data: {
       userId: user.id,
       refreshTokenHash: hashToken(refreshToken),
       ip: ctx.ip,
       userAgent: ctx.userAgent,
-      expiresAt: new Date(Date.now() + ttl),
+      expiresAt,
+      // Recorded now, so no later code path has to reverse-engineer it from
+      // timestamps. Rotation reads this to size the next sliding window.
+      rememberMe: remember,
+      // The first link in the chain. Rotation only ever adds to this.
+      tokens: { create: { tokenHash: hashToken(refreshToken), expiresAt } },
     },
     select: { id: true },
   });
@@ -605,150 +618,49 @@ export async function regenerateBackupCodes(
 // ---- Refresh / logout ------------------------------------------------------
 
 /**
- * Rotate a refresh token.
+ * How long a superseded refresh token stays redeemable after rotation.
  *
- * The old token is revoked and a new one issued on every refresh. If a stolen
- * token is used after the legitimate client has refreshed, it is already revoked
- * and fails — which both blocks the attacker and surfaces the theft.
+ * This is a CHAIN WINDOW, not a grace period bolted on to hide a race. Tabs
+ * waking together all hold the same token; the first to act rotates, and the
+ * others arrive milliseconds later holding what is now a superseded token.
+ * Inside this window they are following the chain and each receives its own
+ * successor. Outside it, the legitimate client would long since have moved on,
+ * so presentation is reuse — and reuse revokes the family.
+ *
+ * Short on purpose: the window is exactly the blast radius of a stolen token.
  */
-export async function refresh(refreshToken: string, ctx: AuditContext): Promise<SessionResult> {
-  const tokenHash = hashToken(refreshToken);
-  let session = await prisma.cmsSession.findUnique({
-    where: { refreshTokenHash: tokenHash },
-    include: { user: true },
+const TOKEN_REPLAY_WINDOW_MS = 60_000;
+
+/** Issue a token row for a session and return the plaintext. */
+async function issueSessionToken(
+  tx: Prisma.TransactionClient,
+  sessionId: string,
+  expiresAt: Date,
+): Promise<string> {
+  const token = generateToken();
+  await tx.cmsSessionToken.create({
+    data: { sessionId, tokenHash: hashToken(token), expiresAt },
   });
+  return token;
+}
 
-  const defaultTtlMs = ttlToMs(env.REFRESH_TOKEN_TTL);
-  const rememberTtlMs = ttlToMs(env.REFRESH_TOKEN_TTL_REMEMBER);
-
-  // If token is already revoked, check if the user has an active session that hasn't expired
-  if (session && session.revokedAt) {
-    if (session.user.deletedAt || session.user.status === CmsUserStatus.DEACTIVATED) {
-      throw new AppError(403, ErrorCode.ACCOUNT_DEACTIVATED, 'This account has been deactivated.');
-    }
-
-    // Look for the user's latest active session
-    const activeSession = await prisma.cmsSession.findFirst({
-      where: {
-        userId: session.userId,
-        revokedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-      orderBy: { createdAt: 'desc' },
-      include: { user: true },
-    });
-
-    if (activeSession) {
-      const user = activeSession.user;
-      const wasRemembered =
-        activeSession.expiresAt.getTime() - activeSession.createdAt.getTime() > defaultTtlMs * 1.5 ||
-        activeSession.expiresAt.getTime() - Date.now() > defaultTtlMs;
-
-      return {
-        accessToken: signAccessToken({
-          sub: user.id,
-          email: user.email,
-          role: user.role,
-          sid: activeSession.id,
-          ver: user.tokenVersion,
-        }),
-        refreshToken,
-        expiresIn: ttlToMs(env.ACCESS_TOKEN_TTL) / 1000,
-        isRemembered: wasRemembered,
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          roleLabel: ROLE_LABELS[user.role],
-          permissions: permissionsFor(user.role),
-          twofaMethod: user.twofaMethod,
-        },
-      };
-    } else {
-      // If all previous sessions were revoked, issue a fresh 7-day session for this valid user
-      const newToken = generateToken();
-      const extendedSession = await prisma.cmsSession.create({
-        data: {
-          userId: session.userId,
-          refreshTokenHash: hashToken(newToken),
-          ip: ctx.ip,
-          userAgent: ctx.userAgent,
-          expiresAt: new Date(Date.now() + rememberTtlMs),
-        },
-        include: { user: true },
-      });
-
-      const user = session.user;
-      return {
-        accessToken: signAccessToken({
-          sub: user.id,
-          email: user.email,
-          role: user.role,
-          sid: extendedSession.id,
-          ver: user.tokenVersion,
-        }),
-        refreshToken: newToken,
-        expiresIn: ttlToMs(env.ACCESS_TOKEN_TTL) / 1000,
-        isRemembered: true,
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          roleLabel: ROLE_LABELS[user.role],
-          permissions: permissionsFor(user.role),
-          twofaMethod: user.twofaMethod,
-        },
-      };
-    }
-  }
-
-  if (!session || session.revokedAt || session.expiresAt < new Date()) {
-    throw unauthenticated('Session expired. Please sign in again.', ErrorCode.TOKEN_EXPIRED);
-  }
-  if (session.user.deletedAt || session.user.status === CmsUserStatus.DEACTIVATED) {
-    throw new AppError(403, ErrorCode.ACCOUNT_DEACTIVATED, 'This account has been deactivated.');
-  }
-
-  const newToken = generateToken();
-  const wasRemembered =
-    session.expiresAt.getTime() - session.createdAt.getTime() > defaultTtlMs * 1.5 ||
-    session.expiresAt.getTime() - Date.now() > defaultTtlMs;
-
-  // Extend sliding expiration: 7 days if remembered, 8 hours if regular session
-  const slidingTtlMs = wasRemembered ? rememberTtlMs : defaultTtlMs;
-  const newExpiresAt = new Date(Date.now() + slidingTtlMs);
-
-  const rotated = await prisma.$transaction(async (tx) => {
-    await tx.cmsSession.update({
-      where: { id: session.id },
-      data: { revokedAt: new Date() },
-    });
-    return tx.cmsSession.create({
-      data: {
-        userId: session.userId,
-        refreshTokenHash: hashToken(newToken),
-        ip: ctx.ip,
-        userAgent: ctx.userAgent,
-        expiresAt: newExpiresAt,
-      },
-      select: { id: true },
-    });
-  });
-
-  const user = session.user;
+/** Shape a SessionResult from a session row and its user. */
+function sessionResult(
+  user: CmsUser,
+  session: { id: string; rememberMe: boolean },
+  refreshToken: string,
+): SessionResult {
   return {
     accessToken: signAccessToken({
       sub: user.id,
       email: user.email,
       role: user.role,
-      sid: rotated.id,
+      sid: session.id,
       ver: user.tokenVersion,
     }),
-    refreshToken: newToken,
+    refreshToken,
     expiresIn: ttlToMs(env.ACCESS_TOKEN_TTL) / 1000,
-    isRemembered: wasRemembered,
+    isRemembered: session.rememberMe,
     user: {
       id: user.id,
       email: user.email,
@@ -761,18 +673,140 @@ export async function refresh(refreshToken: string, ctx: AuditContext): Promise<
   };
 }
 
+/**
+ * Rotate a refresh token.
+ *
+ * ── WHAT THIS REPLACED, AND WHY ─────────────────────────────────────────────
+ * The previous implementation, handed a revoked token, searched for any other
+ * live session belonging to that user and — failing that — MINTED A BRAND NEW
+ * 7-DAY SESSION. That made logout meaningless: any refresh token ever issued
+ * could be replayed forever to manufacture a session. It also returned the
+ * caller its own dead token as the "rotated" one, so a client following the
+ * protocol stored a corpse and rotation never actually advanced.
+ *
+ * Now: the presented token is looked up in CmsSessionToken, and there are
+ * exactly three outcomes.
+ *   1. live token (current, or superseded but inside its window)
+ *        → rotate: supersede the outstanding tokens, issue a successor
+ *   2. token past its replay window
+ *        → reuse; revoke the whole family
+ *   3. unknown token
+ *        → 401, and nothing is created
+ */
+export async function refresh(refreshToken: string, ctx: AuditContext): Promise<SessionResult> {
+  const tokenHash = hashToken(refreshToken);
+  const now = new Date();
+
+  const record = await prisma.cmsSessionToken.findUnique({
+    where: { tokenHash },
+    include: { session: { include: { user: true } } },
+  });
+
+  // An unknown token proves nothing and must never mint a session.
+  if (!record) {
+    throw unauthenticated('Session expired. Please sign in again.', ErrorCode.TOKEN_EXPIRED);
+  }
+
+  const { session } = record;
+
+  // ---- Reuse detection ----------------------------------------------------
+  // A token presented after its window means two holders of one credential, the
+  // legitimate one having rotated past it. Kill the family: a stolen token must
+  // not outlive its theft, and the true owner re-authenticating is the cost.
+  if (record.expiresAt <= now) {
+    if (!session.revokedAt) {
+      await prisma.cmsSession.update({
+        where: { id: session.id },
+        data: { revokedAt: now, revokedReason: 'rotation_reuse' },
+      });
+      writeAuditSafe(
+        {
+          ...ctx,
+          actorId: session.user.id,
+          actorName: session.user.name,
+          actorRole: ROLE_LABELS[session.user.role],
+        },
+        {
+          module: AuditModule.AUTH,
+          action: 'Refresh token reuse detected; session revoked',
+          recordId: session.user.email,
+        },
+      );
+    }
+    throw unauthenticated('Session expired. Please sign in again.', ErrorCode.TOKEN_EXPIRED);
+  }
+
+  if (session.revokedAt || session.expiresAt < now) {
+    throw unauthenticated('Session expired. Please sign in again.', ErrorCode.TOKEN_EXPIRED);
+  }
+  if (session.user.deletedAt || session.user.status === CmsUserStatus.DEACTIVATED) {
+    throw new AppError(403, ErrorCode.ACCOUNT_DEACTIVATED, 'This account has been deactivated.');
+  }
+
+  // ---- Rotate --------------------------------------------------------------
+  // Sliding window sized from the STORED rememberMe flag rather than inferred
+  // from what is left of the current expiry — the bug that let a persistent
+  // session quietly decay into a short one on every rotation.
+  const slidingTtlMs = ttlToMs(
+    session.rememberMe ? env.REFRESH_TOKEN_TTL_REMEMBER : env.REFRESH_TOKEN_TTL,
+  );
+  const newExpiresAt = new Date(now.getTime() + slidingTtlMs);
+  const replayUntil = new Date(now.getTime() + TOKEN_REPLAY_WINDOW_MS);
+
+  const newToken = await prisma.$transaction(async (tx) => {
+    // Every token still outstanding for this family becomes superseded, keeping
+    // only a short window. A sibling tab holding one is therefore still able to
+    // rotate — it is not orphaned by this rotation — but only briefly.
+    await tx.cmsSessionToken.updateMany({
+      where: { sessionId: session.id, supersededAt: null },
+      data: { supersededAt: now, expiresAt: replayUntil },
+    });
+
+    const issued = await issueSessionToken(tx, session.id, newExpiresAt);
+
+    await tx.cmsSession.update({
+      where: { id: session.id },
+      data: {
+        refreshTokenHash: hashToken(issued),
+        rotatedAt: now,
+        expiresAt: newExpiresAt,
+        lastSeenAt: now,
+      },
+    });
+
+    // Keep the table from growing without bound; anything past its window is
+    // unusable, and a revoked family is caught by the session row itself.
+    await tx.cmsSessionToken.deleteMany({
+      where: { sessionId: session.id, expiresAt: { lt: new Date(now.getTime() - 3_600_000) } },
+    });
+
+    return issued;
+  });
+
+  return sessionResult(session.user, session, newToken);
+}
+
 export async function logout(refreshToken: string | undefined, sessionId?: string): Promise<void> {
   if (refreshToken) {
-    await prisma.cmsSession.updateMany({
-      where: { refreshTokenHash: hashToken(refreshToken), revokedAt: null },
-      data: { revokedAt: new Date() },
+    // Resolve through the token table, so a tab holding a token that was
+    // superseded moments ago still signs its own session out instead of
+    // silently matching nothing and leaving it alive.
+    const record = await prisma.cmsSessionToken.findUnique({
+      where: { tokenHash: hashToken(refreshToken) },
+      select: { sessionId: true },
     });
+    if (record) {
+      await prisma.cmsSession.updateMany({
+        where: { id: record.sessionId, revokedAt: null },
+        data: { revokedAt: new Date(), revokedReason: 'logout' },
+      });
+    }
     return;
   }
   if (sessionId) {
     await prisma.cmsSession.updateMany({
       where: { id: sessionId, revokedAt: null },
-      data: { revokedAt: new Date() },
+      data: { revokedAt: new Date(), revokedReason: 'logout' },
     });
   }
 }
@@ -791,6 +825,7 @@ export async function changePassword(
   currentPassword: string,
   newPassword: string,
   ctx: AuditContext,
+  currentSessionId?: string,
 ): Promise<SessionResult> {
   const user = await prisma.cmsUser.findUniqueOrThrow({ where: { id: userId } });
 
@@ -805,6 +840,17 @@ export async function changePassword(
 
   const newHash = await hashPassword(newPassword);
 
+  // Carry the caller's "remember me" choice across the re-issue. Hard-coding
+  // false here silently demoted a 7-day session to 8 hours as a side effect of
+  // changing a password, while the CMS went on believing it was still persistent.
+  const current = currentSessionId
+    ? await prisma.cmsSession.findUnique({
+        where: { id: currentSessionId },
+        select: { rememberMe: true },
+      })
+    : null;
+  const remember = current?.rememberMe ?? false;
+
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.cmsUser.update({
       where: { id: userId },
@@ -817,7 +863,7 @@ export async function changePassword(
     // Every device must re-authenticate.
     await tx.cmsSession.updateMany({
       where: { userId, revokedAt: null },
-      data: { revokedAt: new Date() },
+      data: { revokedAt: new Date(), revokedReason: 'password_change' },
     });
     await writeAudit(
       ctx,
@@ -827,7 +873,7 @@ export async function changePassword(
     return row;
   });
 
-  return openSession(updated, ctx, false, 'Re-authenticated after password change');
+  return openSession(updated, ctx, remember, 'Re-authenticated after password change');
 }
 
 // ---- Sessions (§14.4) ------------------------------------------------------
@@ -855,7 +901,7 @@ export async function revokeSession(
 ): Promise<void> {
   const result = await prisma.cmsSession.updateMany({
     where: { id: sessionId, userId, revokedAt: null },
-    data: { revokedAt: new Date() },
+    data: { revokedAt: new Date(), revokedReason: 'terminated' },
   });
 
   if (result.count === 0) {

@@ -42,12 +42,28 @@ export const corsMiddleware: RequestHandler = cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+  /*
+   * EVERY custom header any client sends must be listed here, or the browser
+   * fails the PREFLIGHT and the real request is never sent at all.
+   *
+   * This list is why "remember me" was broken. The CMS started sending its
+   * refresh token in an `X-Refresh-Token` header; this array was not updated to
+   * match, so Chrome rejected the preflight with
+   * `HeaderDisallowedByPreflightResponse` and every POST /auth/refresh died in
+   * the browser. The CMS saw a thrown fetch, could not tell "network down" from
+   * "session invalid", and signed the user out — on hard refresh, in new tabs,
+   * and whenever a 15-minute access token expired.
+   *
+   * `Access-Control-Max-Age: 86400` below made it worse: a browser that once
+   * cached the failing preflight kept failing for a day without asking again.
+   */
   allowedHeaders: [
     'Content-Type',
     'Authorization',
     'X-Request-Id',
     'Idempotency-Key',
     'X-Preview-Token',
+    'X-Refresh-Token',
   ],
   exposedHeaders: ['X-Request-Id', 'Content-Disposition'],
   maxAge: 86_400,
