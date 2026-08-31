@@ -359,23 +359,24 @@ export async function priceCart(input: {
   const packagingWeightGrams = shipping.packagingWeightGrams ?? 100;
   const totalShipmentWeightGrams = totalProductWeightGrams + packagingWeightGrams;
   const slabGrams = shipping.slabWeightGrams && shipping.slabWeightGrams > 0 ? shipping.slabWeightGrams : 500;
-  const chargeableWeightGrams = Math.max(slabGrams, Math.ceil(totalShipmentWeightGrams / slabGrams) * slabGrams);
+  const slabCount = Math.max(1, Math.ceil(totalShipmentWeightGrams / slabGrams));
+  const chargeableWeightGrams = slabCount * slabGrams;
   const chargeableWeightKg = chargeableWeightGrams / 1000;
 
   const hasState = Boolean(input.state && input.state.trim());
   const isKerala = hasState && input.state!.trim().toLowerCase() === 'kerala';
-  const ratePerKgPaise = isKerala
+  const ratePerSlabPaise = isKerala
     ? (shipping.keralaRatePerKgPaise ?? 4500)
     : (shipping.outsideKeralaRatePerKgPaise ?? 7000);
 
-  const calculatedShippingPaise = Math.round(chargeableWeightKg * ratePerKgPaise);
+  const calculatedShippingPaise = slabCount * ratePerSlabPaise;
 
   const payable = subtotalPaise - discountPaise;
   const isFreeShipping = shipping.freeThresholdPaise > 0 && payable >= shipping.freeThresholdPaise;
   /*
    * A FREE_SHIPPING promotion WAIVES the charge; it does not compute one.
    *
-   * The weight, slab and per-kg rate above are untouched and still decide what
+   * The weight, slab and per-slab rate above are untouched and still decide what
    * shipping costs — this only zeroes the result, exactly as the CMS free-shipping
    * threshold does. There is deliberately no second free-shipping configuration.
    */

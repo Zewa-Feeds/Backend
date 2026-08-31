@@ -26,9 +26,9 @@ const CACHE_TTL_SECONDS = 60;
 // ---- Schemas (also the source of defaults) ---------------------------------
 
 export const shippingSchema = z.object({
-  /** ₹/kg in paise for deliveries within Kerala (default 4500 = ₹45/kg). */
+  /** Base rate per 500g slab in paise for deliveries within Kerala (default 4500 = ₹45/slab). */
   keralaRatePerKgPaise: z.number().int().nonnegative().default(4500),
-  /** ₹/kg in paise for deliveries outside Kerala (default 7000 = ₹70/kg). */
+  /** Base rate per 500g slab in paise for deliveries outside Kerala (default 7000 = ₹70/slab). */
   outsideKeralaRatePerKgPaise: z.number().int().nonnegative().default(7000),
   /** Packaging weight overhead in grams added to net product weight (default 100g). */
   packagingWeightGrams: z.number().int().nonnegative().default(100),

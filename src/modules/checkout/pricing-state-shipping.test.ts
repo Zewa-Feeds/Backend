@@ -69,55 +69,59 @@ describe('Weight-based shipping & State Delivery Estimation', () => {
   };
 
   describe('Weight & Packaging Calculations', () => {
-    it('calculates 3 × 45g (135g) + 100g packaging = 235g -> 0.5kg slab', async () => {
+    it('calculates 3 × 45g (135g) + 100g packaging = 235g -> 1 slab (500g)', async () => {
       const v45 = createMockVariant('F3-45G', '45 g', 45, 10000); // 10000 paise = ₹100
       vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
       vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v45] as never);
 
-      // Kerala: 0.5kg * ₹45 = ₹22.50 (2250 paise)
+      // Kerala: 1 slab * ₹45 = ₹45 (4500 paise)
       const resKerala = await priceCart({
         lines: [{ sku: 'F3-45G', qty: 3 }],
         state: 'Kerala',
       });
       expect(resKerala.billableWeightGrams).toBe(235);
       expect(resKerala.chargeableWeightKg).toBe(0.5);
-      expect(resKerala.shippingPaise).toBe(2250); // ₹22.50
-      expect(resKerala.totalPaise).toBe(30000 + 2250);
+      expect(resKerala.shippingPaise).toBe(4500); // ₹45.00
+      expect(resKerala.totalPaise).toBe(30000 + 4500);
 
-      // Outside Kerala: 0.5kg * ₹70 = ₹35.00 (3500 paise)
+      // Outside Kerala: 1 slab * ₹70 = ₹70 (7000 paise)
       const resOutside = await priceCart({
         lines: [{ sku: 'F3-45G', qty: 3 }],
         state: 'Maharashtra',
       });
       expect(resOutside.billableWeightGrams).toBe(235);
       expect(resOutside.chargeableWeightKg).toBe(0.5);
-      expect(resOutside.shippingPaise).toBe(3500); // ₹35.00
-      expect(resOutside.totalPaise).toBe(30000 + 3500);
+      expect(resOutside.shippingPaise).toBe(7000); // ₹70.00
+      expect(resOutside.totalPaise).toBe(30000 + 7000);
     });
 
-    it('calculates 10 × 45g (450g) + 100g packaging = 550g -> 1.0kg slab', async () => {
+    it('calculates 10 × 45g (450g) + 100g packaging = 550g -> 2 slabs (1000g)', async () => {
       const v45 = createMockVariant('F3-45G', '45 g', 45, 5000); // ₹50 each (total ₹500 < ₹999)
       vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
       vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v45] as never);
 
+      // Kerala: 2 slabs * ₹45 = ₹90 (9000 paise)
       const resKerala = await priceCart({
         lines: [{ sku: 'F3-45G', qty: 10 }],
         state: 'Kerala',
       });
       expect(resKerala.billableWeightGrams).toBe(550);
       expect(resKerala.chargeableWeightKg).toBe(1.0);
-      expect(resKerala.shippingPaise).toBe(4500); // ₹45.00
+      expect(resKerala.shippingPaise).toBe(9000); // ₹90.00
+      expect(resKerala.totalPaise).toBe(50000 + 9000);
 
+      // Outside Kerala: 2 slabs * ₹70 = ₹140 (14000 paise)
       const resOutside = await priceCart({
         lines: [{ sku: 'F3-45G', qty: 10 }],
         state: 'Karnataka',
       });
       expect(resOutside.billableWeightGrams).toBe(550);
       expect(resOutside.chargeableWeightKg).toBe(1.0);
-      expect(resOutside.shippingPaise).toBe(7000); // ₹70.00
+      expect(resOutside.shippingPaise).toBe(14000); // ₹140.00
+      expect(resOutside.totalPaise).toBe(50000 + 14000);
     });
 
-    it('Scenario 1: 1 × 45g (45g) + 100g pkg = 145g -> 0.5kg slab -> ₹22.50 for Kerala', async () => {
+    it('Scenario 1: 1 × 45g (45g) + 100g pkg = 145g -> 1 slab -> ₹45 for Kerala', async () => {
       const v45 = createMockVariant('F3-45G', '45 g', 45, 18500); // ₹185
       vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
       vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v45] as never);
@@ -128,11 +132,26 @@ describe('Weight-based shipping & State Delivery Estimation', () => {
       });
       expect(resKerala.billableWeightGrams).toBe(145);
       expect(resKerala.chargeableWeightKg).toBe(0.5);
-      expect(resKerala.shippingPaise).toBe(2250); // ₹22.50
-      expect(resKerala.totalPaise).toBe(18500 + 2250);
+      expect(resKerala.shippingPaise).toBe(4500); // ₹45.00
+      expect(resKerala.totalPaise).toBe(18500 + 4500);
     });
 
-    it('Scenario 2: 10 × 45g (450g) + 100g pkg = 550g -> 1.0kg slab -> ₹45.00 for Kerala', async () => {
+    it('Scenario 1b: 1 × 45g (45g) + 100g pkg = 145g -> 1 slab -> ₹70 Outside Kerala', async () => {
+      const v45 = createMockVariant('F3-45G', '45 g', 45, 18500); // ₹185
+      vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
+      vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v45] as never);
+
+      const resOutside = await priceCart({
+        lines: [{ sku: 'F3-45G', qty: 1 }],
+        state: 'Maharashtra',
+      });
+      expect(resOutside.billableWeightGrams).toBe(145);
+      expect(resOutside.chargeableWeightKg).toBe(0.5);
+      expect(resOutside.shippingPaise).toBe(7000); // ₹70.00
+      expect(resOutside.totalPaise).toBe(18500 + 7000);
+    });
+
+    it('Scenario 2: 10 × 45g (450g) + 100g pkg = 550g -> 2 slabs -> ₹90.00 for Kerala', async () => {
       const v45 = createMockVariant('F3-45G', '45 g', 45, 5000); // ₹50 each, subtotal ₹500 < ₹999 threshold
       vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
       vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v45] as never);
@@ -143,11 +162,11 @@ describe('Weight-based shipping & State Delivery Estimation', () => {
       });
       expect(resKerala.billableWeightGrams).toBe(550);
       expect(resKerala.chargeableWeightKg).toBe(1.0);
-      expect(resKerala.shippingPaise).toBe(4500); // ₹45.00
-      expect(resKerala.totalPaise).toBe(50000 + 4500);
+      expect(resKerala.shippingPaise).toBe(9000); // ₹90.00
+      expect(resKerala.totalPaise).toBe(50000 + 9000);
     });
 
-    it('Scenario 3: 10 × 45g (450g) + 100g pkg = 550g -> 1.0kg slab -> ₹70.00 Outside Kerala', async () => {
+    it('Scenario 3: 10 × 45g (450g) + 100g pkg = 550g -> 2 slabs -> ₹140.00 Outside Kerala', async () => {
       const v45 = createMockVariant('F3-45G', '45 g', 45, 5000); // ₹50 each, subtotal ₹500 < ₹999 threshold
       vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
       vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v45] as never);
@@ -158,8 +177,8 @@ describe('Weight-based shipping & State Delivery Estimation', () => {
       });
       expect(resOutside.billableWeightGrams).toBe(550);
       expect(resOutside.chargeableWeightKg).toBe(1.0);
-      expect(resOutside.shippingPaise).toBe(7000); // ₹70.00
-      expect(resOutside.totalPaise).toBe(50000 + 7000);
+      expect(resOutside.shippingPaise).toBe(14000); // ₹140.00
+      expect(resOutside.totalPaise).toBe(50000 + 14000);
     });
 
     it('Multiple products: adds packaging exactly once per order', async () => {
@@ -167,7 +186,7 @@ describe('Weight-based shipping & State Delivery Estimation', () => {
       const v45 = createMockVariant('F3-45G', '45 g', 45, 10000);
       // Line 2: 1 × 200g = 200g
       const v200 = createMockVariant('C4-200G', '200 g', 200, 15000);
-      // Total product: 290g + 100g packaging = 390g -> 0.5kg slab
+      // Total product: 290g + 100g packaging = 390g -> 1 slab (500g)
       vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
       vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v45, v200] as never);
 
@@ -180,7 +199,7 @@ describe('Weight-based shipping & State Delivery Estimation', () => {
       });
       expect(res.billableWeightGrams).toBe(390);
       expect(res.chargeableWeightKg).toBe(0.5);
-      expect(res.shippingPaise).toBe(2250); // 0.5kg * ₹45 = ₹22.50
+      expect(res.shippingPaise).toBe(4500); // 1 slab * ₹45 = ₹45.00
     });
 
     it('extracts weight from kg strings, multipliers, and fallback', () => {
@@ -196,43 +215,43 @@ describe('Weight-based shipping & State Delivery Estimation', () => {
       expect(getVariantNetWeightGrams({ pack: 'Special Edition' })).toBe(50);
     });
 
-    it('verifies weight slab rounding boundaries: 500g, 501g, 999g, 1000g, 1001g', async () => {
+    it('verifies weight slab rounding boundaries: 500g (1 slab), 501g (2 slabs), 999g (2 slabs), 1000g (2 slabs), 1001g (3 slabs)', async () => {
       vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
 
-      // 400g product + 100g pkg = 500g -> 0.5kg
+      // 400g product + 100g pkg = 500g -> 1 slab (0.5kg)
       const v400 = createMockVariant('V-400', '400g', 400, 10000);
       vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v400] as never);
       const res500 = await priceCart({ lines: [{ sku: 'V-400', qty: 1 }], state: 'Tamil Nadu' });
       expect(res500.chargeableWeightKg).toBe(0.5);
-      expect(res500.shippingPaise).toBe(3500); // 0.5 * 70 = ₹35
+      expect(res500.shippingPaise).toBe(7000); // 1 slab * 70 = ₹70
 
-      // 401g product + 100g pkg = 501g -> 1.0kg
+      // 401g product + 100g pkg = 501g -> 2 slabs (1.0kg)
       const v401 = createMockVariant('V-401', '401g', 401, 10000);
       vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v401] as never);
       const res501 = await priceCart({ lines: [{ sku: 'V-401', qty: 1 }], state: 'Tamil Nadu' });
       expect(res501.chargeableWeightKg).toBe(1.0);
-      expect(res501.shippingPaise).toBe(7000); // 1.0 * 70 = ₹70
+      expect(res501.shippingPaise).toBe(14000); // 2 slabs * 70 = ₹140
 
-      // 899g product + 100g pkg = 999g -> 1.0kg
+      // 899g product + 100g pkg = 999g -> 2 slabs (1.0kg)
       const v899 = createMockVariant('V-899', '899g', 899, 10000);
       vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v899] as never);
       const res999 = await priceCart({ lines: [{ sku: 'V-899', qty: 1 }], state: 'Tamil Nadu' });
       expect(res999.chargeableWeightKg).toBe(1.0);
-      expect(res999.shippingPaise).toBe(7000);
+      expect(res999.shippingPaise).toBe(14000); // 2 slabs * 70 = ₹140
 
-      // 900g product + 100g pkg = 1000g -> 1.0kg
+      // 900g product + 100g pkg = 1000g -> 2 slabs (1.0kg)
       const v900 = createMockVariant('V-900', '900g', 900, 10000);
       vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v900] as never);
       const res1000 = await priceCart({ lines: [{ sku: 'V-900', qty: 1 }], state: 'Tamil Nadu' });
       expect(res1000.chargeableWeightKg).toBe(1.0);
-      expect(res1000.shippingPaise).toBe(7000);
+      expect(res1000.shippingPaise).toBe(14000); // 2 slabs * 70 = ₹140
 
-      // 901g product + 100g pkg = 1001g -> 1.5kg
+      // 901g product + 100g pkg = 1001g -> 3 slabs (1.5kg)
       const v901 = createMockVariant('V-901', '901g', 901, 10000);
       vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v901] as never);
       const res1001 = await priceCart({ lines: [{ sku: 'V-901', qty: 1 }], state: 'Tamil Nadu' });
       expect(res1001.chargeableWeightKg).toBe(1.5);
-      expect(res1001.shippingPaise).toBe(10500); // 1.5 * 70 = ₹105 (10500 paise)
+      expect(res1001.shippingPaise).toBe(21000); // 3 slabs * 70 = ₹210 (21000 paise)
     });
   });
 
