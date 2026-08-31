@@ -117,6 +117,85 @@ describe('Weight-based shipping & State Delivery Estimation', () => {
       expect(resOutside.shippingPaise).toBe(7000); // ₹70.00
     });
 
+    it('Scenario 1: 1 × 45g (45g) + 100g pkg = 145g -> 0.5kg slab -> ₹22.50 for Kerala', async () => {
+      const v45 = createMockVariant('F3-45G', '45 g', 45, 18500); // ₹185
+      vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
+      vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v45] as never);
+
+      const resKerala = await priceCart({
+        lines: [{ sku: 'F3-45G', qty: 1 }],
+        state: 'Kerala',
+      });
+      expect(resKerala.billableWeightGrams).toBe(145);
+      expect(resKerala.chargeableWeightKg).toBe(0.5);
+      expect(resKerala.shippingPaise).toBe(2250); // ₹22.50
+      expect(resKerala.totalPaise).toBe(18500 + 2250);
+    });
+
+    it('Scenario 2: 10 × 45g (450g) + 100g pkg = 550g -> 1.0kg slab -> ₹45.00 for Kerala', async () => {
+      const v45 = createMockVariant('F3-45G', '45 g', 45, 5000); // ₹50 each, subtotal ₹500 < ₹999 threshold
+      vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
+      vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v45] as never);
+
+      const resKerala = await priceCart({
+        lines: [{ sku: 'F3-45G', qty: 10 }],
+        state: 'Kerala',
+      });
+      expect(resKerala.billableWeightGrams).toBe(550);
+      expect(resKerala.chargeableWeightKg).toBe(1.0);
+      expect(resKerala.shippingPaise).toBe(4500); // ₹45.00
+      expect(resKerala.totalPaise).toBe(50000 + 4500);
+    });
+
+    it('Scenario 3: 10 × 45g (450g) + 100g pkg = 550g -> 1.0kg slab -> ₹70.00 Outside Kerala', async () => {
+      const v45 = createMockVariant('F3-45G', '45 g', 45, 5000); // ₹50 each, subtotal ₹500 < ₹999 threshold
+      vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
+      vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v45] as never);
+
+      const resOutside = await priceCart({
+        lines: [{ sku: 'F3-45G', qty: 10 }],
+        state: 'Karnataka',
+      });
+      expect(resOutside.billableWeightGrams).toBe(550);
+      expect(resOutside.chargeableWeightKg).toBe(1.0);
+      expect(resOutside.shippingPaise).toBe(7000); // ₹70.00
+      expect(resOutside.totalPaise).toBe(50000 + 7000);
+    });
+
+    it('Multiple products: adds packaging exactly once per order', async () => {
+      // Line 1: 2 × 45g = 90g
+      const v45 = createMockVariant('F3-45G', '45 g', 45, 10000);
+      // Line 2: 1 × 200g = 200g
+      const v200 = createMockVariant('C4-200G', '200 g', 200, 15000);
+      // Total product: 290g + 100g packaging = 390g -> 0.5kg slab
+      vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
+      vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v45, v200] as never);
+
+      const res = await priceCart({
+        lines: [
+          { sku: 'F3-45G', qty: 2 },
+          { sku: 'C4-200G', qty: 1 },
+        ],
+        state: 'Kerala',
+      });
+      expect(res.billableWeightGrams).toBe(390);
+      expect(res.chargeableWeightKg).toBe(0.5);
+      expect(res.shippingPaise).toBe(2250); // 0.5kg * ₹45 = ₹22.50
+    });
+
+    it('extracts weight from kg strings, multipliers, and fallback', () => {
+      // Numeric weightGrams takes priority
+      expect(getVariantNetWeightGrams({ weightGrams: 250, pack: '1 kg' })).toBe(250);
+      // kg string parsing
+      expect(getVariantNetWeightGrams({ pack: '1 kg' })).toBe(1000);
+      expect(getVariantNetWeightGrams({ pack: '2.5 kg' })).toBe(2500);
+      // g string parsing with multiplier
+      expect(getVariantNetWeightGrams({ pack: '100g x 2' })).toBe(200);
+      expect(getVariantNetWeightGrams({ pack: '45 g', packMultiplier: 3 })).toBe(135);
+      // Unknown / unparseable fallback
+      expect(getVariantNetWeightGrams({ pack: 'Special Edition' })).toBe(50);
+    });
+
     it('verifies weight slab rounding boundaries: 500g, 501g, 999g, 1000g, 1001g', async () => {
       vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
 
@@ -177,7 +256,7 @@ describe('Weight-based shipping & State Delivery Estimation', () => {
     });
   });
 
-  describe('Free Shipping Threshold', () => {
+  describe('Free Shipping Threshold & Coupon Free Shipping', () => {
     it('applies free shipping (₹0) when payable >= ₹999', async () => {
       const v1kg = createMockVariant('F3-1KG', '1 kg', 1000, 189000); // ₹1890 (>= ₹999)
       vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
@@ -192,6 +271,55 @@ describe('Weight-based shipping & State Delivery Estimation', () => {
       expect(res.shippingPaise).toBe(0); // FREE
       expect(res.totalPaise).toBe(189000);
       expect(res.chargeableWeightKg).toBe(1.5); // 1000g + 100g = 1100g -> 1.5kg
+    });
+
+    it('applies free shipping when a FREE_SHIPPING coupon is applied under the threshold', async () => {
+      const v45 = createMockVariant('F3-45G', '45 g', 45, 18500); // ₹185 (< ₹999)
+      vi.mocked(settingsService.getAll).mockResolvedValue(mockSettings as never);
+      vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v45] as never);
+
+      const res = await priceCart({
+        lines: [{ sku: 'F3-45G', qty: 1 }],
+        state: 'Maharashtra',
+        overlayPromotions: [{
+          id: 'promo-free-ship',
+          code: 'FREESHIP',
+          name: 'Free Shipping Promo',
+          description: null,
+          discountType: 'FREE_SHIPPING',
+          discountValue: 0,
+          maxDiscountPaise: null,
+          minOrderPaise: 0,
+          minQty: null,
+          maxQty: null,
+          startsAt: new Date('2026-01-01'),
+          endsAt: new Date('2030-01-01'),
+          totalUsageLimit: null,
+          perCustomerLimit: null,
+          usedCount: 0,
+          isActive: true,
+          scope: 'ORDER',
+          stackingMode: 'STACKABLE',
+          priority: 0,
+          trigger: 'CODE',
+          combinesWithAutomatic: true,
+          customerEligibility: 'ALL',
+          firstNOrders: null,
+          allowedStates: [],
+          requireAllQualifiers: false,
+          products: [],
+          variants: [],
+          categories: [],
+          customers: [],
+          bxgy: null,
+        } as never],
+        couponCode: 'FREESHIP',
+      });
+
+      expect(res.subtotalPaise).toBe(18500);
+      expect(res.freeShippingFromCoupon).toBe(true);
+      expect(res.shippingPaise).toBe(0); // FREE due to coupon
+      expect(res.totalPaise).toBe(18500);
     });
   });
 });
