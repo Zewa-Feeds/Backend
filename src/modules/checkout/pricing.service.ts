@@ -19,6 +19,7 @@ import * as settingsService from '@/modules/settings/settings.service';
 import * as promotionEngine from '@/modules/promotions/engine';
 import type { AppliedPromotion, PromotionRow } from '@/modules/promotions/types';
 import { computeInvoiceTax } from '@/modules/orders/tax';
+import { HOME_STATE, isDomestic, normaliseStateName } from '@/lib/india-states';
 
 export interface CartLineInput {
   sku: string;
@@ -105,6 +106,29 @@ export function getVariantNetWeightGrams(variant: {
   return 50;
 }
 
+/** True when the place of supply is Kerala. Used for the GST split and the UI. */
+export function isKeralaState(state?: string | null): boolean {
+  return normaliseStateName(state ?? '') === normaliseStateName(HOME_STATE);
+}
+
+/**
+ * Shipping rate per weight slab for one state, in paise.
+ *
+ * Matches on the normalised name so "TAMIL NADU", "Tamil Nadu" and
+ * "tamil-nadu" all resolve to the same configured rate. An unrecognised state
+ * gets the configured default rather than a guess.
+ */
+export function rateForState(
+  state: string,
+  shipping: { stateRatesPaise?: Record<string, number>; defaultRatePaise: number },
+): number {
+  const target = normaliseStateName(state);
+  for (const [name, paise] of Object.entries(shipping.stateRatesPaise ?? {})) {
+    if (normaliseStateName(name) === target) return paise;
+  }
+  return shipping.defaultRatePaise;
+}
+
 /**
  * State-based delivery day estimation:
  * Kerala: 2 days
@@ -162,6 +186,12 @@ export async function priceCart(input: {
   email?: string;
   customerId?: string | null;
   state?: string;
+  /**
+   * Destination country. Nothing supplies it yet — the checkout has no country
+   * field — so it defaults to India and the domestic rates apply. Accepted here
+   * so the international rate has a real path rather than a dead setting.
+   */
+  country?: string;
   overlayPromotions?: PromotionRow[];
 }): Promise<PricedCart> {
   if (input.lines.length === 0) {
@@ -363,11 +393,22 @@ export async function priceCart(input: {
   const chargeableWeightGrams = slabCount * slabGrams;
   const chargeableWeightKg = chargeableWeightGrams / 1000;
 
+  /*
+   * The rate is looked up PER STATE.
+   *
+   * Settings hold one rate for every state and UT (see lib/india-states.ts),
+   * seeded from three tiers — Kerala, its southern neighbours, everywhere else —
+   * but editable individually in the CMS. A state with no saved rate falls back
+   * to `defaultRatePaise` rather than to a hardcoded number.
+   */
+  const domestic = isDomestic(input.country);
   const hasState = Boolean(input.state && input.state.trim());
-  const isKerala = hasState && input.state!.trim().toLowerCase() === 'kerala';
-  const ratePerSlabPaise = isKerala
-    ? (shipping.keralaRatePerKgPaise ?? 4500)
-    : (shipping.outsideKeralaRatePerKgPaise ?? 7000);
+  const isKerala = domestic && hasState && isKeralaState(input.state);
+  const ratePerSlabPaise = !domestic
+    ? shipping.internationalRatePaise
+    : hasState
+      ? rateForState(input.state!, shipping)
+      : shipping.defaultRatePaise;
 
   const calculatedShippingPaise = slabCount * ratePerSlabPaise;
 
@@ -380,8 +421,16 @@ export async function priceCart(input: {
    * shipping costs — this only zeroes the result, exactly as the CMS free-shipping
    * threshold does. There is deliberately no second free-shipping configuration.
    */
+  /*
+   * A domestic quote waits for a state, because the rate depends on it. An
+   * international one has no Indian state to wait for, so it prices immediately.
+   */
   const shippingPaise =
-    isFreeShipping || promotions.freeShipping ? 0 : hasState ? calculatedShippingPaise : 0;
+    isFreeShipping || promotions.freeShipping
+      ? 0
+      : !domestic || hasState
+        ? calculatedShippingPaise
+        : 0;
   const totalPaise = payable + shippingPaise;
 
   const deliveryInfo = getDeliveryEstimateForState(input.state);

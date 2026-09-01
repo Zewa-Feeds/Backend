@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { priceCart, getDeliveryEstimateForState, getVariantNetWeightGrams } from './pricing.service';
 import * as settingsService from '@/modules/settings/settings.service';
 import { prisma } from '@/lib/prisma';
+import { buildStateRates } from '@/lib/india-states';
 
 vi.mock('@/modules/settings/settings.service', () => ({
   getAll: vi.fn(),
@@ -54,8 +55,17 @@ describe('Weight-based shipping & State Delivery Estimation', () => {
 
   const mockSettings = {
     shipping: {
-      keralaRatePerKgPaise: 4500, // ₹45/kg
-      outsideKeralaRatePerKgPaise: 7000, // ₹70/kg
+      /*
+       * Rates are per STATE now. These keep the suite's original numbers —
+       * ₹45 a slab for Kerala, ₹70 elsewhere — so every expectation below still
+       * describes the same arithmetic it always did.
+       */
+      stateRatesPaise: buildStateRates({
+        homePaise: 4500,
+        southPaise: 7000,
+        restPaise: 7000,
+      }),
+      defaultRatePaise: 7000,
       packagingWeightGrams: 100, // 100g packaging overhead
       slabWeightGrams: 500, // 500g slab (0.5kg)
       freeThresholdPaise: 99900, // ₹999
@@ -252,6 +262,145 @@ describe('Weight-based shipping & State Delivery Estimation', () => {
       const res1001 = await priceCart({ lines: [{ sku: 'V-901', qty: 1 }], state: 'Tamil Nadu' });
       expect(res1001.chargeableWeightKg).toBe(1.5);
       expect(res1001.shippingPaise).toBe(21000); // 3 slabs * 70 = ₹210 (21000 paise)
+    });
+  });
+
+  describe('Per-state rates', () => {
+    /** Kerala ₹30, southern neighbours ₹50, everywhere else ₹60 — per 500g slab. */
+    const tieredSettings = {
+      ...mockSettings,
+      shipping: {
+        ...mockSettings.shipping,
+        packagingWeightGrams: 440,
+        freeThresholdPaise: 0,
+        stateRatesPaise: buildStateRates({ homePaise: 3000, southPaise: 5000, restPaise: 6000 }),
+        defaultRatePaise: 6000,
+      },
+    };
+
+    /** 1kg pouch: 1000g + 440g packaging = 1440g -> 3 slabs. */
+    const oneKgTo = async (state: string) => {
+      const v = createMockVariant('P-1KG', '1kg Pouch', 1000, 10000);
+      vi.mocked(settingsService.getAll).mockResolvedValue(tieredSettings as never);
+      vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v] as never);
+      return priceCart({ lines: [{ sku: 'P-1KG', qty: 1 }], state });
+    };
+
+    it('charges the home rate in Kerala', async () => {
+      const res = await oneKgTo('Kerala');
+      expect(res.billableWeightGrams).toBe(1440);
+      expect(res.shippingPaise).toBe(9000); // 3 slabs × ₹30
+      expect(res.isKerala).toBe(true);
+    });
+
+    it('charges the south-zone rate in TN, KA, Telangana, AP and Goa', async () => {
+      for (const state of ['Tamil Nadu', 'Karnataka', 'Telangana', 'Andhra Pradesh', 'Goa']) {
+        const res = await oneKgTo(state);
+        expect(res.shippingPaise, state).toBe(15000); // 3 slabs × ₹50
+        expect(res.isKerala, state).toBe(false);
+      }
+    });
+
+    it('charges the rest-of-India rate everywhere else', async () => {
+      for (const state of ['Maharashtra', 'Delhi', 'West Bengal', 'Assam']) {
+        const res = await oneKgTo(state);
+        expect(res.shippingPaise, state).toBe(18000); // 3 slabs × ₹60
+      }
+    });
+
+    it('honours a single state moved off its tier, without touching its neighbours', async () => {
+      // The whole point of per-state rates: Goa alone goes to ₹75 a slab.
+      const moved = {
+        ...tieredSettings,
+        shipping: {
+          ...tieredSettings.shipping,
+          stateRatesPaise: { ...tieredSettings.shipping.stateRatesPaise, Goa: 7500 },
+        },
+      };
+      const v = createMockVariant('P-1KG', '1kg Pouch', 1000, 10000);
+      vi.mocked(settingsService.getAll).mockResolvedValue(moved as never);
+      vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v] as never);
+
+      const goa = await priceCart({ lines: [{ sku: 'P-1KG', qty: 1 }], state: 'Goa' });
+      expect(goa.shippingPaise).toBe(22500); // 3 × ₹75
+
+      const karnataka = await priceCart({ lines: [{ sku: 'P-1KG', qty: 1 }], state: 'Karnataka' });
+      expect(karnataka.shippingPaise).toBe(15000); // still ₹50 — unaffected
+    });
+
+    it('matches a state name regardless of case or spacing', async () => {
+      for (const spelling of ['tamil nadu', 'TAMIL NADU', '  Tamil Nadu  ']) {
+        const res = await oneKgTo(spelling);
+        expect(res.shippingPaise, spelling).toBe(15000);
+      }
+    });
+
+    it('falls back to the default rate for a state with no configured rate', async () => {
+      const sparse = {
+        ...tieredSettings,
+        shipping: { ...tieredSettings.shipping, stateRatesPaise: { Kerala: 3000 } },
+      };
+      const v = createMockVariant('P-1KG', '1kg Pouch', 1000, 10000);
+      vi.mocked(settingsService.getAll).mockResolvedValue(sparse as never);
+      vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v] as never);
+
+      const res = await priceCart({ lines: [{ sku: 'P-1KG', qty: 1 }], state: 'Nagaland' });
+      expect(res.shippingPaise).toBe(18000); // 3 × the ₹60 default
+    });
+  });
+
+  describe('Outside India', () => {
+    /*
+     * The rate is configurable but UNREACHABLE today: nothing supplies a country,
+     * because the checkout has no country field. These pin both halves of that —
+     * the rate works when a country is passed, and every order the system can
+     * currently take is still priced domestically.
+     */
+    const intlSettings = {
+      ...mockSettings,
+      shipping: {
+        ...mockSettings.shipping,
+        packagingWeightGrams: 440,
+        freeThresholdPaise: 0,
+        stateRatesPaise: buildStateRates({ homePaise: 3000, southPaise: 5000, restPaise: 6000 }),
+        defaultRatePaise: 6000,
+        internationalRatePaise: 25000, // ₹250 a slab
+      },
+    };
+
+    const price = async (input: { state?: string; country?: string }) => {
+      const v = createMockVariant('P-1KG', '1kg Pouch', 1000, 10000);
+      vi.mocked(settingsService.getAll).mockResolvedValue(intlSettings as never);
+      vi.mocked(prisma.productVariant.findMany).mockResolvedValue([v] as never);
+      return priceCart({ lines: [{ sku: 'P-1KG', qty: 1 }], ...input });
+    };
+
+    it('charges the international rate for a non-Indian country', async () => {
+      const res = await price({ country: 'Singapore' });
+      expect(res.billableWeightGrams).toBe(1440); // 3 slabs
+      expect(res.shippingPaise).toBe(75000); // 3 × ₹250
+      expect(res.isKerala).toBe(false);
+    });
+
+    it('prices an overseas order without waiting for an Indian state', async () => {
+      // A domestic quote with no state returns 0 until one is chosen. An
+      // international one has no Indian state to wait for.
+      expect((await price({ country: 'United Kingdom' })).shippingPaise).toBe(75000);
+      expect((await price({})).shippingPaise).toBe(0);
+    });
+
+    it('leaves every domestic order untouched — the default path is unchanged', async () => {
+      expect((await price({ state: 'Kerala' })).shippingPaise).toBe(9000);
+      expect((await price({ state: 'Tamil Nadu' })).shippingPaise).toBe(15000);
+      expect((await price({ state: 'Delhi' })).shippingPaise).toBe(18000);
+      // Explicitly saying India is the same as saying nothing.
+      expect((await price({ state: 'Delhi', country: 'India' })).shippingPaise).toBe(18000);
+    });
+
+    it('never lets an overseas address be treated as Kerala', async () => {
+      const res = await price({ state: 'Kerala', country: 'Sri Lanka' });
+      expect(res.isKerala).toBe(false);
+      expect(res.shippingPaise).toBe(75000);
     });
   });
 

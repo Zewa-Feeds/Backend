@@ -11,6 +11,7 @@
 import { AuditModule, type Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
+import { INDIA_STATES, buildStateRates, zoneForState } from '@/lib/india-states';
 import { redis } from '@/lib/redis';
 import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
 import { plainText, richText } from '@/lib/sanitize';
@@ -26,9 +27,38 @@ const CACHE_TTL_SECONDS = 60;
 // ---- Schemas (also the source of defaults) ---------------------------------
 
 export const shippingSchema = z.object({
-  /** Base rate per 500g slab in paise for deliveries within Kerala (default 4500 = ₹45/slab). */
+  /**
+   * Rate per weight slab, in paise, FOR EACH STATE.
+   *
+   * The authoritative shipping price. Keyed by the state names in
+   * lib/india-states.ts, which are also the checkout dropdown's labels.
+   *
+   * Replaced a two-tier Kerala/everywhere-else pair. Three tiers were wanted
+   * (Kerala, southern neighbours, rest of India) and a fourth would have meant
+   * another code change, so the price is stored per state and the tiers only
+   * seed it. Moving one state to a different price is now a CMS edit.
+   */
+  stateRatesPaise: z.record(z.string(), z.number().int().nonnegative()).default({}),
+  /** Charged for any state not present in the map above. */
+  defaultRatePaise: z.number().int().nonnegative().default(6000),
+  /**
+   * Rate per weight slab for addresses OUTSIDE India, in paise.
+   *
+   * NOT REACHABLE YET, and deliberately stored anyway. The checkout has no
+   * country field — it validates a +91 phone and a 6-digit PIN that must belong
+   * to an Indian state, and the invoice splits GST by that state — so every
+   * order today is domestic and this value is never read. Pricing consults it
+   * through `isDomestic()` so that turning international shipping on later is a
+   * change in one place rather than a new pricing branch invented under
+   * deadline. See the note beside the field in CMS settings.
+   */
+  internationalRatePaise: z.number().int().nonnegative().default(0),
+  /*
+   * Superseded by `stateRatesPaise`, kept so an old settings row still parses
+   * and can be migrated from on first read. Nothing reads these to price an
+   * order. Safe to delete once every environment has saved settings once.
+   */
   keralaRatePerKgPaise: z.number().int().nonnegative().default(4500),
-  /** Base rate per 500g slab in paise for deliveries outside Kerala (default 7000 = ₹70/slab). */
   outsideKeralaRatePerKgPaise: z.number().int().nonnegative().default(7000),
   /** Packaging weight overhead in grams added to net product weight (default 100g). */
   packagingWeightGrams: z.number().int().nonnegative().default(100),
@@ -79,6 +109,8 @@ export const settingsSchema = z.object({
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
+/** The shipping group on its own — the per-state rate map lives here. */
+export type ShippingSettings = z.infer<typeof shippingSchema>;
 export type SettingsKey = keyof Settings;
 
 const SCHEMAS = {
@@ -96,11 +128,39 @@ const SCHEMAS = {
  * Each group is parsed through its schema, so defaults fill any gap — a
  * half-populated row degrades to sane values rather than throwing at checkout.
  */
+/**
+ * Fill in the per-state rate map.
+ *
+ * Runs on every read so three things are always true, without a migration:
+ *   - a settings row written before per-state rates existed still prices orders,
+ *     seeded from the Kerala / outside-Kerala pair it does carry
+ *   - a state added to INDIA_STATES later cannot leave a hole in a saved map
+ *   - a hand-edited row missing the field is repaired rather than rejected
+ *
+ * An explicitly saved rate always wins; this only supplies what is absent.
+ */
+function withStateRates(shipping: ShippingSettings): ShippingSettings {
+  const seeded = buildStateRates({
+    homePaise: shipping.keralaRatePerKgPaise,
+    // No southern tier existed before, so those states start where they were:
+    // on the outside-Kerala rate. The CMS is where they get their own price.
+    southPaise: shipping.outsideKeralaRatePerKgPaise,
+    restPaise: shipping.outsideKeralaRatePerKgPaise,
+  });
+
+  const stateRatesPaise: Record<string, number> = { ...seeded };
+  for (const [state, paise] of Object.entries(shipping.stateRatesPaise ?? {})) {
+    stateRatesPaise[state] = paise;
+  }
+  return { ...shipping, stateRatesPaise };
+}
+
 export async function getAll(): Promise<Settings> {
   const cached = await redis.get(CACHE_KEY).catch(() => null);
   if (cached) {
     try {
-      return settingsSchema.parse(JSON.parse(cached));
+      const fromCache = settingsSchema.parse(JSON.parse(cached));
+      return { ...fromCache, shipping: withStateRates(fromCache.shipping) };
     } catch {
       // Cache poisoned or schema changed since it was written — fall through.
       log.warn('settings cache failed to parse, refetching');
@@ -110,12 +170,13 @@ export async function getAll(): Promise<Settings> {
   const rows = await prisma.setting.findMany();
   const raw = Object.fromEntries(rows.map((r) => [r.key, r.value]));
 
-  const settings = settingsSchema.parse({
+  const parsed = settingsSchema.parse({
     shipping: raw.shipping ?? {},
     tax: raw.tax ?? {},
     announcement: raw.announcement ?? {},
     maintenance: raw.maintenance ?? {},
   });
+  const settings = { ...parsed, shipping: withStateRates(parsed.shipping) };
 
   await redis.setex(CACHE_KEY, CACHE_TTL_SECONDS, JSON.stringify(settings)).catch(() => undefined);
   return settings;
@@ -147,8 +208,9 @@ export async function getPublic() {
   const { shipping, announcement, maintenance, tax } = await getAll();
   return {
     shipping: {
-      keralaRatePerKgPaise: shipping.keralaRatePerKgPaise,
-      outsideKeralaRatePerKgPaise: shipping.outsideKeralaRatePerKgPaise,
+      stateRatesPaise: shipping.stateRatesPaise,
+      defaultRatePaise: shipping.defaultRatePaise,
+      internationalRatePaise: shipping.internationalRatePaise,
       packagingWeightGrams: shipping.packagingWeightGrams,
       slabWeightGrams: shipping.slabWeightGrams,
       freeThresholdPaise: shipping.freeThresholdPaise,
