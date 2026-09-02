@@ -52,6 +52,7 @@ const COUPON_SELECT = {
   priority: true,
   trigger: true,
   combinesWithAutomatic: true,
+  showAtCheckout: true,
   customerEligibility: true,
   firstNOrders: true,
   minQty: true,
@@ -99,6 +100,7 @@ const STACKING_LABELS: Record<CouponStacking, string> = {
   [CouponStacking.STACKABLE]: 'Stackable',
   [CouponStacking.NON_STACKABLE]: 'Cannot be combined',
   [CouponStacking.EXCLUSIVE]: 'Exclusive',
+  [CouponStacking.GLOBALLY_STACKABLE]: 'Always combines',
 };
 
 const ELIGIBILITY_LABELS: Record<CustomerEligibility, string> = {
@@ -286,6 +288,7 @@ function serialize(c: CouponRow) {
     trigger: c.trigger,
     automatic: c.trigger === CouponTrigger.AUTOMATIC,
     combinesWithAutomatic: c.combinesWithAutomatic,
+    showAtCheckout: c.showAtCheckout,
     customerEligibility: c.customerEligibility,
     eligibilityLabel: ELIGIBILITY_LABELS[c.customerEligibility],
     firstNOrders: c.firstNOrders,
@@ -382,6 +385,7 @@ export interface CouponInput {
   priority?: number;
   trigger?: CouponTrigger;
   combinesWithAutomatic?: boolean;
+  showAtCheckout?: boolean;
   customerEligibility?: CustomerEligibility;
   firstNOrders?: number | null;
   minQty?: number | null;
@@ -976,4 +980,59 @@ export async function remove(id: string, ctx: AuditContext): Promise<void> {
       tx,
     );
   });
+}
+
+/**
+ * Offers the storefront may advertise.
+ *
+ * OPT-IN ONLY. `showAtCheckout` defaults to false, so a private referral code or
+ * an influencer's personal code is never published by accident — listing every
+ * active code would hand BENS12 and every creator's code to every shopper.
+ *
+ * Returns only what a shopper needs to decide whether to type it: the code, a
+ * human label and the minimum spend. No usage counts, no internal names, and
+ * nothing that would let a code be reverse-engineered.
+ */
+export async function listPublicOffers() {
+  const now = new Date();
+  const rows = await prisma.coupon.findMany({
+    where: {
+      showAtCheckout: true,
+      isActive: true,
+      deletedAt: null,
+      startsAt: { lte: now },
+      endsAt: { gte: now },
+      // A personal code is never a public offer, whatever the flag says.
+      influencerId: null,
+    },
+    select: {
+      code: true,
+      name: true,
+      description: true,
+      discountType: true,
+      discountValue: true,
+      minOrderPaise: true,
+      customerEligibility: true,
+      endsAt: true,
+    },
+    orderBy: [{ priority: 'asc' }, { code: 'asc' }],
+    take: 12,
+  });
+
+  return rows.map((c) => ({
+    code: c.code,
+    name: c.name,
+    description: c.description,
+    /** "10% off", "₹200 off", "Free shipping" — built server-side. */
+    discountLabel:
+      c.discountType === DiscountType.PERCENTAGE
+        ? `${c.discountValue}% off`
+        : c.discountType === DiscountType.FREE_SHIPPING
+          ? 'Free shipping'
+          : `${formatInr(c.discountValue)} off`,
+    minOrderPaise: c.minOrderPaise,
+    minOrder: toRupees(c.minOrderPaise),
+    firstOrderOnly: c.customerEligibility === CustomerEligibility.FIRST_ORDER,
+    endsAt: c.endsAt,
+  }));
 }

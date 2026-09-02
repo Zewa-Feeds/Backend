@@ -9,11 +9,20 @@
  *
  * Three modes, set per coupon in the CMS:
  *
- *   STACKABLE      combines freely with other STACKABLE promotions.
- *   NON_STACKABLE  applies alone. Any other code alongside it is refused.
- *   EXCLUSIVE      applies alone, and outranks everything when the engine has
- *                  to choose between eligible promotions with no customer
- *                  preference to go on.
+ *   STACKABLE          combines freely with other STACKABLE promotions.
+ *   NON_STACKABLE      applies alone. Any other code alongside it is refused.
+ *   EXCLUSIVE          applies alone, and outranks everything when the engine
+ *                      has to choose between eligible promotions with no
+ *                      customer preference to go on.
+ *   GLOBALLY_STACKABLE rides alongside ANY stack, including an EXCLUSIVE one —
+ *                      but never beside another GLOBALLY_STACKABLE coupon.
+ *
+ * GLOBALLY_STACKABLE exists for a perk that is not a percentage off the cart:
+ * the free-shipping first-order benefit should apply whatever else the customer
+ * has, without ever being the second percentage discount on one order. Allowing
+ * only one of them at a time is what keeps that guarantee — two globally
+ * stackable percentage coupons would compound, which is the exact failure this
+ * mode is otherwise designed to avoid.
  *
  * ---------------------------------------------------------------------------
  * Why the FIRST candidate wins rather than the "strongest"
@@ -48,8 +57,20 @@ export interface StackResolution {
   rejected: PromotionRejection[];
 }
 
-/** EXCLUSIVE outranks NON_STACKABLE outranks STACKABLE. */
-const MODE_RANK = { EXCLUSIVE: 0, NON_STACKABLE: 1, STACKABLE: 2 } as const;
+/**
+ * EXCLUSIVE outranks NON_STACKABLE outranks STACKABLE.
+ *
+ * GLOBALLY_STACKABLE ranks FIRST among automatic promotions: it can never be
+ * the reason another promotion is refused, so taking its slot early costs
+ * nothing and guarantees the always-applicable perk is never crowded out by the
+ * stack limit.
+ */
+const MODE_RANK = {
+  GLOBALLY_STACKABLE: 0,
+  EXCLUSIVE: 1,
+  NON_STACKABLE: 2,
+  STACKABLE: 3,
+} as const;
 
 /**
  * Order candidates when nobody has expressed a preference.
@@ -86,6 +107,43 @@ function conflict(
   accepted: readonly Candidate[],
 ): Omit<PromotionRejection, 'code'> | null {
   if (accepted.length === 0) return null;
+
+  /*
+   * GLOBALLY_STACKABLE is settled before every other rule, in both directions,
+   * because it is defined as "combines with anything" — deferring to the checks
+   * below would let an EXCLUSIVE coupon already on the cart refuse it.
+   *
+   * The single restriction is against ITSELF. Two of these would stack without
+   * any other rule stopping them, and if both were percentages they would
+   * compound; refusing the second is what makes the mode safe to hand out.
+   */
+  const globalAlready = accepted.find((c) => c.stackingMode === 'GLOBALLY_STACKABLE');
+  if (next.stackingMode === 'GLOBALLY_STACKABLE') {
+    if (globalAlready) {
+      return {
+        errorCode: ErrorCode.COUPON_NOT_STACKABLE,
+        message: `${globalAlready.code} is already applied, and only one offer of its kind can be used per order.`,
+        conflictsWith: [globalAlready.code],
+      };
+    }
+    if (accepted.length >= MAX_STACKED_PROMOTIONS) {
+      return {
+        errorCode: ErrorCode.COUPON_STACK_LIMIT,
+        message: `You can use up to ${MAX_STACKED_PROMOTIONS} coupons on one order.`,
+        conflictsWith: accepted.map((c) => c.code),
+      };
+    }
+    return null;
+  }
+  /*
+   * The mirror case: something already-accepted is globally stackable, so it
+   * must not be treated as a blocker for whatever arrives next. Judge `next`
+   * against the rest of the stack only.
+   */
+  if (globalAlready) {
+    const rest = accepted.filter((c) => c.stackingMode !== 'GLOBALLY_STACKABLE');
+    return conflict(next, rest);
+  }
 
   const exclusive = accepted.find((c) => c.stackingMode === 'EXCLUSIVE');
   if (exclusive) {

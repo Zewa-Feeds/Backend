@@ -28,6 +28,7 @@ import { ordersRouter } from '@/modules/orders/orders.routes';
 import { settingsRouter } from '@/modules/settings/settings.routes';
 import { contentRouter } from '@/modules/content/content.routes';
 import { couponsRouter } from '@/modules/coupons/coupons.routes';
+import { influencersRouter } from '@/modules/influencers/influencers.routes';
 import { reviewsRouter } from '@/modules/reviews/reviews.routes';
 import { customersRouter } from '@/modules/customers/customers.routes';
 import {
@@ -89,6 +90,7 @@ adminRouter.use('/orders', ordersRouter); // orders.view → status / invoice / 
 adminRouter.use('/customers', customersRouter); // customers.view → ban
 adminRouter.use('/reviews', reviewsRouter); // reviews.moderate
 adminRouter.use('/coupons', couponsRouter); // coupons.edit → delete
+adminRouter.use('/influencers', influencersRouter); // coupons.edit — affiliates
 adminRouter.use('/content', contentRouter); // articles.* / banners.edit / homepage.edit
 adminRouter.use('/uploads', uploadsRouter); // articles.create
 adminRouter.use('/audit-log', auditRouter); // audit.own (row-filtered) / audit.all

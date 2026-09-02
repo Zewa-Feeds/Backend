@@ -28,6 +28,7 @@ import * as settingsService from '@/modules/settings/settings.service';
 import * as reviewsService from '@/modules/reviews/reviews.service';
 import { priceCart } from '@/modules/checkout/pricing.service';
 import { enabledPaymentMethods } from '@/integrations/razorpay/payment.service';
+import * as couponsService from '@/modules/coupons/coupons.service';
 
 export const catalogRouter = Router();
 
@@ -332,6 +333,21 @@ const cartLinesSchema = z.object({
   email: emailSchema.optional(),
   state: z.string().trim().max(60).optional(),
 });
+
+/**
+ * Offers the shop is advertising right now.
+ *
+ * Opt-in per coupon (`showAtCheckout`), so private referral codes and
+ * influencers' personal codes are never listed. Read-only and cheap; the
+ * storefront shows these beside the discount box so a shopper knows a code
+ * exists without having to be told one out of band.
+ */
+catalogRouter.get(
+  '/offers',
+  asyncHandler(async (_req, res) => {
+    res.json({ data: await couponsService.listPublicOffers() });
+  }),
+);
 
 /**
  * Re-price a cart against live data.

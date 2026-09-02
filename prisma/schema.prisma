@@ -150,6 +150,11 @@ enum CouponStacking {
   STACKABLE
   NON_STACKABLE
   EXCLUSIVE
+  /// Rides alongside ANY stack, including an EXCLUSIVE one — but never beside
+  /// another GLOBALLY_STACKABLE coupon. Meant for a perk that is not a
+  /// percentage off the cart, such as the free-shipping first-order benefit,
+  /// so it can always apply without ever compounding a second discount.
+  GLOBALLY_STACKABLE
 }
 
 /// Does the customer type a code, or does the engine apply it on its own?
@@ -573,6 +578,21 @@ model Order {
   /// Every code applied to this order, in the order the engine accepted them.
   couponCodes String[] @default([])
 
+  // ---- Affiliate attribution snapshot -------------------------------------
+  // Written once, when the order is created, and never updated. The influencer
+  // may later be renamed, deactivated, or have their rate changed; an invoice
+  // and a commission report must still show what was actually true at purchase.
+  // `influencerId` is a soft reference for grouping — the money figures beside
+  // it are the record of truth, not a join back to the current profile.
+  influencerId          String?
+  influencerName        String?
+  influencerCouponCode  String?
+  /// Whole percent, when the affiliate coupon was a percentage discount.
+  influencerDiscountPct Int?
+  /// Paise actually taken off this order by the affiliate coupon.
+  influencerDiscountPaise Int?
+  influencerAppliedAt   DateTime?
+
   /// Snapshot at purchase time: { name, line1, line2, city, state, pincode, phone }.
   shippingAddress Json
 
@@ -620,6 +640,8 @@ model Order {
   /// Order-history eligibility: "how many qualifying orders has this email
   /// placed?" runs on every coupon evaluation, so it gets its own index.
   @@index([email, status, paymentStatus])
+  /// Drives the affiliate's attributed-orders table and its revenue totals.
+  @@index([influencerId, placedAt])
 }
 
 model OrderItem {
@@ -1098,9 +1120,18 @@ model Coupon {
   /// Confirmed orders that used it. May trail `usedCount`, which counts attempts.
   confirmedOrders Int @default(0)
 
+  /// Advertise this code on the storefront's "available offers" list.
+  /// OFF by default: a private referral code or an influencer's personal code
+  /// must never be published to every shopper by accident.
+  showAtCheckout Boolean @default(false)
+
   deletedAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+
+  /// The affiliate this code belongs to, when it is an influencer code.
+  influencer   Influencer? @relation(fields: [influencerId], references: [id], onDelete: Restrict)
+  influencerId String?
 
   redemptions CouponRedemption[]
   products    CouponProduct[]
@@ -1113,6 +1144,46 @@ model Coupon {
   /// The automatic-promotion sweep: every live AUTOMATIC promotion, in the
   /// order the engine will consider them.
   @@index([trigger, isActive, priority])
+  @@index([influencerId])
+  @@index([showAtCheckout, isActive, startsAt, endsAt])
+}
+
+/// An affiliate whose personal coupon code earns them attribution on orders.
+///
+/// Deliberately a PROFILE hung off the existing Coupon rather than a parallel
+/// discount system: the code keeps going through one validation engine, one
+/// stacking resolver and one redemption ledger, so an influencer sale is priced
+/// by exactly the same code path as any other coupon.
+///
+/// Never hard-deleted. `Coupon.influencerId` is onDelete: Restrict and orders
+/// carry their own snapshot, so historical attribution survives deactivation,
+/// renaming, or a change of discount rate.
+model Influencer {
+  id   String @id @default(uuid())
+  name String
+
+  email        String?
+  phone        String?
+  /// Instagram handle or any other social profile, stored as entered.
+  socialHandle String?
+  notes        String?
+
+  status InfluencerStatus @default(ACTIVE)
+
+  /// Set when deactivated, so reports can say when earning stopped.
+  deactivatedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  coupons Coupon[]
+
+  @@index([status, createdAt])
+  @@index([name])
+}
+
+enum InfluencerStatus {
+  ACTIVE
+  INACTIVE
 }
 
 /// Join table for SPECIFIC_PRODUCTS scope. A row means "this coupon applies to

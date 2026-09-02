@@ -35,6 +35,7 @@ import { likelyStateForPincode, pincodeMatchesState } from '@/lib/pincode';
 import { emailQueue, paymentQueue } from '@/jobs/queues';
 import { serializeOrder, ORDER_SELECT } from '@/modules/orders/orders.serializer';
 import { assertFulfillable, priceCart, type CartLineInput } from './pricing.service';
+import { resolveAttribution } from './attribution';
 import * as couponsService from '@/modules/coupons/coupons.service';
 
 const log = logger.child({ module: 'checkout' });
@@ -224,6 +225,16 @@ export async function checkout(
   }
   assertFulfillable(cart);
 
+  /*
+   * Affiliate attribution, resolved BEFORE the transaction opens.
+   *
+   * It is a read against coupons the engine already accepted, and the checkout
+   * transaction holds row locks on stock — keeping an extra round trip out of
+   * it matters on a database this far away (see the note on transaction
+   * timeouts in lib/prisma.ts).
+   */
+  const attribution = await resolveAttribution(cart.coupons);
+
   // ---- 5. The transaction --------------------------------------------------
   const created = await prisma.$transaction(
     async (tx) => {
@@ -352,6 +363,13 @@ export async function checkout(
           totalPaise: cart.totalPaise,
           couponCode: cart.coupon?.code ?? null,
           couponCodes: cart.coupons.map((c) => c.code),
+          /*
+           * Affiliate attribution, written once and never updated. Derived from
+           * promotions the engine actually priced, so the percentage and the
+           * paise are the server's numbers — a client cannot name an influencer
+           * or inflate a commission by editing the request.
+           */
+          ...(attribution ?? {}),
           shippingAddress: { ...input.shippingAddress } as Prisma.InputJsonValue,
           // The shopper's own words go to customerNote. internalNote is
           // staff-only and starts empty.
