@@ -152,6 +152,64 @@ describe('creating an affiliate', () => {
   });
 });
 
+describe('per-influencer coupon settings', () => {
+  it('defaults to NON_STACKABLE when no choice is made', async () => {
+    await service.create(validInput, ctx);
+    expect(couponCreate.mock.calls[0]![0].data.stackingMode).toBe('NON_STACKABLE');
+  });
+
+  it('honours a chosen stacking mode', async () => {
+    for (const mode of service.AFFILIATE_STACKING) {
+      couponCreate.mockClear();
+      await service.create({ ...validInput, stackingMode: mode }, ctx);
+      expect(couponCreate.mock.calls[0]![0].data.stackingMode).toBe(mode);
+    }
+  });
+
+  it('does NOT offer GLOBALLY_STACKABLE', () => {
+    /*
+     * That mode means "combines with anything". An affiliate percentage set
+     * that way would ride on top of SPECIAL10 and compound into a double
+     * discount — the exact failure the mode exists to prevent elsewhere.
+     */
+    expect(service.AFFILIATE_STACKING).not.toContain('GLOBALLY_STACKABLE');
+  });
+
+  it('supports a flat-amount affiliate code', async () => {
+    await service.create(
+      { ...validInput, discountType: 'FLAT', discountPct: undefined, discountPaise: 20000 },
+      ctx,
+    );
+    const data = couponCreate.mock.calls[0]![0].data;
+    expect(data.discountType).toBe('FLAT');
+    expect(data.discountValue).toBe(20000);
+    // A flat coupon is its own ceiling, so no cap is written.
+    expect(data.maxDiscountPaise).toBeNull();
+  });
+
+  it('rejects a flat code with no amount', async () => {
+    await expect(
+      service.create({ ...validInput, discountType: 'FLAT', discountPct: undefined }, ctx),
+    ).rejects.toThrow(/flat discount amount/i);
+  });
+
+  it('caps a percentage discount when a maximum is given', async () => {
+    await service.create({ ...validInput, maxDiscountPaise: 50000 }, ctx);
+    expect(couponCreate.mock.calls[0]![0].data.maxDiscountPaise).toBe(50000);
+  });
+
+  it('passes through usage limits and delivery states', async () => {
+    await service.create(
+      { ...validInput, totalUsageLimit: 500, perCustomerLimit: 3, allowedStates: ['Kerala'] },
+      ctx,
+    );
+    const data = couponCreate.mock.calls[0]![0].data;
+    expect(data.totalUsageLimit).toBe(500);
+    expect(data.perCustomerLimit).toBe(3);
+    expect(data.allowedStates).toEqual(['Kerala']);
+  });
+});
+
 describe('deactivating an affiliate', () => {
   it('disables their coupons but deletes nothing', async () => {
     await service.setStatus('inf-1', 'INACTIVE' as never, ctx);

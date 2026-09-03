@@ -68,7 +68,11 @@ const INFLUENCER_SELECT = {
       startsAt: true,
       endsAt: true,
       minOrderPaise: true,
+      maxDiscountPaise: true,
+      totalUsageLimit: true,
+      perCustomerLimit: true,
       stackingMode: true,
+      allowedStates: true,
       usedCount: true,
     },
     orderBy: { createdAt: 'asc' },
@@ -101,7 +105,12 @@ function serialize(row: InfluencerRow) {
           endsAt: coupon.endsAt,
           minOrderPaise: coupon.minOrderPaise,
           minOrder: toRupees(coupon.minOrderPaise),
+          maxDiscountPaise: coupon.maxDiscountPaise,
+          maxDiscount: coupon.maxDiscountPaise === null ? null : toRupees(coupon.maxDiscountPaise),
+          totalUsageLimit: coupon.totalUsageLimit,
+          perCustomerLimit: coupon.perCustomerLimit,
           stackingMode: coupon.stackingMode,
+          allowedStates: coupon.allowedStates,
           usedCount: coupon.usedCount,
         }
       : null,
@@ -342,6 +351,19 @@ export const MIN_INFLUENCER_PCT = 1;
 export const MAX_USES_PER_CUSTOMER = 100;
 export const MAX_INFLUENCER_PCT = 90;
 
+/**
+ * Stacking modes an AFFILIATE code may use.
+ *
+ * GLOBALLY_STACKABLE is deliberately absent. That mode means "combines with
+ * anything", and it exists for a perk that is not a percentage off the cart —
+ * the free-shipping first-order benefit. An affiliate percentage marked that way
+ * would ride on top of SPECIAL10 and compound into a double discount, which is
+ * the exact failure the mode was built to prevent. Free shipping still applies
+ * alongside every option below, because ZEWA1 carries that property, not these.
+ */
+export const AFFILIATE_STACKING = ['NON_STACKABLE', 'STACKABLE', 'EXCLUSIVE'] as const;
+export type AffiliateStacking = (typeof AFFILIATE_STACKING)[number];
+
 export interface InfluencerInput {
   name: string;
   email?: string | null;
@@ -349,8 +371,20 @@ export interface InfluencerInput {
   socialHandle?: string | null;
   notes?: string | null;
   couponCode: string;
-  discountPct: number;
+  /** PERCENTAGE uses `discountPct`; FLAT uses `discountPaise`. */
+  discountType?: 'PERCENTAGE' | 'FLAT';
+  discountPct?: number;
+  discountPaise?: number;
   minOrderPaise?: number;
+  /** Ceiling on a percentage discount, in paise. Null for no cap. */
+  maxDiscountPaise?: number | null;
+  /** Total redemptions allowed across all customers. Null for unlimited. */
+  totalUsageLimit?: number | null;
+  /** How many times ONE customer may use it. */
+  perCustomerLimit?: number;
+  stackingMode?: AffiliateStacking;
+  /** States this code may be used for delivery to. Empty means everywhere. */
+  allowedStates?: string[];
   startsAt: Date;
   endsAt: Date;
   isActive?: boolean;
@@ -373,6 +407,31 @@ async function assertCodeFree(code: string, exceptCouponId?: string): Promise<vo
   if (existing && existing.id !== exceptCouponId) {
     throw conflict(`Coupon code ${normaliseCode(code)} is already in use.`, ErrorCode.COUPON_DUPLICATE);
   }
+}
+
+/**
+ * Validate the discount shape.
+ *
+ * A percentage is bounded because nothing should be able to write a 900% code.
+ * A flat amount is bounded only by sanity — the engine already floors a discount
+ * at the cart value, so an over-large flat code cannot make an order negative.
+ */
+function assertDiscount(input: {
+  discountType?: 'PERCENTAGE' | 'FLAT';
+  discountPct?: number;
+  discountPaise?: number;
+}): void {
+  const type = input.discountType ?? 'PERCENTAGE';
+  if (type === 'FLAT') {
+    const paise = input.discountPaise ?? 0;
+    if (!Number.isInteger(paise) || paise <= 0) {
+      throw new AppError(422, ErrorCode.VALIDATION_FAILED, 'Enter a flat discount amount.', {
+        fields: { discountAmount: 'Enter an amount greater than zero.' },
+      });
+    }
+    return;
+  }
+  assertPct(input.discountPct ?? 0);
 }
 
 function assertPct(pct: number): void {
@@ -399,7 +458,7 @@ function assertPct(pct: number): void {
  * GLOBALLY_STACKABLE and rides alongside anything.
  */
 export async function create(input: InfluencerInput, ctx: AuditContext) {
-  assertPct(input.discountPct);
+  assertDiscount(input);
   const code = normaliseCode(input.couponCode);
   await assertCodeFree(code);
 
@@ -420,14 +479,29 @@ export async function create(input: InfluencerInput, ctx: AuditContext) {
         code,
         name: `${input.name.trim()} — affiliate`,
         description: `Influencer code for ${input.name.trim()}`,
-        discountType: 'PERCENTAGE',
-        discountValue: input.discountPct,
+        discountType: input.discountType ?? 'PERCENTAGE',
+        discountValue:
+          (input.discountType ?? 'PERCENTAGE') === 'FLAT'
+            ? (input.discountPaise ?? 0)
+            : (input.discountPct ?? 0),
+        // Only meaningful for a percentage; a flat coupon is already its own cap.
+        maxDiscountPaise:
+          (input.discountType ?? 'PERCENTAGE') === 'PERCENTAGE'
+            ? (input.maxDiscountPaise ?? null)
+            : null,
         minOrderPaise: input.minOrderPaise ?? 0,
+        totalUsageLimit: input.totalUsageLimit ?? null,
+        allowedStates: input.allowedStates ?? [],
         startsAt: input.startsAt,
         endsAt: input.endsAt,
         isActive: input.isActive ?? true,
         trigger: 'CODE',
-        stackingMode: 'NON_STACKABLE',
+        /*
+         * Defaults to NON_STACKABLE — one percentage discount per order — but
+         * the admin may relax it per influencer. GLOBALLY_STACKABLE is not on
+         * offer; see AFFILIATE_STACKING.
+         */
+        stackingMode: input.stackingMode ?? 'NON_STACKABLE',
         customerEligibility: 'ALL_CUSTOMERS',
         /*
          * An affiliate code is shared publicly by the creator, so ONE customer
@@ -435,7 +509,7 @@ export async function create(input: InfluencerInput, ctx: AuditContext) {
          * The engine refuses when priorRedemptions >= perCustomerLimit, so 0
          * would block every use; this is the "effectively unlimited" value.
          */
-        perCustomerLimit: MAX_USES_PER_CUSTOMER,
+        perCustomerLimit: input.perCustomerLimit ?? MAX_USES_PER_CUSTOMER,
         influencerId: influencer.id,
         // Personal to one creator — never advertised on the storefront.
         showAtCheckout: false,
@@ -465,7 +539,13 @@ export async function update(
   if (!before) throw notFound('Influencer not found.');
   const coupon = before.coupons[0] ?? null;
 
-  if (input.discountPct !== undefined) assertPct(input.discountPct);
+  if (input.discountPct !== undefined || input.discountPaise !== undefined) {
+    assertDiscount({
+      discountType: input.discountType ?? (coupon?.discountType as 'PERCENTAGE' | 'FLAT'),
+      discountPct: input.discountPct,
+      discountPaise: input.discountPaise,
+    });
+  }
   if (input.couponCode !== undefined && coupon) {
     await assertCodeFree(input.couponCode, coupon.id);
   }
@@ -489,7 +569,20 @@ export async function update(
         where: { id: coupon.id },
         data: {
           ...(input.couponCode !== undefined ? { code: normaliseCode(input.couponCode) } : {}),
+          ...(input.discountType !== undefined ? { discountType: input.discountType } : {}),
           ...(input.discountPct !== undefined ? { discountValue: input.discountPct } : {}),
+          ...(input.discountPaise !== undefined ? { discountValue: input.discountPaise } : {}),
+          ...(input.maxDiscountPaise !== undefined
+            ? { maxDiscountPaise: input.maxDiscountPaise }
+            : {}),
+          ...(input.totalUsageLimit !== undefined
+            ? { totalUsageLimit: input.totalUsageLimit }
+            : {}),
+          ...(input.perCustomerLimit !== undefined
+            ? { perCustomerLimit: input.perCustomerLimit }
+            : {}),
+          ...(input.stackingMode !== undefined ? { stackingMode: input.stackingMode } : {}),
+          ...(input.allowedStates !== undefined ? { allowedStates: input.allowedStates } : {}),
           ...(input.minOrderPaise !== undefined ? { minOrderPaise: input.minOrderPaise } : {}),
           ...(input.startsAt !== undefined ? { startsAt: input.startsAt } : {}),
           ...(input.endsAt !== undefined ? { endsAt: input.endsAt } : {}),
