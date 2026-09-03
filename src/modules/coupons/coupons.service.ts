@@ -98,9 +98,9 @@ export function couponStatus(coupon: {
 /** How each stacking mode reads in the CMS. */
 const STACKING_LABELS: Record<CouponStacking, string> = {
   [CouponStacking.STACKABLE]: 'Stackable',
-  [CouponStacking.NON_STACKABLE]: 'Cannot be combined',
+  [CouponStacking.NON_STACKABLE]: 'On its own',
   [CouponStacking.EXCLUSIVE]: 'Exclusive',
-  [CouponStacking.GLOBALLY_STACKABLE]: 'Always combines',
+  [CouponStacking.GLOBALLY_STACKABLE]: 'Always applies',
 };
 
 const ELIGIBILITY_LABELS: Record<CustomerEligibility, string> = {
