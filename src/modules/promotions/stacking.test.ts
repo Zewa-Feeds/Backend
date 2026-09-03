@@ -258,12 +258,31 @@ describe('a globally stackable coupon', () => {
     expect(rejected).toHaveLength(0);
   });
 
-  it('applies alongside a NON_STACKABLE coupon', () => {
-    const { accepted } = resolveStack([
+  it('is REFUSED beside a NON_STACKABLE coupon', () => {
+    /*
+     * The one restriction a universal offer respects. "Cannot be combined with
+     * any other discount" has to be literally true, or an admin reading it has
+     * to also know that one category is exempt. A NON_STACKABLE coupon is the
+     * whole offer; nothing rides alongside it.
+     */
+    const { accepted, rejected } = resolveStack([
       candidate('ALONE', 'NON_STACKABLE'),
       candidate('ZEWA1', 'GLOBALLY_STACKABLE'),
     ]);
-    expect(codes(accepted)).toEqual(['ALONE', 'ZEWA1']);
+    expect(codes(accepted)).toEqual(['ALONE']);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.code).toBe('ZEWA1');
+    expect(rejected[0]!.message).toMatch(/cannot be combined/i);
+  });
+
+  it('is refused in the other order too — the rule is symmetric', () => {
+    const { accepted, rejected } = resolveStack([
+      candidate('ZEWA1', 'GLOBALLY_STACKABLE'),
+      candidate('ALONE', 'NON_STACKABLE'),
+    ]);
+    expect(codes(accepted)).toEqual(['ZEWA1']);
+    expect(rejected[0]!.code).toBe('ALONE');
+    expect(rejected[0]!.message).toMatch(/cannot be combined/i);
   });
 
   it('applies alongside an ordinary stackable coupon', () => {

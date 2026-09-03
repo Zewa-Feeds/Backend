@@ -15,7 +15,11 @@
  *                      has to choose between eligible promotions with no
  *                      customer preference to go on.
  *   GLOBALLY_STACKABLE rides alongside ANY stack, including an EXCLUSIVE one —
- *                      but never beside another GLOBALLY_STACKABLE coupon.
+ *                      but never beside another GLOBALLY_STACKABLE coupon, and
+ *                      never beside a NON_STACKABLE one. That second exception
+ *                      is what keeps "cannot be combined with any other
+ *                      discount" literally true: a NON_STACKABLE coupon is the
+ *                      entire offer, and nothing rides alongside it.
  *
  * GLOBALLY_STACKABLE exists for a perk that is not a percentage off the cart:
  * the free-shipping first-order benefit should apply whatever else the customer
@@ -126,6 +130,20 @@ function conflict(
         conflictsWith: [globalAlready.code],
       };
     }
+    /*
+     * NON_STACKABLE is the one restriction GLOBALLY_STACKABLE respects, so that
+     * "cannot be combined with any other discount" is literally true rather than
+     * true-except-for-one-category. A coupon marked NON_STACKABLE is the whole
+     * offer; nothing rides alongside it.
+     */
+    const soloOnly = accepted.find((c) => c.stackingMode === 'NON_STACKABLE');
+    if (soloOnly) {
+      return {
+        errorCode: ErrorCode.COUPON_NOT_STACKABLE,
+        message: `${soloOnly.code} cannot be combined with other coupons.`,
+        conflictsWith: [soloOnly.code],
+      };
+    }
     if (accepted.length >= MAX_STACKED_PROMOTIONS) {
       return {
         errorCode: ErrorCode.COUPON_STACK_LIMIT,
@@ -141,6 +159,14 @@ function conflict(
    * against the rest of the stack only.
    */
   if (globalAlready) {
+    // Symmetry: NON_STACKABLE refuses a universal offer whichever arrived first.
+    if (next.stackingMode === 'NON_STACKABLE') {
+      return {
+        errorCode: ErrorCode.COUPON_NOT_STACKABLE,
+        message: `${next.code} cannot be combined with other coupons. Remove ${globalAlready.code} to use it.`,
+        conflictsWith: [globalAlready.code],
+      };
+    }
     const rest = accepted.filter((c) => c.stackingMode !== 'GLOBALLY_STACKABLE');
     return conflict(next, rest);
   }
