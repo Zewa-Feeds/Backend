@@ -397,7 +397,46 @@ async function computeTimeSeries(range: DateRange, interval: 'day' | 'week' | 'm
     }
   }
 
-  return Object.values(buckets);
+  // Zero-fill every interval in the range so a line/bar chart shows a
+  // continuous series instead of gaps on days with no orders, and so two
+  // series (current vs previous period) line up index-for-index.
+  const filled: (typeof buckets)[string][] = [];
+  const cursor = new Date(from.getTime() + IST_OFFSET_MS);
+  const endIst = new Date(to.getTime() + IST_OFFSET_MS);
+
+  if (interval === 'week') {
+    cursor.setUTCDate(cursor.getUTCDate() - cursor.getUTCDay());
+  }
+
+  while (cursor.getTime() <= endIst.getTime()) {
+    const y = cursor.getUTCFullYear();
+    const m = String(cursor.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(cursor.getUTCDate()).padStart(2, '0');
+    const key = interval === 'month' ? `${y}-${m}` : `${y}-${m}-${d}`;
+
+    filled.push(
+      buckets[key] ?? {
+        date: key,
+        grossRevenuePaise: 0,
+        netRevenuePaise: 0,
+        discountPaise: 0,
+        shippingPaise: 0,
+        taxPaise: 0,
+        orders: 0,
+        itemsSold: 0,
+      },
+    );
+
+    if (interval === 'month') {
+      cursor.setUTCMonth(cursor.getUTCMonth() + 1);
+    } else if (interval === 'week') {
+      cursor.setUTCDate(cursor.getUTCDate() + 7);
+    } else {
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+  }
+
+  return filled;
 }
 
 /**
@@ -470,11 +509,18 @@ export async function getOverview(fromStr?: string, toStr?: string, compare = tr
 /**
  * Detailed Revenue Analytics.
  */
-export async function getRevenueAnalytics(fromStr?: string, toStr?: string, interval: 'day' | 'week' | 'month' = 'day') {
+export async function getRevenueAnalytics(
+  fromStr?: string,
+  toStr?: string,
+  interval: 'day' | 'week' | 'month' = 'day',
+  compare = false,
+) {
   const range = resolveDateRange(fromStr, toStr);
+  const prevRange = getPreviousPeriod(range);
 
-  const [timeSeries, orders] = await Promise.all([
+  const [timeSeries, prevTimeSeries, orders] = await Promise.all([
     computeTimeSeries(range, interval),
+    compare ? computeTimeSeries(prevRange, interval) : Promise.resolve(null),
     prisma.order.findMany({
       where: {
         placedAt: { gte: range.from, lte: range.to },
@@ -516,6 +562,7 @@ export async function getRevenueAnalytics(fromStr?: string, toStr?: string, inte
   const categoryMap: Record<string, { category: string; grossPaise: number; units: number; orderCount: Set<string> }> = {};
   const stateMap: Record<string, { state: string; grossPaise: number; orders: number }> = {};
   const paymentMethodMap: Record<string, { method: string; grossPaise: number; count: number }> = {};
+  const skuMap: Record<string, { sku: string; productName: string; grossPaise: number; units: number; orderCount: Set<string> }> = {};
 
   for (const o of orders) {
     if (!isRevenueOrder(o.status, o.paymentStatus)) continue;
@@ -541,6 +588,13 @@ export async function getRevenueAnalytics(fromStr?: string, toStr?: string, inte
       categoryMap[cat]!.grossPaise += item.lineTotalPaise;
       categoryMap[cat]!.units += item.qty;
       categoryMap[cat]!.orderCount.add(o.id);
+
+      if (!skuMap[item.sku]) {
+        skuMap[item.sku] = { sku: item.sku, productName: item.productName, grossPaise: 0, units: 0, orderCount: new Set() };
+      }
+      skuMap[item.sku]!.grossPaise += item.lineTotalPaise;
+      skuMap[item.sku]!.units += item.qty;
+      skuMap[item.sku]!.orderCount.add(o.id);
     }
   }
 
@@ -553,14 +607,24 @@ export async function getRevenueAnalytics(fromStr?: string, toStr?: string, inte
 
   const byState = Object.values(stateMap).sort((a, b) => b.grossPaise - a.grossPaise);
   const byPaymentMethod = Object.values(paymentMethodMap);
+  const bySku = Object.values(skuMap).map((s) => ({
+    sku: s.sku,
+    productName: s.productName,
+    grossPaise: s.grossPaise,
+    units: s.units,
+    orders: s.orderCount.size,
+  })).sort((a, b) => b.grossPaise - a.grossPaise);
 
   return {
     range,
+    comparisonRange: compare ? prevRange : null,
     interval,
     timeSeries,
+    previousTimeSeries: prevTimeSeries,
     byCategory,
     byState,
     byPaymentMethod,
+    bySku,
   };
 }
 

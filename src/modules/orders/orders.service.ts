@@ -18,6 +18,7 @@ import {
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { AppError, ErrorCode, notFound } from '@/lib/errors';
+import { endOfDay } from '@/lib/date';
 import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
 import { listMeta, toSkipTake } from '@/middleware/validate';
 import { formatInr } from './tax';
@@ -67,7 +68,10 @@ export async function list(params: ListParams) {
       ? {
           placedAt: {
             ...(params.from ? { gte: params.from } : {}),
-            ...(params.to ? { lte: params.to } : {}),
+            // `to` arrives as a bare date (midnight UTC) from a `YYYY-MM-DD`
+            // query param, so treat it as end-of-day or that whole day's
+            // orders would be silently excluded.
+            ...(params.to ? { lte: endOfDay(params.to) } : {}),
           },
         }
       : {}),

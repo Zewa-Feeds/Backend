@@ -47,14 +47,16 @@ analyticsRouter.get(
       from: z.string().optional(),
       to: z.string().optional(),
       interval: z.enum(['day', 'week', 'month']).optional(),
+      compare: z.enum(['true', 'false']).optional(),
     }),
   }),
   asyncHandler(async (req, res) => {
     const fromStr = req.query.from as string | undefined;
     const toStr = req.query.to as string | undefined;
     const interval = (req.query.interval as 'day' | 'week' | 'month') || 'day';
+    const compare = req.query.compare === 'true';
 
-    const data = await analyticsService.getRevenueAnalytics(fromStr, toStr, interval);
+    const data = await analyticsService.getRevenueAnalytics(fromStr, toStr, interval, compare);
     res.json({ data });
   }),
 );

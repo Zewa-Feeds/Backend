@@ -79,6 +79,8 @@ const COUPON_SELECT = {
   categories: { select: { role: true, category: true } },
   customers: { select: { email: true } },
   bxgy: { select: { buyQty: true, getQty: true, rewardPercentOff: true, maxRepeats: true } },
+  influencerId: true,
+  influencer: { select: { id: true, name: true } },
 } satisfies Prisma.CouponSelect;
 
 type CouponRow = Prisma.CouponGetPayload<{ select: typeof COUPON_SELECT }>;
@@ -232,6 +234,11 @@ function serialize(c: CouponRow) {
     status: couponStatus(c),
     createdAt: c.createdAt,
 
+    // ---- Influencer / affiliate attribution --------------------------------
+    influencerId: c.influencerId,
+    isInfluencer: c.influencerId !== null,
+    influencerName: c.influencer?.name ?? null,
+
     // ---- Scope (§10.2 extension) -------------------------------------------
     scope: c.scope,
     scopeLabel: c.scope === CouponScope.ALL_PRODUCTS ? 'All products' : 'Specific products',
@@ -317,12 +324,16 @@ export interface ListParams {
   limit: number;
   q?: string;
   status?: CouponStatus;
+  /** true = influencer coupons only, false = regular coupons only, omitted = both. */
+  isInfluencer?: boolean;
 }
 
 export async function list(params: ListParams) {
   const where: Prisma.CouponWhereInput = {
     deletedAt: null,
     ...(params.q ? { code: { contains: params.q.toUpperCase() } } : {}),
+    ...(params.isInfluencer === true ? { influencerId: { not: null } } : {}),
+    ...(params.isInfluencer === false ? { influencerId: null } : {}),
   };
 
   // Status is derived, so it cannot be a SQL filter. The coupon table is small

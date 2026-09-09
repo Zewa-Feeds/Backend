@@ -194,8 +194,15 @@ const statusFilter = z.preprocess(
   z.enum(['Active', 'Inactive', 'Expired']).optional(),
 );
 
+/** "All"/"" (the CMS's unset sentinel) -> no filter; "true"/"false" -> boolean. */
+const isInfluencerFilter = z.preprocess(
+  (v) => (typeof v === 'string' && (v === 'All' || v === '') ? undefined : v),
+  z.enum(['true', 'false']).optional().transform((v) => (v === undefined ? undefined : v === 'true')),
+);
+
 const listQuerySchema = paginationSchema.extend({
   status: statusFilter,
+  isInfluencer: isInfluencerFilter,
 });
 
 couponsRouter.get(
