@@ -23,7 +23,8 @@ export interface DateRange {
 
 export interface MetricDelta {
   current: number;
-  previous: number;
+  /** null when comparison was not requested — a real previous-period value is never zero-in-disguise. */
+  previous: number | null;
   pctChange: number | null;
   absChange: number;
 }
@@ -446,9 +447,28 @@ export async function getOverview(fromStr?: string, toStr?: string, compare = tr
   const currentRange = resolveDateRange(fromStr, toStr);
   const prevRange = getPreviousPeriod(currentRange);
 
+  const emptySummary: PeriodSummary = {
+    grossRevenuePaise: 0,
+    netRevenuePaise: 0,
+    discountPaise: 0,
+    shippingPaise: 0,
+    taxPaise: 0,
+    refundPaise: 0,
+    totalOrders: 0,
+    paidOrders: 0,
+    cancelledOrders: 0,
+    itemsSold: 0,
+    aovPaise: 0,
+    uniqueCustomers: 0,
+    newCustomers: 0,
+    returningCustomers: 0,
+    couponUsageCount: 0,
+    couponAttributedRevenuePaise: 0,
+  };
+
   const [currentSummary, prevSummary, timeSeries, statusGroups, paymentGroups] = await Promise.all([
     computePeriodSummary(currentRange),
-    compare ? computePeriodSummary(prevRange) : computePeriodSummary(prevRange),
+    compare ? computePeriodSummary(prevRange) : Promise.resolve(emptySummary),
     computeTimeSeries(currentRange, 'day'),
     prisma.order.groupBy({
       by: ['status'],
@@ -462,23 +482,28 @@ export async function getOverview(fromStr?: string, toStr?: string, compare = tr
     }),
   ]);
 
+  // When comparison is off, report only the current value — `previous: 0` /
+  // `pctChange: 100` would read as a real (and misleading) period-over-period
+  // change rather than "no comparison requested".
+  const noComparison = (current: number): MetricDelta => ({ current, previous: null, pctChange: null, absChange: 0 });
+
   const kpis: OverviewMetrics = {
-    grossRevenuePaise: calcDelta(currentSummary.grossRevenuePaise, prevSummary.grossRevenuePaise),
-    netRevenuePaise: calcDelta(currentSummary.netRevenuePaise, prevSummary.netRevenuePaise),
-    discountPaise: calcDelta(currentSummary.discountPaise, prevSummary.discountPaise),
-    shippingPaise: calcDelta(currentSummary.shippingPaise, prevSummary.shippingPaise),
-    taxPaise: calcDelta(currentSummary.taxPaise, prevSummary.taxPaise),
-    refundPaise: calcDelta(currentSummary.refundPaise, prevSummary.refundPaise),
-    totalOrders: calcDelta(currentSummary.totalOrders, prevSummary.totalOrders),
-    paidOrders: calcDelta(currentSummary.paidOrders, prevSummary.paidOrders),
-    cancelledOrders: calcDelta(currentSummary.cancelledOrders, prevSummary.cancelledOrders),
-    itemsSold: calcDelta(currentSummary.itemsSold, prevSummary.itemsSold),
-    aovPaise: calcDelta(currentSummary.aovPaise, prevSummary.aovPaise),
-    uniqueCustomers: calcDelta(currentSummary.uniqueCustomers, prevSummary.uniqueCustomers),
-    newCustomers: calcDelta(currentSummary.newCustomers, prevSummary.newCustomers),
-    returningCustomers: calcDelta(currentSummary.returningCustomers, prevSummary.returningCustomers),
-    couponUsageCount: calcDelta(currentSummary.couponUsageCount, prevSummary.couponUsageCount),
-    couponAttributedRevenuePaise: calcDelta(currentSummary.couponAttributedRevenuePaise, prevSummary.couponAttributedRevenuePaise),
+    grossRevenuePaise: compare ? calcDelta(currentSummary.grossRevenuePaise, prevSummary.grossRevenuePaise) : noComparison(currentSummary.grossRevenuePaise),
+    netRevenuePaise: compare ? calcDelta(currentSummary.netRevenuePaise, prevSummary.netRevenuePaise) : noComparison(currentSummary.netRevenuePaise),
+    discountPaise: compare ? calcDelta(currentSummary.discountPaise, prevSummary.discountPaise) : noComparison(currentSummary.discountPaise),
+    shippingPaise: compare ? calcDelta(currentSummary.shippingPaise, prevSummary.shippingPaise) : noComparison(currentSummary.shippingPaise),
+    taxPaise: compare ? calcDelta(currentSummary.taxPaise, prevSummary.taxPaise) : noComparison(currentSummary.taxPaise),
+    refundPaise: compare ? calcDelta(currentSummary.refundPaise, prevSummary.refundPaise) : noComparison(currentSummary.refundPaise),
+    totalOrders: compare ? calcDelta(currentSummary.totalOrders, prevSummary.totalOrders) : noComparison(currentSummary.totalOrders),
+    paidOrders: compare ? calcDelta(currentSummary.paidOrders, prevSummary.paidOrders) : noComparison(currentSummary.paidOrders),
+    cancelledOrders: compare ? calcDelta(currentSummary.cancelledOrders, prevSummary.cancelledOrders) : noComparison(currentSummary.cancelledOrders),
+    itemsSold: compare ? calcDelta(currentSummary.itemsSold, prevSummary.itemsSold) : noComparison(currentSummary.itemsSold),
+    aovPaise: compare ? calcDelta(currentSummary.aovPaise, prevSummary.aovPaise) : noComparison(currentSummary.aovPaise),
+    uniqueCustomers: compare ? calcDelta(currentSummary.uniqueCustomers, prevSummary.uniqueCustomers) : noComparison(currentSummary.uniqueCustomers),
+    newCustomers: compare ? calcDelta(currentSummary.newCustomers, prevSummary.newCustomers) : noComparison(currentSummary.newCustomers),
+    returningCustomers: compare ? calcDelta(currentSummary.returningCustomers, prevSummary.returningCustomers) : noComparison(currentSummary.returningCustomers),
+    couponUsageCount: compare ? calcDelta(currentSummary.couponUsageCount, prevSummary.couponUsageCount) : noComparison(currentSummary.couponUsageCount),
+    couponAttributedRevenuePaise: compare ? calcDelta(currentSummary.couponAttributedRevenuePaise, prevSummary.couponAttributedRevenuePaise) : noComparison(currentSummary.couponAttributedRevenuePaise),
   };
 
   const statusDistribution: Record<string, number> = {
