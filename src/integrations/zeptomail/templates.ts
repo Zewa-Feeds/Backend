@@ -23,22 +23,29 @@ function esc(value: unknown): string {
 }
 
 /*
- * Email palette & typography matching the Frontend website theme (§6.3, §15).
+ * Email palette & typography matching the Frontend website's dark theme (§6.3, §15).
+ *
+ * Colors are pulled directly from the storefront's Tailwind config, not
+ * approximated — CANVAS/card is the site's actual `background`/`surface`
+ * (#0d1321), INK is `surface-container-lowest` (#080e1c, used here for
+ * high-contrast chips), and BRAND_PRIMARY is the site's exact `primary` mint.
  *
  * Primary CTA Button: Frontend Mint (#44E5C2) with dark forest green text (#00382D)
- * Brand Accent: High-contrast emerald teal (#00755F) for links and totals
- * Surface: Clean white card (#FFFFFF) on subtle off-white canvas (#F2F5F8)
+ * Brand Accent: Mint (#44E5C2) for links, totals, and section labels
+ * Surface: Dark card (#0D1321) on near-black canvas (#080E1C)
  * Typography: Playfair Display for headings & wordmark, Montserrat for body/buttons
  */
 const BRAND_PRIMARY = '#44E5C2';
 const BRAND_BUTTON_TEXT = '#00382D';
-const BRAND = '#00755F';
-const BRAND_SOFT = '#EBFBF8';
-const BRAND_BORDER = '#C7F2E9';
-const INK = '#080E1C';
-const MUTED = '#5A6B82';
-const HAIRLINE = '#E2E8F0';
-const CANVAS = '#F2F5F8';
+const BRAND = '#44E5C2';
+const BRAND_SOFT = '#122A26';
+const BRAND_BORDER = '#1E4A42';
+const INK = '#F4F7FA';
+const MUTED = '#9AA7BD';
+const HAIRLINE = '#232B3D';
+const CANVAS = '#080E1C';
+const CARD = '#0D1321';
+const CARD_INSET = '#151B2A';
 const FONT_HEADING = "'Playfair Display', Georgia, 'Times New Roman', serif";
 const FONT_BODY = "'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
@@ -111,8 +118,14 @@ function shell(heading: string, intro: string, body: string, preheader?: string)
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<meta name="color-scheme" content="light"/>
+<meta name="color-scheme" content="dark"/>
+<meta name="supported-color-schemes" content="dark"/>
 <title>${esc(heading)}</title>
+<!--[if !mso]><!-->
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet"/>
+<!--<![endif]-->
 </head>
 <body style="margin:0;padding:0;background:${CANVAS};-webkit-font-smoothing:antialiased;">
   <span style="display:none!important;visibility:hidden;opacity:0;color:transparent;height:0;width:0;overflow:hidden;mso-hide:all;">${esc(preheader ?? intro.replace(/<[^>]+>/g, ''))}</span>
@@ -121,11 +134,11 @@ function shell(heading: string, intro: string, body: string, preheader?: string)
     <tr>
       <td align="center" style="padding:32px 16px;">
 
-        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:#ffffff;border:1px solid ${HAIRLINE};border-radius:16px;overflow:hidden;box-shadow:0 4px 20px rgba(8,14,28,0.06);">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:100%;background:${CARD};border:1px solid ${HAIRLINE};border-radius:16px;overflow:hidden;">
 
           <!-- Wordmark -->
           <tr>
-            <td style="padding:26px 32px 0;">
+            <td style="padding:26px 32px 0;background:${CARD};">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                   <td style="padding-bottom:8px;">
@@ -139,7 +152,7 @@ function shell(heading: string, intro: string, body: string, preheader?: string)
 
           <!-- Body -->
           <tr>
-            <td style="padding:28px 32px 32px;font-family:${FONT_BODY};">
+            <td style="padding:28px 32px 32px;background:${CARD};font-family:${FONT_BODY};">
               <h1 style="margin:0 0 12px;font-family:${FONT_HEADING};font-size:24px;line-height:1.28;font-weight:700;color:${INK};letter-spacing:-0.35px;">${heading}</h1>
               <p style="margin:0 0 24px;font-size:14.5px;line-height:1.65;color:${MUTED};">${intro}</p>
               ${body}
@@ -148,11 +161,11 @@ function shell(heading: string, intro: string, body: string, preheader?: string)
 
           <!-- Footer -->
           <tr>
-            <td style="padding:20px 32px 24px;background:#F8FAFC;border-top:1px solid ${HAIRLINE};font-family:${FONT_BODY};">
+            <td style="padding:20px 32px 24px;background:${CARD_INSET};border-top:1px solid ${HAIRLINE};font-family:${FONT_BODY};">
               <p style="margin:0 0 8px;font-size:12.5px;line-height:1.6;color:${MUTED};">
                 Need a hand? Just reply to this email — it reaches a person.
               </p>
-              <p style="margin:0;font-size:11px;line-height:1.65;color:#94A3B0;">
+              <p style="margin:0;font-size:11px;line-height:1.65;color:#6B7A93;">
                 ${esc(env.COMPANY_NAME)} · GSTIN ${esc(env.COMPANY_GSTIN)}<br/>
                 ${esc(supportAddress())}
               </p>
@@ -224,7 +237,7 @@ function itemsBlock(ctx: OrderEmailContext): string {
     ? `
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0 0;">
     <tr>
-      <td style="padding:14px 16px;background:#FBFCFD;border:1px solid ${HAIRLINE};border-radius:10px;">
+      <td style="padding:14px 16px;background:${CARD_INSET};border:1px solid ${HAIRLINE};border-radius:10px;">
         <div style="font-size:10.5px;letter-spacing:0.09em;text-transform:uppercase;color:${MUTED};margin-bottom:4px;">Delivery instructions / Note</div>
         <div style="font-size:13px;line-height:1.5;color:${INK};">${esc(ctx.customerNote)}</div>
       </td>
@@ -246,7 +259,7 @@ function itemsBlock(ctx: OrderEmailContext): string {
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 0;">
     <tr>
-      <td style="padding:16px;background:#FBFCFD;border:1px solid ${HAIRLINE};border-radius:10px;">
+      <td style="padding:16px;background:${CARD_INSET};border:1px solid ${HAIRLINE};border-radius:10px;">
         <div style="font-size:10.5px;letter-spacing:0.09em;text-transform:uppercase;color:${MUTED};margin-bottom:6px;">Delivering to</div>
         <div style="font-size:13.5px;line-height:1.6;color:${INK};">${esc(ctx.addressLine)}</div>
       </td>
@@ -629,7 +642,7 @@ export const accountTemplates = {
         button('Accept Invitation & Set Password', ctx.inviteUrl) +
         `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0 0;">
            <tr>
-             <td style="padding:14px 16px;background:#FBFCFD;border:1px solid ${HAIRLINE};border-radius:10px;">
+             <td style="padding:14px 16px;background:${CARD_INSET};border:1px solid ${HAIRLINE};border-radius:10px;">
                <div style="font-size:11px;color:${MUTED};margin-bottom:6px;">If the button doesn't work, paste this into your browser:</div>
                <div style="font-size:12px;line-height:1.5;color:${INK};word-break:break-all;">${esc(ctx.inviteUrl)}</div>
              </td>
@@ -660,7 +673,7 @@ export const accountTemplates = {
         ) +
         `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:18px 0 0;">
            <tr>
-             <td style="padding:14px 16px;background:#FBFCFD;border:1px solid ${HAIRLINE};border-radius:10px;">
+             <td style="padding:14px 16px;background:${CARD_INSET};border:1px solid ${HAIRLINE};border-radius:10px;">
                <div style="font-size:11px;color:${MUTED};margin-bottom:6px;">If the button doesn't work, paste this into your browser:</div>
                <div style="font-size:12px;line-height:1.5;color:${INK};word-break:break-all;">${esc(ctx.resetUrl)}</div>
              </td>
@@ -688,7 +701,7 @@ export const accountTemplates = {
       button('Verify Email Address', ctx.verifyUrl) +
         `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 0;">
            <tr>
-             <td style="padding:14px 16px;background:#FBFCFD;border:1px solid ${HAIRLINE};border-radius:10px;">
+             <td style="padding:14px 16px;background:${CARD_INSET};border:1px solid ${HAIRLINE};border-radius:10px;">
                <div style="font-size:11px;color:${MUTED};margin-bottom:6px;">If the button doesn't work, paste this link into your browser:</div>
                <div style="font-size:12px;line-height:1.5;color:${INK};word-break:break-all;">${esc(ctx.verifyUrl)}</div>
              </td>
