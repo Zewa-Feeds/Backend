@@ -25,6 +25,7 @@ import {
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { AppError, ErrorCode, conflict, notFound } from '@/lib/errors';
+import { endOfDay } from '@/lib/date';
 import { type AuditContext, buildDiff, writeAudit } from '@/modules/audit/audit.service';
 import { listMeta, toSkipTake } from '@/middleware/validate';
 import { toRupees } from '@/modules/products/products.serializer';
@@ -326,6 +327,9 @@ export interface ListParams {
   status?: CouponStatus;
   /** true = influencer coupons only, false = regular coupons only, omitted = both. */
   isInfluencer?: boolean;
+  /** Validity-window overlap filter: coupons active at any point in [from, to]. */
+  from?: Date;
+  to?: Date;
 }
 
 export async function list(params: ListParams) {
@@ -334,6 +338,10 @@ export async function list(params: ListParams) {
     ...(params.q ? { code: { contains: params.q.toUpperCase() } } : {}),
     ...(params.isInfluencer === true ? { influencerId: { not: null } } : {}),
     ...(params.isInfluencer === false ? { influencerId: null } : {}),
+    // Overlap, not containment — a coupon spanning the whole range should
+    // still show up even if it started before `from` or ends after `to`.
+    ...(params.from ? { endsAt: { gte: params.from } } : {}),
+    ...(params.to ? { startsAt: { lte: endOfDay(params.to) } } : {}),
   };
 
   // Status is derived, so it cannot be a SQL filter. The coupon table is small

@@ -203,6 +203,9 @@ const isInfluencerFilter = z.preprocess(
 const listQuerySchema = paginationSchema.extend({
   status: statusFilter,
   isInfluencer: isInfluencerFilter,
+  /** Coupon validity window overlapping [from, to], not creation date. */
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
 });
 
 couponsRouter.get(
