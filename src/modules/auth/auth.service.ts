@@ -743,6 +743,23 @@ export async function refresh(refreshToken: string, ctx: AuditContext): Promise<
     throw new AppError(403, ErrorCode.ACCOUNT_DEACTIVATED, 'This account has been deactivated.');
   }
 
+  // ---- Absolute session age cap --------------------------------------------
+  // Rotation below slides `expiresAt` forward from `now`, sized off the same
+  // TTL every time — so an actively-used session's expiry never approaches,
+  // and it never actually ends. `createdAt` is the one field rotation never
+  // touches, so it is the only honest anchor for "how old is this session,
+  // really" — cap it there regardless of how recently it was last used.
+  const maxSessionAgeMs = ttlToMs(
+    session.rememberMe ? env.REFRESH_TOKEN_TTL_REMEMBER : env.REFRESH_TOKEN_TTL,
+  );
+  if (session.createdAt.getTime() + maxSessionAgeMs <= now.getTime()) {
+    await prisma.cmsSession.update({
+      where: { id: session.id },
+      data: { revokedAt: now, revokedReason: 'max_age_exceeded' },
+    });
+    throw unauthenticated('Session expired. Please sign in again.', ErrorCode.TOKEN_EXPIRED);
+  }
+
   // ---- Rotate --------------------------------------------------------------
   // Sliding window sized from the STORED rememberMe flag rather than inferred
   // from what is left of the current expiry — the bug that let a persistent
