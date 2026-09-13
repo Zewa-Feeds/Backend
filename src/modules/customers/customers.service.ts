@@ -55,6 +55,7 @@ export async function list(params: ListParams) {
         lastName: true,
         status: true,
         registeredAt: true,
+        emailVerifiedAt: true,
         orders: {
           select: { totalPaise: true, paymentStatus: true },
         },
@@ -78,6 +79,7 @@ export async function list(params: ListParams) {
       status: c.status,
       statusLabel: c.status === CustomerStatus.BANNED ? 'Banned' : 'Active',
       registeredAt: c.registeredAt,
+      emailVerified: Boolean(c.emailVerifiedAt),
       orders: c.orders.length,
       spentPaise,
       spent: toRupees(spentPaise),
