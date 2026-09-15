@@ -333,6 +333,13 @@ model ProductVariant {
   sku  String @unique
   pack String
 
+  /// Loyalty eligibility (§3.3, §6.4). Clearance and loss-leader SKUs can be
+  /// excluded from earning and/or from being paid for with coins — this is the
+  /// "exclude specific SKUs" cost lever in §2.3. Snapshotted onto the order line
+  /// at purchase, so flipping a flag never rewrites history.
+  earnEligible   Boolean @default(true)
+  coinRedeemable Boolean @default(true)
+
   /// Money in paise. 249 rupees == 24900.
   mrpPaise   Int
   pricePaise Int
@@ -584,14 +591,14 @@ model Order {
   // and a commission report must still show what was actually true at purchase.
   // `influencerId` is a soft reference for grouping — the money figures beside
   // it are the record of truth, not a join back to the current profile.
-  influencerId          String?
-  influencerName        String?
-  influencerCouponCode  String?
+  influencerId            String?
+  influencerName          String?
+  influencerCouponCode    String?
   /// Whole percent, when the affiliate coupon was a percentage discount.
-  influencerDiscountPct Int?
+  influencerDiscountPct   Int?
   /// Paise actually taken off this order by the affiliate coupon.
   influencerDiscountPaise Int?
-  influencerAppliedAt   DateTime?
+  influencerAppliedAt     DateTime?
 
   /// Snapshot at purchase time: { name, line1, line2, city, state, pincode, phone }.
   shippingAddress Json
@@ -630,6 +637,9 @@ model Order {
   emails      OrderEmail[]
   refunds     Refund[]
   redemptions CouponRedemption[]
+  returns     OrderReturn[]
+  loyalty     OrderLoyalty?
+  coinLots    CoinLot[]
 
   @@index([status, placedAt])
   @@index([paymentStatus])
@@ -661,8 +671,37 @@ model OrderItem {
   taxRatePct     Decimal @db.Decimal(5, 2)
   lineTotalPaise Int
 
-  order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  // ---- Loyalty allocation snapshots (§7.4) ---------------------------------
+  // Written ONCE at order creation and never recomputed. A return happens weeks
+  // later, by which time catalogue prices, promotions and tax rates have all
+  // moved; recomputing then would unwind the order against numbers that were
+  // never charged. Allocating COINS (not rupees) keeps mixed-rate baskets exact.
+
+  /// Coins from this order's redemption attributed to this line, pro rata by
+  /// line value. The rounding remainder goes to the highest-value line so the
+  /// allocations sum to the redeemed total exactly.
+  allocatedCoins               Int     @default(0)
+  /// Coupon/promotion discount attributed to this line, in paise.
+  allocatedCouponDiscountPaise Int     @default(0)
+  /// Pre-tax value of the coin discount on this line, in paise. Grossed down at
+  /// THIS line's own GST rate (§3.2).
+  allocatedCoinDiscountPaise   Int     @default(0)
+  /// What was actually paid for this line pre-tax, after both discounts. The
+  /// earn base sums this across earn-eligible lines, and a credit note is raised
+  /// on it rather than on the list price (§11.2).
+  preTaxNetPaidPaise           Int     @default(0)
+  /// Snapshotted from the variant at order time so a later catalogue edit cannot
+  /// change historical arithmetic (§7.4).
+  earnEligible                 Boolean @default(true)
+  coinRedeemable               Boolean @default(true)
+
+  /// How many units of this line have been returned so far. Drives cumulative
+  /// recomputation across multiple sequential partial returns (§7.3).
+  returnedQty Int @default(0)
+
+  order       Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant     ProductVariant?   @relation(fields: [variantId], references: [id], onDelete: SetNull)
+  returnLines OrderReturnLine[]
 
   @@index([orderId])
 }
@@ -734,6 +773,14 @@ model Customer {
   status CustomerStatus @default(ACTIVE)
 
   emailVerifiedAt DateTime?
+  /// Set when the mobile has been confirmed. ZSOP004 §9 anchors the loyalty
+  /// account on a verified phone, but Zewa has no SMS provider — see
+  /// modules/loyalty/README.md. The three requirements that name OTP explicitly
+  /// (§12.1 large-redemption re-verification, §13.3 backfill release, §8.4 #29)
+  /// are recorded as blockers rather than approximated. The column exists so
+  /// those gates can be switched on the day an SMS provider is added, without a
+  /// migration against live balances.
+  phoneVerifiedAt DateTime?
   registeredAt    DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -742,6 +789,8 @@ model Customer {
   reviews            Review[]
   passwordResets     CustomerPasswordReset[]
   emailVerifications CustomerEmailVerification[]
+  loyaltyAccount     LoyaltyAccount?
+  earnCapOverrides   CustomerEarnCapOverride[]
 
   @@index([status])
 }
@@ -859,6 +908,8 @@ model CmsUser {
   backupCodes      BackupCode[]
   emailOtps        CmsEmailOtp[]
   auditLogs        AuditLog[]
+  loyaltyRules     LoyaltyRuleVersion[]
+  returnsProcessed OrderReturn[]
   refundsHandled   Refund[]
   productsUpdated  ProductFamily[]
   productDrafts    ProductDraft[]
@@ -866,7 +917,8 @@ model CmsUser {
   reviewsModerated Review[]
 
   /// Upload signatures this operator requested. See UploadTicket.
-  uploadTickets UploadTicket[]
+  uploadTickets            UploadTicket[]
+  customerEarnCapOverrides CustomerEarnCapOverride[]
 
   @@index([status])
   @@index([deletedAt])
@@ -1088,6 +1140,21 @@ model Coupon {
   priority              Int            @default(0)
   /// Whether a code the customer typed may sit alongside automatic promotions.
   combinesWithAutomatic Boolean        @default(true)
+
+  /// Block Zewa Coins on an order using this coupon (ZSOP004 §4).
+  ///
+  /// "Coupon stacking: allowed — coupon first, coins second. With a per-coupon
+  /// block flag for aggressive promotions."
+  ///
+  /// Deliberately NOT folded into `CouponStacking`: that enum governs which
+  /// COUPONS may ride together, which is a different question from whether
+  /// coins may be spent alongside this one. A 50%-off promotion can be
+  /// perfectly stackable with other coupons and still be too thin to absorb a
+  /// coin discount on top.
+  ///
+  /// Defaults false, so the programme's normal behaviour (§4: stacking allowed)
+  /// is what every existing and new coupon gets unless someone opts out.
+  blocksCoins Boolean @default(false)
 
   /// CODE means the customer must enter it; AUTOMATIC applies on eligibility.
   trigger CouponTrigger @default(CODE)
@@ -1482,4 +1549,615 @@ enum UploadTicketStatus {
   FAILED
   /// The asset was destroyed in Cloudinary and the ticket closed.
   DISCARDED
+}
+
+// ============================================================================
+// Z-COIN LOYALTY (ZSOP004 v3.3)
+//
+// Three invariants hold across every model below. They are the reason the
+// programme can be audited rather than merely operated.
+//
+//   1. THE LEDGER IS TRUTH. `CoinLedger` is append-only, enforced by a database
+//      trigger that RAISES on UPDATE/DELETE (not the audit log's silent
+//      DO INSTEAD NOTHING — a discarded financial write is worse than a loud
+//      failure). `LoyaltyAccount` balances are a derived cache, reconciled
+//      nightly and repaired TO the ledger, never the other way round.
+//
+//   2. NOTHING HISTORICAL IS RECOMPUTED. Every order freezes its
+//      `ruleVersionId` and its per-line allocation at creation. A later rate
+//      change, price edit or tax change cannot alter what a past order earned
+//      (§7.4, §8.4 #35).
+//
+//   3. COINS AND MONEY ARE INTEGERS. Coins are whole; money is paise. No
+//      floating point anywhere in the loyalty path (§9.2).
+// ============================================================================
+
+/// Lifecycle of a batch of coins (§5).
+///
+/// Valid transitions — anything else must raise rather than be silently
+/// permitted, because a system that accepts an impossible transition produces a
+/// balance nobody can explain:
+///   PENDING   → AVAILABLE (unlock) | VOID (cancel/RTO)
+///   AVAILABLE → EXPIRED | REVERSED   (LOCKED is tracked per-reservation, not
+///                                     as a lot state, so one lot can back
+///                                     several concurrent carts)
+///   EXPIRED, VOID, REVERSED are terminal.
+enum CoinLotState {
+  /// Earned, waiting for the return window to close. Visible, not spendable.
+  PENDING
+  /// Unlocked and spendable. This is the headline balance.
+  AVAILABLE
+  /// Fully consumed by confirmed redemptions.
+  REDEEMED
+  /// Passed its expiry unused — recognised as breakage.
+  EXPIRED
+  /// Removed after a cancellation or return that invalidated the grant.
+  REVERSED
+  /// Pending coins killed before they ever unlocked (cancel, RTO, never delivered).
+  VOID
+}
+
+/// Why a ledger row exists. Drives the plain-language history in the CMS and the
+/// customer's account page, and groups the finance report (§11.1).
+enum CoinReason {
+  /// Coins created PENDING when an order was paid/placed (§3.5).
+  EARN
+  /// PENDING → AVAILABLE once the return window closed (§3.5).
+  UNLOCK
+  /// Coins spent on a confirmed order (§4).
+  REDEEM
+  /// A reservation released without payment — coins returned to AVAILABLE (§8.1 #1).
+  RELEASE
+  /// Lot reached its expiry unused (§4.3).
+  EXPIRE
+  /// Coins the customer spent on a returned line, given back (§7.2).
+  RESTORE
+  /// Grant reduced because retained order value fell (§7.2). May go negative.
+  CLAWBACK
+  /// PENDING coins killed before unlock — order never delivered (§3.5).
+  VOID
+  /// Retro-credit of a guest order claimed after registration (§3.4).
+  GUEST_CLAIM
+  /// One-time grant from trailing order history at launch (§13.3).
+  LAUNCH_BACKFILL
+  /// Manual credit/debit by staff. Always carries a reason note (§9.2).
+  ADJUSTMENT
+  /// Support goodwill grant — a NEW lot, never a resurrection of an expired one (§4.3).
+  GOODWILL
+  /// Lots moved in from a merged duplicate account (§8.4 #28).
+  MERGE
+  /// Nightly reconciliation repaired a drifted cache back to the ledger (§9.2).
+  RECONCILE
+}
+
+/// Operational state of a loyalty account (§8.4 #30).
+enum LoyaltyAccountStatus {
+  ACTIVE
+  /// Fraud review. Earn and redeem disabled, balance preserved, expiry clocks
+  /// paused so our review time cannot cost a wrongly-flagged customer value.
+  FROZEN
+  /// Merged into another account; lots have been moved out. Terminal.
+  MERGED
+}
+
+/// Where a coin grant came from. Kept separate from `CoinReason` because the
+/// backfill campaign must be reported apart from steady-state cost for the
+/// first two quarters (§2.2, §13.6).
+enum CoinSourceType {
+  ORDER
+  LAUNCH_BACKFILL
+  GUEST_CLAIM
+  MANUAL
+  MERGE
+}
+
+/// One loyalty account per customer, anchored to the verified mobile (§9).
+///
+/// The three balances are a DERIVED CACHE. They exist because a checkout cannot
+/// afford to sum the ledger on every page view, not because they are
+/// authoritative. `reconcileAccount` rebuilds them from the ledger nightly and
+/// repairs any drift to the ledger's value.
+model LoyaltyAccount {
+  id         String @id @default(uuid())
+  customerId String @unique
+
+  /// The identity anchor (§9). Snapshotted here so a merge can be reasoned
+  /// about even if the customer row later changes.
+  phone String?
+
+  status LoyaltyAccountStatus @default(ACTIVE)
+
+  // ---- Derived cache. Reconciled nightly; the ledger always wins. ----
+  /// Spendable now. Floors at -50 (`maxNegativeBalance`) per §6.7 — the
+  /// operative balance stops there even though the ledger records the full
+  /// deficit in `flaggedDeficit`.
+  availableCoins Int @default(0)
+  /// Earned but not yet unlocked. Shown separately, never summed into the
+  /// headline (§10.1).
+  pendingCoins   Int @default(0)
+  /// Committed to carts awaiting payment. Deducted from available.
+  lockedCoins    Int @default(0)
+
+  // ---- Lifetime totals, for the CMS export and the liability report (§9.4) ----
+  lifetimeEarned   Int @default(0)
+  lifetimeRedeemed Int @default(0)
+  lifetimeExpired  Int @default(0)
+
+  /// Coins owed beyond the -50 floor. Surfaced on the exception report and
+  /// never silently written off (§6.7, §9.2).
+  flaggedDeficit Int @default(0)
+
+  /// Kill switches per account, distinct from the global ones in settings.
+  earnEnabled   Boolean @default(true)
+  redeemEnabled Boolean @default(true)
+
+  /// Excluded from every coin surface, and from the backfill. Bucketed
+  /// deterministically on customer id so a rising rollout can never sweep the
+  /// holdout in (§13.5).
+  holdout Boolean @default(false)
+
+  /// Rolling RTO counter. Earning is disabled after 3 in 90 days (§12.1).
+  rtoCount90d Int       @default(0)
+  rtoWindowAt DateTime?
+
+  /// Two consecutive reconciliation mismatches block redemption (§9.2).
+  mismatchStreak Int @default(0)
+
+  /// Optimistic-lock guard. Every mutation checks and increments it; a mismatch
+  /// returns 409 rather than silently overwriting (§9.1).
+  version Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer     Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  lots         CoinLot[]
+  ledger       CoinLedger[]
+  reservations CoinReservation[]
+
+  @@index([status])
+  @@index([holdout])
+  /// Drives the "negative balance" and "expiring soon" CMS filters (§9.4).
+  @@index([availableCoins])
+}
+
+/// A batch of coins from one earning event, with its own unlock and expiry (§4.2).
+///
+/// Lots are what make FIFO consumption, per-lot expiry and accurate restoration
+/// possible. A single aggregate balance would leave no way to know which expiry
+/// dates to restore to on a later return.
+model CoinLot {
+  id        String @id @default(uuid())
+  accountId String
+
+  /// Immutable record of the original grant. Never edited — `coinsRemaining`
+  /// is what moves.
+  coinsGranted   Int
+  /// CHECK (coinsRemaining >= 0) is added in the migration. If application
+  /// logic is ever wrong the write fails loudly rather than creating value (§9.1).
+  coinsRemaining Int
+
+  state CoinLotState @default(PENDING)
+
+  sourceType CoinSourceType @default(ORDER)
+  /// The order that earned these coins. Null for backfill/manual/merge lots.
+  orderId    String?
+
+  /// Expiry runs from the EARN date, not the unlock date, so the clock is
+  /// predictable from the order date and does not shift with delivery delays (§4.3).
+  earnedAt  DateTime  @default(now())
+  /// delivered_at + return window (+14d above the large-order threshold). Null
+  /// until delivery is known.
+  maturesAt DateTime?
+  expiresAt DateTime
+
+  /// Set when a grace lot is created for coins restored into an already-expired
+  /// lot (§7.6). References the lot the value came from.
+  parentLotId String?
+
+  /// The rule version in force when these coins were granted. Recomputation
+  /// loads THIS, never current config (§8.4 #35).
+  ruleVersionId String
+
+  /// Only for the launch backfill: held until the mobile is OTP-verified (§13.3).
+  claimedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  account     LoyaltyAccount     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  order       Order?             @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  parentLot   CoinLot?           @relation("GraceLot", fields: [parentLotId], references: [id], onDelete: SetNull)
+  graceLots   CoinLot[]          @relation("GraceLot")
+  ruleVersion LoyaltyRuleVersion @relation(fields: [ruleVersionId], references: [id])
+
+  /// FIFO consumption reads AVAILABLE lots for one account in expiry order —
+  /// this index is that query.
+  @@index([accountId, state, expiresAt])
+  /// The unlock job scans PENDING lots whose maturity has passed.
+  @@index([state, maturesAt])
+  /// The expiry job scans live lots past their expiry.
+  @@index([state, expiresAt])
+  @@index([orderId])
+}
+
+/// Append-only record of every coin movement (§9).
+///
+/// No UPDATE, no DELETE, ever — enforced by a database trigger that RAISES.
+/// Corrections are new rows. This is a financial record that will be audited,
+/// and it is retained 8 years per Indian statutory record-keeping even after the
+/// customer's PII is anonymised on account deletion (§9.2, §12.2).
+model CoinLedger {
+  id        BigInt @id @default(autoincrement())
+  accountId String
+
+  /// Signed. Positive adds to the customer's position, negative removes.
+  coinsDelta   Int
+  /// The account's available balance immediately after this row was written.
+  /// Makes the ledger self-checking: replaying deltas must reproduce it.
+  balanceAfter Int
+
+  /// Face value of this movement, for the liability report (§11.3). Derived
+  /// from the rule version's coin value, in paise, as an integer.
+  monetaryValuePaise Int
+
+  reason CoinReason
+
+  /// Free-text, mandatory on manual adjustments (§9.2).
+  note String?
+
+  lotId   String?
+  orderId String?
+
+  /// Who caused it. Null for system/job-driven rows.
+  actorId      String?
+  /// Second-person approval, required above 500 coins (§9.2).
+  approvedById String?
+
+  /// Dedupe boundary. Every mutation carries one, so an event arriving twice —
+  /// and they always do — writes once (§9.1).
+  idempotencyKey String @unique
+
+  createdAt DateTime @default(now())
+
+  account LoyaltyAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  // `lotId`, `orderId`, `actorId` and `approvedById` are deliberately PLAIN IDs
+  // with no foreign key.
+  //
+  // They were briefly `onDelete: SetNull`, which is wrong here in a way that is
+  // easy to miss: SetNull performs an UPDATE on the referencing row, so deleting
+  // an order made Postgres try to rewrite its ledger entries — and the
+  // append-only trigger correctly refused, making orders undeletable.
+  //
+  // A financial record must outlive the things it refers to. §9.2 keeps the
+  // ledger for 8 years "even after PII is anonymised on account deletion", so an
+  // entry has to stay readable once its order is purged or the staff member who
+  // made an adjustment has left. Resolution is therefore a lookup, not a join,
+  // and a missing target renders as "order no longer available" rather than
+  // rewriting history to say the movement had no cause.
+
+  /// The customer's coin history, newest first.
+  @@index([accountId, createdAt])
+  @@index([orderId])
+  @@index([reason, createdAt])
+}
+
+/// Per-order coin state — the data every reversal depends on (§9).
+model OrderLoyalty {
+  id      String @id @default(uuid())
+  orderId String @unique
+
+  accountId String?
+
+  /// Frozen at creation. All later recomputation uses this version, so a config
+  /// change is never retroactive (§8.4 #35).
+  ruleVersionId String
+
+  /// Pre-tax earn base actually used, after coupon AND coin discounts (§3.1).
+  preTaxEarnBasePaise Int @default(0)
+
+  /// What the order earned, as it stands right now. A partial return lowers it;
+  /// this field is the "current" side of `delta = newCoins - coinsGrantedCurrent`.
+  coinsGrantedCurrent Int          @default(0)
+  /// State of the grant, so a reversal knows whether to reduce a pending lot or
+  /// claw back spent coins (§7.3).
+  grantState          CoinLotState @default(PENDING)
+
+  /// Coins spent on this order.
+  coinsRedeemed        Int @default(0)
+  /// How many of those have already been given back, so repeated partial
+  /// returns can never restore more than was redeemed (§7.3, §8.2 #26).
+  coinsAlreadyRestored Int @default(0)
+
+  /// Which lots funded the redemption, and how many coins from each:
+  /// `[{ lotId, coins }]`. Without this there is no way to know which expiry
+  /// dates to restore to (§4.2).
+  redemptionLotMap Json?
+
+  /// Pre-tax value of the coin discount, in paise. The invoice line (§11.2).
+  coinDiscountPaise Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  order       Order              @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  ruleVersion LoyaltyRuleVersion @relation(fields: [ruleVersionId], references: [id])
+
+  @@index([accountId])
+}
+
+/// Versioned programme configuration, never edited in place (§9).
+///
+/// Changing a rule writes a NEW row and flips `isActive`. Orders keep pointing
+/// at the version they were priced under, which is what makes §8.4 #35
+/// ("config is never retroactive") structurally true rather than a promise.
+model LoyaltyRuleVersion {
+  id       String  @id @default(uuid())
+  /// Human-readable, monotonic. v1, v2, …
+  label    String  @unique
+  isActive Boolean @default(false)
+
+  // ---- Earning (§3) ----
+  /// Coins per this many paise of pre-tax base. ₹50 = 5000 paise → 2 coins per
+  /// ₹100. Deliberately ₹50 steps, not ₹100: FLOOR(base/100)×2 grants only even
+  /// numbers and silently discards up to ₹99 of spend per order.
+  earnGranularityPaise Int @default(5000)
+  /// Coins granted per granularity step.
+  coinsPerStep         Int @default(1)
+  /// Minimum pre-tax base for any earn at all (§3.3).
+  minEarnBasePaise     Int @default(5000)
+
+  // ---- Redemption (§4) ----
+  /// What one coin takes off the payable, tax-inclusive amount, in paise.
+  coinValuePaise     Int @default(100)
+  /// 10 coins (§4, Decision 7).
+  minRedemptionCoins Int @default(10)
+  /// Percent of eligible product value redeemable. 100 = no cap (Decision 4).
+  maxRedemptionPct   Int @default(100)
+
+  // ---- Timing (§3.5, §4.3) ----
+  returnWindowDays         Int @default(7)
+  expiryDays               Int @default(365)
+  /// Orders above this pre-tax value get the extended hold (§3.5).
+  largeOrderThresholdPaise Int @default(2000000)
+  largeOrderHoldDays       Int @default(14)
+  /// Shipped-but-no-delivery-event failsafe (§3.5).
+  stuckShipmentDays        Int @default(21)
+  stuckGraceDays           Int @default(7)
+
+  // ---- Reservation and floors ----
+  /// Apply-time hold, in minutes (§4.3).
+  reservationTtlMinutes Int @default(30)
+  /// Operative balance floor, as a positive magnitude. 50 → balance stops at -50 (§6.7).
+  maxNegativeBalance    Int @default(50)
+  /// Restored coins whose original lot has expired get a fresh lot this long (§7.6).
+  graceLotDays          Int @default(30)
+
+  // ---- Guest, backfill and fraud (§3.4, §12.1, §13.3) ----
+  guestClaimDays         Int @default(30)
+  backfillExpiryDays     Int @default(90)
+  /// OTP re-verification above this many coins in one redemption (§12.1).
+  otpThresholdCoins      Int @default(500)
+  /// Second-person approval above this many coins on a manual adjustment (§9.2).
+  approvalThresholdCoins Int @default(500)
+  /// RTOs in 90 days before earning is disabled (§12.1).
+  rtoLimit               Int @default(3)
+
+  /// Monthly earning cap, in coins, per customer per CALENDAR month (§3.3).
+  ///
+  /// §3.3 lists "monthly earn cap not exceeded" among the earning gates but
+  /// names no value; the figure is a business decision, set here so it can be
+  /// changed from the CMS without a deployment. Zero disables the cap.
+  ///
+  /// A customer may be raised or lowered above this by a
+  /// `CustomerEarnCapOverride` — see that model.
+  monthlyEarnCapCoins Int @default(1000)
+
+  // ---- Kill switches. Must take effect without a deployment (§9.3). ----
+  earningEnabled    Boolean @default(true)
+  redemptionEnabled Boolean @default(false)
+  /// Percent of customers exposed. The holdout sits in the bottom buckets so a
+  /// rising value can never sweep it in (§13.5).
+  rolloutPct        Int     @default(0)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  createdBy CmsUser?       @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  lots      CoinLot[]
+  orders    OrderLoyalty[]
+
+  @@index([isActive])
+}
+
+/// Upstream events accepted, acknowledged and processed asynchronously (§9).
+///
+/// This is what makes "fail open on earning" implementable (§8.1 #11): checkout
+/// hands the event over and returns, and a worker replays it until it sticks.
+model LoyaltyEventInbox {
+  id      String @id @default(uuid())
+  /// Dedupe key. Duplicates are rejected here, at the boundary, before any
+  /// business logic runs (§9.1).
+  eventId String @unique
+
+  kind    String
+  payload Json
+
+  status    String  @default("PENDING")
+  attempts  Int     @default(0)
+  lastError String?
+
+  processedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, createdAt])
+}
+
+/// An apply-time hold on coins, released on payment failure or TTL (§4.3).
+///
+/// Held against the ACCOUNT, not the session — that is what makes it survive a
+/// device switch and makes it impossible to duplicate in a second tab (§8.1 #7).
+model CoinReservation {
+  id        String @id @default(uuid())
+  accountId String
+
+  coins Int
+
+  /// The order this hold belongs to. Unique, so one order can never carry two
+  /// concurrent holds.
+  orderId String? @unique
+  /// Pre-checkout carts have no order yet; this keys the hold to a cart instead.
+  cartKey String?
+
+  /// PENDING | CONFIRMED | RELEASED | EXPIRED
+  status String @default("PENDING")
+
+  /// Which lots this hold is drawn from, so confirmation consumes exactly what
+  /// was quoted: `[{ lotId, coins }]`.
+  lotMap Json?
+
+  expiresAt   DateTime
+  confirmedAt DateTime?
+  releasedAt  DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  account LoyaltyAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, cartKey])
+  /// The sweeper scans expired PENDING holds every 5 minutes (§8.1 #2).
+  @@index([status, expiresAt])
+  @@index([accountId, status])
+}
+
+// ============================================================================
+// LINE-LEVEL RETURNS (ZSOP004 §15.3 — blocking prerequisite)
+//
+// The existing `Refund` model is order-level: an amount and a reason, with no
+// idea which items came back. ZSOP004 §6.5 computes a partial return from the
+// coins allocated to the returned LINES, and §11.2 raises the credit note on
+// each line's discounted taxable value — neither is expressible without this.
+//
+// Deliberately additive: `Refund` keeps recording the money movement exactly as
+// it does today. `OrderReturn` records WHAT came back, and carries the source
+// event id that makes the whole reversal idempotent (§7.7).
+// ============================================================================
+
+enum ReturnKind {
+  /// Cancelled before dispatch.
+  CANCELLATION
+  /// Returned after delivery.
+  RETURN
+  /// Returned to origin / refused at the door.
+  RTO
+  /// Swapped for another item (§8.2 #21, #22).
+  EXCHANGE
+}
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  /// Money and coins have been moved. Terminal.
+  COMPLETED
+  REJECTED
+}
+
+/// One return event against an order. Several may exist per order — §8.2 #19
+/// requires each to recompute from the order's CURRENT retained state rather
+/// than as a delta on the one before it.
+model OrderReturn {
+  id      String @id @default(uuid())
+  orderId String
+
+  kind   ReturnKind
+  status ReturnStatus @default(REQUESTED)
+
+  reason String?
+
+  /// The upstream event that caused this (webhook id, admin action id). The
+  /// reversal is idempotent on it, so a duplicate or replayed event is a no-op
+  /// rather than a second restoration (§7.3, §7.7).
+  sourceEventId String @unique
+
+  /// Cash actually refunded for the returned lines, in paise. Net of the coin
+  /// discount those lines carried — coins are never refunded as cash (§7.5).
+  cashRefundPaise Int @default(0)
+
+  processedById String?
+  processedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  order       Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  processedBy CmsUser?          @relation(fields: [processedById], references: [id], onDelete: SetNull)
+  lines       OrderReturnLine[]
+
+  @@index([orderId, status])
+  @@index([status, createdAt])
+}
+
+/// Which units of which line came back on one return event.
+model OrderReturnLine {
+  id          String @id @default(uuid())
+  returnId    String
+  orderItemId String
+
+  qty Int
+
+  /// Snapshot of what was unwound for this line, so the ledger explanation does
+  /// not depend on re-deriving it later.
+  coinsRestored   Int @default(0)
+  cashRefundPaise Int @default(0)
+
+  orderReturn OrderReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  orderItem   OrderItem   @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@unique([returnId, orderItemId])
+  @@index([orderItemId])
+}
+
+/// A per-customer monthly earning cap, overriding the rule version's default.
+///
+/// Deliberately GENERIC rather than a "wholesale" flag: the exception that needs
+/// a higher cap today is a wholesale buyer, but the next one will be a
+/// long-standing customer, a corporate account, or a goodwill case. Encoding the
+/// *reason* as free text and the *effect* as a number keeps one mechanism for
+/// all of them, and keeps "why" in the record rather than in someone's memory.
+///
+/// Affects EARNING ELIGIBILITY ONLY. It never touches the redemption engine and
+/// never alters coins already earned — a cap lowered today cannot claw back what
+/// last month's orders granted.
+model CustomerEarnCapOverride {
+  id         String @id @default(uuid())
+  customerId String
+
+  /// Coins this customer may earn per calendar month. Zero means "no earning",
+  /// which is a legitimate setting for an account under review.
+  monthlyCapCoins Int
+
+  /// Mandatory. An override with no stated reason is unauditable, and these are
+  /// granted in ones and twos by humans who will not remember why.
+  reason String
+
+  /// Null means open-ended. A dated override is preferred for anything granted
+  /// as a one-off, so it lapses rather than being forgotten.
+  expiresAt DateTime?
+
+  /// Set when superseded or withdrawn. Rows are never deleted: the history of
+  /// what a customer was allowed, and when, is the audit trail.
+  revokedAt DateTime?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer  Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  createdBy CmsUser? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  /// Resolving a customer's cap reads the live override for one customer, which
+  /// is this index.
+  @@index([customerId, revokedAt, expiresAt])
 }

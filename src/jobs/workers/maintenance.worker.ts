@@ -18,6 +18,10 @@ import { logger } from '@/lib/logger';
 import { QUEUE_NAMES, type MaintenanceJob } from '@/jobs/queues';
 import { guardWorker } from '@/jobs/workers/guard';
 import { reconcileMediaLifecycle } from '@/modules/uploads/reconcile.service';
+import * as loyaltyLifecycle from '@/modules/loyalty/lifecycle.service';
+import * as loyaltyRedemption from '@/modules/loyalty/redemption.service';
+import * as loyaltyReconcile from '@/modules/loyalty/reconcile.service';
+import * as loyaltyNotify from '@/modules/loyalty/notify.service';
 
 const log = logger.child({ module: 'worker.maintenance' });
 
@@ -74,11 +78,69 @@ async function handleReconcile(job: Job<MaintenanceJob>): Promise<void> {
   }
 }
 
+/**
+ * Z-Coin housekeeping (ZSOP004 §3.5, §4.3, §8.1 #2, §9.2).
+ *
+ * Each sweep takes its own Redis lock under the shared `withLock` helper, so two
+ * workers booting together cannot both expire the same lots or double-release
+ * the same reservations.
+ */
+async function handleLoyalty(kind: string): Promise<void> {
+  const outcome = await withLockNamed(`zewa:maintenance:${kind}:lock`, async () => {
+    switch (kind) {
+      case 'loyalty-reservations':
+        // §8.1 #2: "a sweeper every 5 min handles dead sessions".
+        return { swept: await loyaltyRedemption.sweepExpired() };
+      case 'loyalty-unlock': {
+        // §3.5: pending → available once the return window closes, plus the
+        // 21-day stuck-shipment failsafe.
+        const released = await loyaltyLifecycle.releaseStuckShipments();
+        const unlocked = await loyaltyLifecycle.unlockMatured();
+        return { ...unlocked, stuckReleased: released };
+      }
+      case 'loyalty-expiry': {
+        // §4.3: lots expire 12 months from the earn date, with a SINGLE
+        // reminder 7 days out. The reminder runs first — expiring a lot and
+        // then warning about it would be the wrong order.
+        const reminders = await loyaltyNotify.sendExpiryReminders();
+        const expired = await loyaltyLifecycle.expireLots();
+        return { ...expired, reminders };
+      }
+      case 'loyalty-reconcile': {
+        // §9.2: the ledger always wins.
+        const report = await loyaltyReconcile.reconcileAll();
+        const inbox = await loyaltyReconcile.replayInbox();
+        return { ...report, inbox };
+      }
+      default:
+        return null;
+    }
+  });
+
+  if (outcome === 'skipped') {
+    log.info({ kind }, 'loyalty sweep skipped — another worker holds the lock');
+    return;
+  }
+  log.debug({ kind, outcome }, 'loyalty sweep complete');
+}
+
+/** Same lock discipline as the media sweep, parameterised by key. */
+async function withLockNamed<T>(key: string, fn: () => Promise<T>): Promise<T | 'skipped'> {
+  const acquired = await redis.set(key, String(Date.now()), 'EX', LOCK_TTL_SECONDS, 'NX');
+  if (acquired !== 'OK') return 'skipped';
+  try {
+    return await fn();
+  } finally {
+    await redis.del(key).catch(() => undefined);
+  }
+}
+
 export function startMaintenanceWorker(): Worker<MaintenanceJob> {
   const worker = new Worker<MaintenanceJob>(
     QUEUE_NAMES.maintenance,
     async (job) => {
       if (job.data.kind === 'reconcile-media') return handleReconcile(job);
+      if (job.data.kind.startsWith('loyalty-')) return handleLoyalty(job.data.kind);
       log.warn({ kind: (job.data as { kind?: string }).kind }, 'unknown maintenance job');
     },
     {

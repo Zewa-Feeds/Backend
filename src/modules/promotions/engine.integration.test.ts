@@ -39,7 +39,7 @@ import {
 import { checkout } from '@/modules/checkout/checkout.service';
 import { priceCart } from '@/modules/checkout/pricing.service';
 import { transition } from '@/modules/orders/orders.service';
-import { ns, sweepFixtures, testActor, testCtx } from '@/test/fixtures';
+import { ns, sweepFixtures, testActor, testCtx , purgeCustomersWithLedger } from '@/test/fixtures';
 
 const prisma = new PrismaClient();
 
@@ -192,7 +192,9 @@ beforeEach(async () => {
 afterAll(async () => {
   if (emails.length > 0) {
     await prisma.order.deleteMany({ where: { email: { in: emails } } });
-    await prisma.customer.deleteMany({ where: { email: { in: emails } } });
+    // Coin ledger rows are append-only, so the Customer cascade needs the
+    // documented escape hatch (see the helper).
+    await purgeCustomersWithLedger(prisma, { email: { in: emails } });
   }
   if (couponIds.length > 0) {
     await prisma.coupon.deleteMany({ where: { id: { in: couponIds } } });

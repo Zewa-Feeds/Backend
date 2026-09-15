@@ -98,7 +98,19 @@ export interface ReconcileMediaJob {
   kind: 'reconcile-media';
 }
 
-export type MaintenanceJob = ReconcileMediaJob;
+/**
+ * Z-Coin housekeeping (ZSOP004 §3.5, §4.3, §8.1 #2, §9.2).
+ *
+ * Four distinct cadences, because they are waiting for four different things:
+ * reservations die in minutes, unlocks in days, expiry daily, reconciliation
+ * nightly. One combined sweep would have to run at the fastest cadence and do
+ * the slowest work.
+ */
+export interface LoyaltySweepJob {
+  kind: 'loyalty-reservations' | 'loyalty-unlock' | 'loyalty-expiry' | 'loyalty-reconcile';
+}
+
+export type MaintenanceJob = ReconcileMediaJob | LoyaltySweepJob;
 
 // ---- Queues ----------------------------------------------------------------
 
@@ -152,7 +164,38 @@ const RECONCILE_EVERY_MS = 60 * 60 * 1000;
  * process. The explicit `jobId` makes that guarantee legible rather than
  * incidental.
  */
+/**
+ * Z-Coin sweep cadences (ZSOP004).
+ *
+ * §8.1 #2 fixes the reservation sweeper at 5 minutes against a 30-minute TTL.
+ * The rest are chosen against what they wait for: unlock and expiry are
+ * day-grained, so hourly is comfortably inside both while keeping the
+ * "coins are ready" notification prompt.
+ */
+const LOYALTY_RESERVATION_EVERY_MS = 5 * 60 * 1000;
+const LOYALTY_UNLOCK_EVERY_MS = 60 * 60 * 1000;
+const LOYALTY_EXPIRY_EVERY_MS = 60 * 60 * 1000;
+const LOYALTY_RECONCILE_EVERY_MS = 24 * 60 * 60 * 1000;
+
 export async function scheduleMaintenance(): Promise<void> {
+  for (const [kind, every] of [
+    ['loyalty-reservations', LOYALTY_RESERVATION_EVERY_MS],
+    ['loyalty-unlock', LOYALTY_UNLOCK_EVERY_MS],
+    ['loyalty-expiry', LOYALTY_EXPIRY_EVERY_MS],
+    ['loyalty-reconcile', LOYALTY_RECONCILE_EVERY_MS],
+  ] as const) {
+    await maintenanceQueue.add(
+      kind,
+      { kind },
+      {
+        repeat: { every },
+        jobId: kind,
+        removeOnComplete: { count: 24 },
+        removeOnFail: { count: 24 },
+      },
+    );
+  }
+
   await maintenanceQueue.add(
     'reconcile-media',
     { kind: 'reconcile-media' },

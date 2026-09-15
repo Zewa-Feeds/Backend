@@ -29,35 +29,57 @@ afterAll(async () => {
   await maintenanceQueue.close().catch(() => undefined);
 });
 
+/**
+ * Every sweep the schedule is expected to register. The media sweep predates
+ * Z-Coin; the four loyalty sweeps were added with ZSOP004 (§3.5, §4.3, §8.1 #2,
+ * §9.2) and each has its own cadence because each waits for a different thing.
+ */
+const EXPECTED_SWEEPS = [
+  'reconcile-media',
+  'loyalty-reservations',
+  'loyalty-unlock',
+  'loyalty-expiry',
+  'loyalty-reconcile',
+] as const;
+
 describe('the recurring schedule', () => {
-  it('registers one repeatable sweep', async () => {
+  it('registers one repeatable sweep per kind', async () => {
     await scheduleMaintenance();
     const repeatables = await maintenanceQueue.getRepeatableJobs();
-    expect(repeatables).toHaveLength(1);
-    expect(repeatables[0]!.name).toBe('reconcile-media');
+    expect(repeatables).toHaveLength(EXPECTED_SWEEPS.length);
+    expect(repeatables.map((r) => r.name).sort()).toEqual([...EXPECTED_SWEEPS].sort());
   });
 
-  it('runs hourly — often enough to matter, rarely enough to be free', async () => {
+  it('runs the media sweep hourly — often enough to matter, rarely enough to be free', async () => {
     await scheduleMaintenance();
-    const [job] = await maintenanceQueue.getRepeatableJobs();
-    expect(job!.every).toBe(String(60 * 60 * 1000));
+    const jobs = await maintenanceQueue.getRepeatableJobs();
+    const media = jobs.find((j) => j.name === 'reconcile-media');
+    expect(media!.every).toBe(String(60 * 60 * 1000));
   });
 
-  it('is idempotent: re-registering leaves exactly one', async () => {
+  it('sweeps dead reservations every 5 minutes against a 30-minute TTL (§8.1 #2)', async () => {
+    await scheduleMaintenance();
+    const jobs = await maintenanceQueue.getRepeatableJobs();
+    const sweeper = jobs.find((j) => j.name === 'loyalty-reservations');
+    expect(sweeper!.every).toBe(String(5 * 60 * 1000));
+  });
+
+  it('is idempotent: re-registering leaves exactly one of each', async () => {
     /*
      * The case that matters in production — several worker instances booting
      * together, each asserting the schedule. One schedule per instance would
-     * multiply the sweep rate against Cloudinary.
+     * multiply the sweep rate against Cloudinary, and would expire the same coin
+     * lots from several workers at once.
      */
     await scheduleMaintenance();
     await scheduleMaintenance();
     await scheduleMaintenance();
-    expect(await maintenanceQueue.getRepeatableJobs()).toHaveLength(1);
+    expect(await maintenanceQueue.getRepeatableJobs()).toHaveLength(EXPECTED_SWEEPS.length);
   });
 
   it('survives concurrent registration', async () => {
     await Promise.all([scheduleMaintenance(), scheduleMaintenance(), scheduleMaintenance()]);
-    expect(await maintenanceQueue.getRepeatableJobs()).toHaveLength(1);
+    expect(await maintenanceQueue.getRepeatableJobs()).toHaveLength(EXPECTED_SWEEPS.length);
   });
 
   it('uses the shared queue the rest of the system knows about', () => {

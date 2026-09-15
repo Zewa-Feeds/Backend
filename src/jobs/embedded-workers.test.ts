@@ -87,25 +87,36 @@ describe('starting workers inside the API', () => {
   it('registers the maintenance schedule', async () => {
     const workers = await startEmbeddedWorkers();
     try {
+      // The media sweep plus the four Z-Coin sweeps (ZSOP004 §3.5, §4.3,
+      // §8.1 #2, §9.2), each on its own cadence.
       const repeatables = await maintenanceQueue.getRepeatableJobs();
-      expect(repeatables).toHaveLength(1);
-      expect(repeatables[0]!.name).toBe('reconcile-media');
+      expect(repeatables.map((r) => r.name).sort()).toEqual(
+        [
+          'loyalty-expiry',
+          'loyalty-reconcile',
+          'loyalty-reservations',
+          'loyalty-unlock',
+          'reconcile-media',
+        ].sort(),
+      );
     } finally {
       await Promise.allSettled(workers.map((w) => w.close()));
     }
   });
 
-  it('registers exactly one schedule however many times the process boots', async () => {
+  it('registers exactly one schedule per kind however many times the process boots', async () => {
     /*
      * A restart, a redeploy, or several instances behind a load balancer all
      * re-run this. One schedule per boot would multiply the sweep rate against
-     * Cloudinary.
+     * Cloudinary, and would have several workers expiring the same coin lots.
      */
     const first = await startEmbeddedWorkers();
     await Promise.allSettled(first.map((w) => w.close()));
     const second = await startEmbeddedWorkers();
     try {
-      expect(await maintenanceQueue.getRepeatableJobs()).toHaveLength(1);
+      const repeatables = await maintenanceQueue.getRepeatableJobs();
+      expect(repeatables).toHaveLength(5);
+      expect(new Set(repeatables.map((r) => r.name)).size).toBe(5);
     } finally {
       await Promise.allSettled(second.map((w) => w.close()));
     }

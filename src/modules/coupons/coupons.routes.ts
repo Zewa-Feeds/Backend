@@ -72,6 +72,8 @@ const couponBodySchema = z
     priority: z.coerce.number().int().min(0).max(1000).default(0),
     trigger: z.nativeEnum(CouponTrigger).default(CouponTrigger.CODE),
     combinesWithAutomatic: z.boolean().default(true),
+    /** Refuse Zewa Coins on orders using this coupon (ZSOP004 §4). */
+    blocksCoins: z.boolean().default(false),
     /** Publish this code in the storefront's offers panel. Off unless asked. */
     showAtCheckout: z.boolean().default(false),
     customerEligibility: z
@@ -160,6 +162,7 @@ const couponBodySchema = z
     priority: v.priority,
     trigger: v.trigger,
     combinesWithAutomatic: v.combinesWithAutomatic,
+    blocksCoins: v.blocksCoins,
     showAtCheckout: v.showAtCheckout,
     customerEligibility: v.customerEligibility,
     // Only meaningful for FIRST_N_ORDERS; cleared otherwise so a stale form

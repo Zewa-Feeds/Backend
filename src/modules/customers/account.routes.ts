@@ -13,6 +13,8 @@ import { Router } from 'express';
 import { CustomerStatus, OrderStatus, PaymentStatus } from '@prisma/client';
 import { z } from 'zod';
 import { asyncHandler } from '@/middleware/asyncHandler';
+import { loyaltyRouter } from '@/modules/loyalty/loyalty.routes';
+import * as guestClaim from '@/modules/loyalty/guest-claim.service';
 import {
   emailSchema,
   phoneSchema,
@@ -286,9 +288,27 @@ customerAuthRouter.post(
 
     log.info({ customerId: record.customer.id }, 'customer email verified');
 
+    /*
+     * Z-Coin guest claim (ZSOP004 §3.4).
+     *
+     * Verifying the email is the moment the customer proves they are the person
+     * who placed those guest orders, so it is the moment their coins become
+     * claimable. Runs after the transaction and never blocks verification — a
+     * loyalty failure must not stop someone activating their account.
+     */
+    const claim = await guestClaim
+      .claimGuestOrders(record.customer.id)
+      .catch((err) => {
+        log.error({ err, customerId: record.customer.id }, 'guest coin claim failed');
+        return { claimed: 0, coins: 0 };
+      });
+
     res.json({
       data: {
         verified: true,
+        // Lets the storefront say "24 Zewa Coins added to your account" on the
+        // verification screen, which is where the promise was made (§3.4).
+        coinsClaimed: claim.coins,
         accessToken: signCustomerToken({ sub: record.customer.id, email: record.customer.email }),
         customer: {
           id: record.customer.id,
@@ -561,6 +581,10 @@ customerAuthRouter.post(
 // ============================================================================
 
 accountRouter.use(requireCustomer);
+
+// Z-Coin (ZSOP004 §10). Mounted inside the customer-session guard above, so
+// every coin route inherits it rather than re-asserting it.
+accountRouter.use('/coins', loyaltyRouter);
 
 /**
  * The signed-in customer's own profile.

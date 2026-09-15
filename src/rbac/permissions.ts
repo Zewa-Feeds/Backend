@@ -64,6 +64,19 @@ export const CAN = {
   'settings.manage': [ADMIN],
   'audit.all': [ADMIN],
   'audit.own': [OPS, ADMIN],
+
+  /*
+   * Z-Coin (ZSOP004 §9.4).
+   *
+   * Split three ways on purpose. Support needs to answer "why is my balance this
+   * number?" without being able to change it, which is the 60-second test in
+   * §9.4 — so OPS can VIEW. Moving coins is moving money, and §9.2 requires a
+   * reason code, an admin id and second-person approval above a threshold, so
+   * ADJUST and CONFIG are ADMIN only.
+   */
+  'loyalty.view': [OPS, ADMIN],
+  'loyalty.adjust': [ADMIN],
+  'loyalty.config': [ADMIN],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof CAN;

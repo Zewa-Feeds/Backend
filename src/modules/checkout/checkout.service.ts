@@ -37,6 +37,9 @@ import { serializeOrder, ORDER_SELECT } from '@/modules/orders/orders.serializer
 import { assertFulfillable, priceCart, type CartLineInput } from './pricing.service';
 import { resolveAttribution } from './attribution';
 import * as couponsService from '@/modules/coupons/coupons.service';
+import * as loyaltyEarn from '@/modules/loyalty/earn.service';
+import * as loyaltyFraud from '@/modules/loyalty/fraud.service';
+import * as loyaltyRedemption from '@/modules/loyalty/redemption.service';
 
 const log = logger.child({ module: 'checkout' });
 
@@ -65,6 +68,8 @@ export interface CheckoutInput {
   customerId?: string | null;
   /** Keep this address in the customer's address book for next time. */
   saveAddress?: boolean;
+  /** The cart's Zewa Coins hold, if any (ZSOP004 §4.3). */
+  coinCartKey?: string;
 }
 
 export interface CheckoutResult {
@@ -151,6 +156,23 @@ export async function checkout(
     );
   }
 
+  /*
+   * Per-account COD restriction (ZSOP004 §12.1).
+   *
+   * "Rolling RTO counter. Earning disabled after 3 in 90 days; account moves to
+   * prepaid-only." Disabling earning is applied when the RTO is recorded; this
+   * is the prepaid-only half, and it belongs here because it must hold whether
+   * or not the order involves coins.
+   *
+   * The message deliberately says nothing about coins: the restriction is about
+   * refused deliveries, each of which costs real shipping money, and blaming a
+   * loyalty account would be both confusing and inaccurate.
+   */
+  const codBlocked = await loyaltyFraud.codBlockedReason(input.customerId, input.paymentMethod);
+  if (codBlocked) {
+    throw new AppError(403, ErrorCode.FORBIDDEN, codBlocked);
+  }
+
   // ---- 2. Maintenance mode -------------------------------------------------
   const { maintenance, shipping } = await settingsService.getAll();
   if (maintenance.on) {
@@ -234,6 +256,88 @@ export async function checkout(
    * timeouts in lib/prisma.ts).
    */
   const attribution = await resolveAttribution(cart.coupons);
+
+  /*
+   * Loyalty snapshots, also resolved before the transaction (ZSOP004 §7.4).
+   *
+   * Two things a later return cannot re-derive and therefore must be frozen now:
+   *
+   *   1. How the coupon discount was split across lines. `cart.discountPaise` is
+   *      an order-level total, but a partial return has to unwind ONE line, and
+   *      the promotions that produced the total may not even exist by then.
+   *
+   *   2. Which SKUs were earn-eligible and coin-redeemable at purchase time. A
+   *      clearance flag flipped next month must not rewrite what this order
+   *      earned.
+   *
+   * Allocation is pro rata by line value in integer paise, with the rounding
+   * remainder given to the highest-value line so the parts sum to the whole
+   * exactly — an allocation that does not sum makes a later return restore the
+   * wrong amount.
+   */
+  const couponAllocation: number[] = (() => {
+    const out = cart.lines.map(() => 0);
+    const total = cart.lines.reduce((sum, l) => sum + l.lineTotalPaise, 0);
+    if (cart.discountPaise <= 0 || total <= 0) return out;
+
+    let assigned = 0;
+    for (let i = 0; i < cart.lines.length; i++) {
+      const share = Math.floor((cart.discountPaise * cart.lines[i]!.lineTotalPaise) / total);
+      out[i] = share;
+      assigned += share;
+    }
+    const remainder = cart.discountPaise - assigned;
+    if (remainder > 0) {
+      let biggest = 0;
+      for (let i = 1; i < cart.lines.length; i++) {
+        if (cart.lines[i]!.lineTotalPaise > cart.lines[biggest]!.lineTotalPaise) biggest = i;
+      }
+      out[biggest] = (out[biggest] ?? 0) + remainder;
+    }
+    return out;
+  })();
+
+  /*
+   * Resolve the customer's coin hold (ZSOP004 §4.1 step 5, §4.3).
+   *
+   * The AMOUNT comes from the server-side reservation, never from the request:
+   * the client supplies only the cart key it applied under. A reservation that
+   * has expired, been released, or belongs to someone else simply yields zero
+   * coins and the order prices at full value — failing CLOSED, which is the safe
+   * direction for redemption (§8.1 #11).
+   *
+   * Read before the transaction opens, like the affiliate attribution above, to
+   * keep an extra round trip out of a transaction holding stock locks.
+   */
+  let coinHold: { id: string; coins: number } | null = null;
+  // `input.customerId` is the SIGNED-IN customer. A guest cannot hold coins, so
+  // this is also the gate that stops an anonymous checkout claiming a hold.
+  if (input.coinCartKey && input.customerId) {
+    const account = await prisma.loyaltyAccount.findUnique({
+      where: { customerId: input.customerId },
+      select: { id: true },
+    });
+    if (account) {
+      const reservation = await prisma.coinReservation.findFirst({
+        where: {
+          accountId: account.id,
+          cartKey: input.coinCartKey,
+          status: 'PENDING',
+          expiresAt: { gt: new Date() },
+        },
+        select: { id: true, coins: true },
+      });
+      if (reservation) coinHold = reservation;
+    }
+  }
+  const coinDiscountPaise = coinHold?.coins ? coinHold.coins * 100 : 0;
+
+  const loyaltyVariants = await prisma.productVariant.findMany({
+    where: { id: { in: cart.lines.map((l) => l.variantId) } },
+    select: { id: true, earnEligible: true, coinRedeemable: true },
+  });
+  const loyaltyById = new Map(loyaltyVariants.map((v) => [v.id, v]));
+  const loyaltyFlags = cart.lines.map((l) => loyaltyById.get(l.variantId));
 
   // ---- 5. The transaction --------------------------------------------------
   const created = await prisma.$transaction(
@@ -357,10 +461,22 @@ export async function checkout(
           paymentStatus: PaymentStatus.UNPAID,
           paymentMethod: input.paymentMethod,
           subtotalPaise: cart.subtotalPaise,
-          discountPaise: cart.discountPaise,
+          /*
+           * Coins are a DISCOUNT on the invoice, not a payment method (§11.2).
+           *
+           * "Do not treat coin redemption as a payment method settling a
+           * full-value invoice. That charges GST on value the customer never
+           * paid." At Zewa's 0% GST the tax consequence is nil, but the
+           * accounting shape still matters: the discount reduces the taxable
+           * value, which is what makes a later credit note correct.
+           */
+          discountPaise: cart.discountPaise + coinDiscountPaise,
           shippingPaise: cart.shippingPaise,
           taxPaise: cart.taxPaise,
-          totalPaise: cart.totalPaise,
+          // Coins never pay for shipping or fees — those stay payable in cash
+          // (§4). `cart.totalPaise` already includes shipping, so subtracting
+          // here reduces only the product portion the coins were capped against.
+          totalPaise: Math.max(0, cart.totalPaise - coinDiscountPaise),
           couponCode: cart.coupon?.code ?? null,
           couponCodes: cart.coupons.map((c) => c.code),
           /*
@@ -377,7 +493,12 @@ export async function checkout(
           idempotencyKey: input.idempotencyKey ?? null,
           items: {
             // Snapshots — the invoice reads these, never the live catalogue.
-            create: cart.lines.map((l) => ({
+            //
+            // The loyalty allocation fields are written here, at creation, and
+            // never recomputed (ZSOP004 §7.4): a return happens weeks later, by
+            // which time catalogue prices and promotions have moved, and
+            // unwinding against today's numbers would refund money nobody paid.
+            create: cart.lines.map((l, i) => ({
               variantId: l.variantId,
               productName: l.productName,
               sku: l.sku,
@@ -387,6 +508,12 @@ export async function checkout(
               hsn: l.hsn,
               taxRatePct: l.taxRatePct,
               lineTotalPaise: l.lineTotalPaise,
+              allocatedCouponDiscountPaise: couponAllocation[i] ?? 0,
+              earnEligible: loyaltyFlags[i]?.earnEligible ?? true,
+              coinRedeemable: loyaltyFlags[i]?.coinRedeemable ?? true,
+              // Net paid starts as the line minus its coupon share; the earning
+              // engine rewrites it once the coin discount is known.
+              preTaxNetPaidPaise: Math.max(0, l.lineTotalPaise - (couponAllocation[i] ?? 0)),
             })),
           },
         },
@@ -407,6 +534,24 @@ export async function checkout(
        * stock decrement above uses. Losing means `count === 0`, and throwing
        * rolls the whole transaction back — no order, and the stock returns.
        */
+      /*
+       * Bind the coin hold to this order (ZSOP004 §4.3).
+       *
+       * Inside the transaction, so an order can never exist without its hold
+       * attached. `CoinReservation.orderId` is UNIQUE, which is what stops one
+       * hold backing two orders — a second checkout racing on the same cart key
+       * violates the index and rolls back rather than double-spending.
+       *
+       * The coins are not consumed yet: that happens at payment confirmation
+       * (prepaid) or immediately for COD, both via `confirmForOrder`.
+       */
+      if (coinHold) {
+        await tx.coinReservation.update({
+          where: { id: coinHold.id },
+          data: { orderId: order.id },
+        });
+      }
+
       for (const promo of cart.coupons) {
         const reserved = await tx.coupon.updateMany({
           where: {
@@ -489,6 +634,17 @@ export async function checkout(
   if (input.paymentMethod === PaymentMethod.COD) {
     // COD is complete on creation. Ops can accept it immediately; payment is
     // collected on delivery, so paymentStatus stays UNPAID until then.
+    //
+    // Z-Coin §8.1 #5: "Coins redeemed at placement; the amount collected at the
+    // door is already net of the discount." So a COD order confirms its
+    // redemption and earns now, at placement, rather than waiting for a payment
+    // event that will never arrive. `earnForOrderSafe` fails open (§8.1 #11) —
+    // a loyalty outage must never cost the customer their order.
+    await prisma
+      .$transaction((tx) => loyaltyRedemption.confirmForOrder(tx, created.id))
+      .catch((err) => log.error({ err, orderNo: created.orderNo }, 'COD coin redemption failed'));
+    await loyaltyEarn.earnForOrderSafe(created.id);
+
     await queueCustomerEmail(created.id, created.orderNo, 'order-placed');
     await queueStaffNewOrderEmail(created.orderNo);
 
@@ -638,6 +794,22 @@ export async function confirmPayment(
 
     // Payment captured => this coupon redemption is now real revenue.
     await couponsService.confirmRedemption(order.id, tx);
+
+    /*
+     * Z-Coin (ZSOP004 §5, §8.1 #4).
+     *
+     * Redemption is confirmed and coins are earned inside the SAME transaction
+     * that marks the order paid, so the three facts commit together or not at
+     * all. Both calls are idempotent on the order id, which is what makes a
+     * duplicate payment webhook — §8.1 #4, and Razorpay retries on any timeout —
+     * a no-op rather than a second grant.
+     *
+     * Earning is deliberately inside the transaction here, not fire-and-forget:
+     * the order is already known-good at this point, so the fail-open path
+     * (which exists for checkout-time failures) is not needed.
+     */
+    await loyaltyRedemption.confirmForOrder(tx, order.id);
+    await loyaltyEarn.earnForOrder(tx, order.id);
 
     return tx.order.findUniqueOrThrow({ where: { id: order.id }, select: ORDER_SELECT });
   });

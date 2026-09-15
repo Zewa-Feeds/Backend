@@ -37,7 +37,7 @@ vi.mock('@/jobs/queues', () => ({
 
 import { PrismaClient, DiscountType, PaymentMethod } from '@prisma/client';
 import { checkout } from '@/modules/checkout/checkout.service';
-import { ns, sweepFixtures, testActor, testCtx } from '@/test/fixtures';
+import { ns, sweepFixtures, testActor, testCtx , purgeCustomersWithLedger } from '@/test/fixtures';
 
 const prisma = new PrismaClient();
 
@@ -134,7 +134,9 @@ afterAll(async () => {
   // Orders do not hang off ProductFamily, so the sweep cannot reach them.
   if (createdEmails.length > 0) {
     await prisma.order.deleteMany({ where: { email: { in: createdEmails } } });
-    await prisma.customer.deleteMany({ where: { email: { in: createdEmails } } });
+    // Coin ledger rows are append-only, so the Customer cascade needs the
+    // documented escape hatch (see the helper).
+    await purgeCustomersWithLedger(prisma, { email: { in: createdEmails } });
   }
   if (createdCouponIds.length > 0) {
     await prisma.coupon.deleteMany({ where: { id: { in: createdCouponIds } } });

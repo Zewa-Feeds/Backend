@@ -52,6 +52,15 @@ const checkoutSchema = z.object({
   customerNote: z.string().trim().max(1000).transform(plainText).optional(),
   /** "Save this address for next time" on the checkout form. */
   saveAddress: z.boolean().optional().default(false),
+  /**
+   * The cart's Zewa Coins hold (ZSOP004 §4.3).
+   *
+   * Deliberately a KEY, not an amount. The client never says how many coins to
+   * spend at checkout — it applied them earlier via /account/coins/apply, and the
+   * server already holds the authoritative reservation. Accepting a number here
+   * would let a crafted request spend coins the customer never reserved.
+   */
+  coinCartKey: z.string().trim().max(128).optional(),
 });
 
 const orderNoSchema = z

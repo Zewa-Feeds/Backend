@@ -17,7 +17,7 @@
  * Failures are logged, never surfaced to the caller.
  */
 import { sendEmail } from '@/integrations/zeptomail/zeptomail.client';
-import { accountTemplates, type AccountTemplateName } from '@/integrations/zeptomail/templates';
+import { accountTemplates } from '@/integrations/zeptomail/templates';
 import { logger } from '@/lib/logger';
 
 const log = logger.child({ module: 'customer.mail' });
@@ -27,6 +27,33 @@ type AccountContext = {
   'customer-email-verification': { firstName: string; verifyUrl: string; expiresInHours: number };
   'password-reset': { firstName: string; resetUrl: string; expiresInMinutes: number };
   'password-changed': { firstName: string };
+  // Zewa Coins (ZSOP004 §10.4). These ride the account-mail path rather than the
+  // order queue because a coin event has no order to hang an audit row on — see
+  // the module docblock above.
+  /**
+   * The ONE earning email (ZSOP004 §10.4, adjusted per product decision).
+   *
+   * `availableCoins` is the balance EXCLUDING the coins just earned — they are
+   * still pending until the return window closes, and summing them would tell
+   * the customer they can spend money they cannot.
+   */
+  'coins-earned': {
+    firstName: string;
+    coins: number;
+    availableCoins: number;
+    unlockDays: number;
+    unlockOn: string;
+    orderNo: string;
+    coinsUrl: string;
+  };
+  'coins-expiring': { firstName: string; coins: number; expiresOn: string; coinsUrl: string };
+  'coins-adjusted': {
+    firstName: string;
+    orderNo: string;
+    restored: number;
+    clawedBack: number;
+    coinsUrl: string;
+  };
 };
 
 type CustomerAccountTemplateName = keyof AccountContext;

@@ -43,6 +43,9 @@ import { emailQueue } from '@/jobs/queues';
 import type { CustomerTemplateName } from '@/integrations/zeptomail/templates';
 import { paymentProvider } from '@/integrations/razorpay/payment.service';
 import * as couponsService from '@/modules/coupons/coupons.service';
+import * as loyaltyLifecycle from '@/modules/loyalty/lifecycle.service';
+import * as loyaltyNotify from '@/modules/loyalty/notify.service';
+import * as loyaltyRedemption from '@/modules/loyalty/redemption.service';
 
 const log = logger.child({ module: 'orders.service' });
 
@@ -190,6 +193,17 @@ export async function transition(
   const timestampField = STATUS_TIMESTAMP[input.to];
 
   const updated = await prisma.$transaction(async (tx) => {
+    /*
+     * What the "coins earned" email needs, RETURNED out of the transaction
+     * rather than assigned to a `let` declared outside it.
+     *
+     * Control-flow analysis does not trace into a callback: a `let` declared
+     * outside and assigned in here stays narrowed to its initialiser (`null`)
+     * at every later use, so spreading it fails to compile even though the
+     * value is present at runtime. Returning it is also how `queuedEmailId`
+     * already leaves this same transaction.
+     */
+    let earned: Awaited<ReturnType<typeof loyaltyLifecycle.onDelivered>> = null;
     // Map the step's fields onto columns. Only keys the spec declares are read,
     // so a client cannot set arbitrary order columns through this endpoint.
     const data: Prisma.OrderUpdateInput = { status: input.to };
@@ -281,6 +295,29 @@ export async function transition(
       await couponsService.releaseRedemption(order.id, tx);
     }
 
+    /*
+     * Z-Coin lifecycle hooks (ZSOP004 §3.5, §7.5, §8.2).
+     *
+     * DELIVERED starts the unlock clock: matures_at = delivered_at + the return
+     * window, plus an extra hold above the large-order threshold. Coins are NOT
+     * unlocked here — the scheduled job does that when the window actually
+     * closes, which is the deferred-unlock fraud control (§12.1).
+     *
+     * CANCELLED restores any coins spent on the order and voids the pending
+     * grant, so a cancelled order can never leave spendable coins behind. It is
+     * idempotent on the source event, so a repeated cancellation is a no-op.
+     */
+    if (input.to === OrderStatus.DELIVERED) {
+      const deliveredAt = (data.deliveredAt as Date | undefined) ?? new Date();
+      // Returns what the "coins earned" email needs; sent after commit below,
+      // because mail cannot be rolled back if this transaction fails.
+      earned = await loyaltyLifecycle.onDelivered(tx, order.id, deliveredAt);
+    }
+    if (input.to === OrderStatus.CANCELLED) {
+      await loyaltyRedemption.releaseForOrder(tx, order.id);
+      await loyaltyLifecycle.voidPendingForOrder(tx, order.id, 'Order cancelled');
+    }
+
     // 4. Cancelling before delivery returns the stock.
     if (spec.restocks) {
       for (const item of order.items) {
@@ -362,8 +399,33 @@ export async function transition(
       where: { id: order.id },
       select: ORDER_SELECT,
     });
-    return { row, queuedEmailId };
+    return { row, queuedEmailId, earned };
   });
+
+  /*
+   * The ONE Zewa Coins earning email (ZSOP004 §10.4, adjusted per product
+   * decision: no separate "coins unlocked" message).
+   *
+   * After commit, for the same reason as the lifecycle email below — and
+   * idempotent on the order, so a repeated delivery webhook sends once.
+   * Failures are logged, never surfaced: a mail problem must not fail a
+   * delivery that already happened.
+   */
+  /*
+   * Bound to a const before spreading.
+   *
+   * `earnedNotice` is a `let` assigned inside the transaction callback, and
+   * TypeScript will not narrow a closure-captured `let` across the await — so
+   * the guard alone leaves it `EarnedNotice | null` at the spread. Copying to a
+   * const gives the compiler something it can narrow, without weakening the
+   * type or reaching for a cast.
+   */
+  const notice = updated.earned;
+  if (notice) {
+    await loyaltyNotify
+      .notifyEarned({ ...notice, orderNo })
+      .catch((err) => log.error({ err, orderNo }, 'failed to send coins-earned email'));
+  }
 
   // 7. Dispatch the send AFTER commit. Enqueuing inside the transaction could
   // let the worker pick the job up before the status change was visible.

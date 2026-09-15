@@ -731,7 +731,160 @@ export const accountTemplates = {
       'Your account password was just changed',
     ),
   }),
+
+  // ==========================================================================
+  // ZEWA COINS (ZSOP004 §10.4)
+  //
+  // §10.3 fixes the vocabulary and it is load-bearing, not stylistic: always
+  // "Zewa Coins"; never "cashback" (implies cash convertibility and invites
+  // refund disputes), never "wallet" (implies stored value the customer owns
+  // and could withdraw — a distinction that matters legally, §12.2), never
+  // "points", "rewards" or "credits". Say UNLOCK, not mature or vest.
+  //
+  // Every message deep-links to the coins page, never the home page (§10.4).
+  // ==========================================================================
+
+  /**
+   * Coins unlocked and ready to spend (§10.4).
+   *
+   * "30 Zewa Coins are ready to use — ₹30 off your next order"
+   */
+  /**
+   * Coins earned on an order — the ONE customer-facing earning email.
+   *
+   * Sent once, when delivery is confirmed. There is deliberately no second
+   * "your coins unlocked" message: two emails for one reward reads as two
+   * rewards, and a customer who is told twice about the same coins reasonably
+   * expects twice the coins.
+   *
+   * So this message has to carry the whole story at once — what was earned, what
+   * the balance is now, and the fact that the new coins are not spendable yet.
+   * `availableCoins` is the balance EXCLUDING this grant, because the grant is
+   * still pending; adding them together would be the "two rewards" confusion in
+   * numeric form.
+   *
+   * `unlockDays` is computed from the order's own rule version, not hardcoded:
+   * ZSOP004 §3.5 adds a further hold above the large-order threshold, so a
+   * ₹25,000 order says 21 days here while an ordinary one says 7.
+   */
+  'coins-earned': (ctx: {
+    firstName: string;
+    coins: number;
+    /** Spendable balance right now, NOT including the coins just earned. */
+    availableCoins: number;
+    unlockDays: number;
+    unlockOn: string;
+    orderNo: string;
+    coinsUrl: string;
+  }) => ({
+    subject: `You earned ${ctx.coins} Zewa Coins on order ${ctx.orderNo}`,
+    html: shell(
+      `You earned ${ctx.coins} Zewa Coins`,
+      `Hi ${esc(ctx.firstName)}, your order ${esc(ctx.orderNo)} has been delivered — here are the Zewa Coins you earned on it.`,
+      coinBalanceBlock(ctx.coins, `Earned on order ${esc(ctx.orderNo)}`) +
+        factsBlock([
+          ['Earned on this order', `${ctx.coins} coins`],
+          ['Available to spend now', `${ctx.availableCoins} coins`],
+          ['New coins added on', `${esc(ctx.unlockOn)}`],
+        ]) +
+        note(
+          `Your coins will be added to your Zewa Coins balance after ${esc(ctx.unlockDays)} days, once the return window on this order closes. 1 coin = ₹1 off a future order.`,
+        ) +
+        ctaButton(ctx.coinsUrl, 'View your coins'),
+      `You earned ${ctx.coins} Zewa Coins on order ${ctx.orderNo}`,
+    ),
+  }),
+
+  /**
+   * The SINGLE expiry reminder, 7 days out (§4.3, §10.4).
+   *
+   * §4.3 removed the 30-day reminder deliberately, and sends this only when the
+   * lot still has coins left: "reminding someone about coins they cannot use is
+   * worse than silence."
+   */
+  'coins-expiring': (ctx: {
+    firstName: string;
+    coins: number;
+    expiresOn: string;
+    coinsUrl: string;
+  }) => ({
+    subject: `${ctx.coins} Zewa Coins expire on ${ctx.expiresOn}`,
+    html: shell(
+      'Your coins expire soon',
+      `Hi ${esc(ctx.firstName)}, a few of your Zewa Coins are about to expire.`,
+      coinBalanceBlock(ctx.coins, `Expiring on ${esc(ctx.expiresOn)}`) +
+        ctaButton(ctx.coinsUrl, 'Spend them now') +
+        note(
+          `Coins expire 12 months after you earn them. Once they expire they cannot be reinstated.`,
+        ),
+      `${ctx.coins} Zewa Coins expire on ${ctx.expiresOn}`,
+    ),
+  }),
+
+  /**
+   * Balance adjusted after a return (§10.4).
+   *
+   * "Factual, never accusatory: 'Following your return, 84 coins have been
+   * returned to your account and 15 adjusted'."
+   *
+   * The two movements are reported SEPARATELY because they are computed
+   * separately (§7.2) — netting them into one number is exactly what leaves a
+   * customer unable to understand their balance.
+   */
+  'coins-adjusted': (ctx: {
+    firstName: string;
+    orderNo: string;
+    restored: number;
+    clawedBack: number;
+    coinsUrl: string;
+  }) => ({
+    subject: `Your Zewa Coins after order ${ctx.orderNo}`,
+    html: shell(
+      'Your coins have been updated',
+      `Hi ${esc(ctx.firstName)}, we've updated your Zewa Coins following the return on order ${esc(ctx.orderNo)}.`,
+      factsBlock(
+        [
+          ctx.restored > 0
+            ? (['Returned to your account', `${ctx.restored} coins`] as [string, string])
+            : null,
+          ctx.clawedBack > 0
+            ? (['Adjusted for the returned items', `${ctx.clawedBack} coins`] as [string, string])
+            : null,
+          ['Order', ctx.orderNo] as [string, string],
+        ].filter(Boolean) as [string, string][],
+      ) +
+        ctaButton(ctx.coinsUrl, 'View your coins') +
+        note(
+          `Coins you spent on returned items come back as coins. Coins are never refunded as cash — the money you paid is refunded separately.`,
+        ),
+      `Your Zewa Coins have been updated following your return`,
+    ),
+  }),
 } as const;
+
+/** A single prominent coin figure, used by the coin templates above. */
+function coinBalanceBlock(coins: number, caption: string): string {
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 24px;">
+     <tr>
+       <td align="center" style="padding:24px;background:${BRAND_SOFT};border:1px solid ${BRAND_BORDER};border-radius:12px;">
+         <div style="font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:${BRAND};margin-bottom:8px;">Zewa Coins</div>
+         <div style="font-size:38px;font-weight:700;color:${INK};line-height:1;">${esc(coins)}</div>
+         <div style="font-size:13px;color:${MUTED};margin-top:10px;">${esc(caption)}</div>
+       </td>
+     </tr>
+   </table>`;
+}
+
+/** Brand-styled call to action. Deep-links to the coins page, never home (§10.4). */
+function ctaButton(url: string, label: string): string {
+  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 24px;">
+     <tr>
+       <td align="center" style="border-radius:10px;background:${BRAND_PRIMARY};">
+         <a href="${esc(url)}" style="display:inline-block;padding:13px 28px;font-size:13px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:${BRAND_BUTTON_TEXT};text-decoration:none;">${esc(label)}</a>
+       </td>
+     </tr>
+   </table>`;
+}
 
 export type AccountTemplateName = keyof typeof accountTemplates;
 

@@ -14,7 +14,8 @@
  * know what it was. A test that dies between `create` and `finally` costs the
  * next run nothing.
  */
-import { PrismaClient, Prisma, ProductStatus, Role } from '@prisma/client';
+import type { PrismaClient, Prisma} from '@prisma/client';
+import { ProductStatus, Role } from '@prisma/client';
 
 /**
  * Reserved prefix for everything the suite creates.
@@ -136,3 +137,49 @@ export async function dropFamily(prisma: PrismaClient, id: string): Promise<void
 
 /** Cast helper: the service layer's ProductBody, built from a plain literal. */
 export type AnyBody = Prisma.InputJsonValue;
+
+/**
+ * Delete customers whose coin ledger would block the cascade.
+ *
+ * `Customer → LoyaltyAccount → CoinLedger` cascades on delete, but the ledger is
+ * append-only at the database level (ZSOP004 §9.2) and the trigger refuses the
+ * DELETE — correctly. In production a customer's ledger is RETAINED for eight
+ * years with their PII anonymised, so this situation does not arise; only tests
+ * genuinely need the rows gone.
+ *
+ * This is the escape hatch the migration documents: drop the guard inside a
+ * transaction, delete, restore it. Kept in one helper so no test file has to
+ * hand-roll raw SQL, and so the guard can never be left disabled by a test that
+ * throws midway.
+ */
+export async function purgeCustomersWithLedger(
+  prisma: PrismaClient,
+  where: Prisma.CustomerWhereInput,
+): Promise<void> {
+  const customers = await prisma.customer.findMany({ where, select: { id: true } });
+  if (customers.length === 0) return;
+  const ids = customers.map((c) => c.id);
+
+  const accounts = await prisma.loyaltyAccount.findMany({
+    where: { customerId: { in: ids } },
+    select: { id: true },
+  });
+
+  if (accounts.length > 0) {
+    const accountIds = accounts.map((a) => a.id);
+    await prisma.$executeRawUnsafe(
+      'ALTER TABLE "CoinLedger" DISABLE TRIGGER coin_ledger_no_delete',
+    );
+    try {
+      await prisma.coinLedger.deleteMany({ where: { accountId: { in: accountIds } } });
+    } finally {
+      // Restored even if the delete throws — a disabled guard must never
+      // outlive the statement that needed it.
+      await prisma.$executeRawUnsafe(
+        'ALTER TABLE "CoinLedger" ENABLE TRIGGER coin_ledger_no_delete',
+      );
+    }
+  }
+
+  await prisma.customer.deleteMany({ where: { id: { in: ids } } });
+}
