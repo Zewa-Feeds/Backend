@@ -29,17 +29,16 @@ CREATE TYPE "ReturnKind" AS ENUM ('CANCELLATION', 'RETURN', 'RTO', 'EXCHANGE');
 CREATE TYPE "ReturnStatus" AS ENUM ('REQUESTED', 'APPROVED', 'COMPLETED', 'REJECTED');
 
 -- AlterEnum
-ALTER TYPE "CmsUserStatus" ADD VALUE 'INVITED';
-
--- DropIndex
-DROP INDEX "ProductFamily_representativeVariantId_idx";
-
--- DropIndex
-DROP INDEX "ProductVariant_heroMediaId_idx";
+-- Guarded: production already carries this label (added outside migration
+-- history via `db push`), so an unguarded ADD VALUE fails with 42710. The guard
+-- makes this a no-op there and still creates the label on a fresh database.
+ALTER TYPE "CmsUserStatus" ADD VALUE IF NOT EXISTS 'INVITED';
 
 -- AlterTable
-ALTER TABLE "CmsUser" ADD COLUMN     "activatedAt" TIMESTAMP(3),
-ADD COLUMN     "phone" TEXT;
+-- Guarded for the same reason as the enum above: both columns already exist in
+-- production but in no migration.
+ALTER TABLE "CmsUser" ADD COLUMN IF NOT EXISTS "activatedAt" TIMESTAMP(3),
+ADD COLUMN IF NOT EXISTS "phone" TEXT;
 
 -- AlterTable
 ALTER TABLE "Customer" ADD COLUMN     "phoneVerifiedAt" TIMESTAMP(3);
@@ -58,7 +57,8 @@ ALTER TABLE "ProductVariant" ADD COLUMN     "coinRedeemable" BOOLEAN NOT NULL DE
 ADD COLUMN     "earnEligible" BOOLEAN NOT NULL DEFAULT true;
 
 -- CreateTable
-CREATE TABLE "CmsInvitation" (
+-- Guarded: this table already exists in production but in no migration.
+CREATE TABLE IF NOT EXISTS "CmsInvitation" (
     "id" TEXT NOT NULL,
     "userId" TEXT NOT NULL,
     "tokenHash" TEXT NOT NULL,
@@ -270,16 +270,17 @@ CREATE TABLE "CustomerPhoneOtp" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "CmsInvitation_userId_key" ON "CmsInvitation"("userId");
+-- Guarded: these four indexes already exist in production but in no migration.
+CREATE UNIQUE INDEX IF NOT EXISTS "CmsInvitation_userId_key" ON "CmsInvitation"("userId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "CmsInvitation_tokenHash_key" ON "CmsInvitation"("tokenHash");
+CREATE UNIQUE INDEX IF NOT EXISTS "CmsInvitation_tokenHash_key" ON "CmsInvitation"("tokenHash");
 
 -- CreateIndex
-CREATE INDEX "CmsInvitation_tokenHash_idx" ON "CmsInvitation"("tokenHash");
+CREATE INDEX IF NOT EXISTS "CmsInvitation_tokenHash_idx" ON "CmsInvitation"("tokenHash");
 
 -- CreateIndex
-CREATE INDEX "CmsInvitation_userId_idx" ON "CmsInvitation"("userId");
+CREATE INDEX IF NOT EXISTS "CmsInvitation_userId_idx" ON "CmsInvitation"("userId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "LoyaltyAccount_customerId_key" ON "LoyaltyAccount"("customerId");
@@ -369,10 +370,21 @@ CREATE INDEX "CustomerPhoneOtp_customerId_purpose_idx" ON "CustomerPhoneOtp"("cu
 CREATE INDEX "CustomerPhoneOtp_expiresAt_idx" ON "CustomerPhoneOtp"("expiresAt");
 
 -- AddForeignKey
-ALTER TABLE "CmsInvitation" ADD CONSTRAINT "CmsInvitation_userId_fkey" FOREIGN KEY ("userId") REFERENCES "CmsUser"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+-- Guarded: these two constraints already exist in production but in no
+-- migration. PostgreSQL has no ADD CONSTRAINT IF NOT EXISTS, so the existence
+-- check is explicit.
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CmsInvitation_userId_fkey') THEN
+    ALTER TABLE "CmsInvitation" ADD CONSTRAINT "CmsInvitation_userId_fkey" FOREIGN KEY ("userId") REFERENCES "CmsUser"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "CmsInvitation" ADD CONSTRAINT "CmsInvitation_invitedById_fkey" FOREIGN KEY ("invitedById") REFERENCES "CmsUser"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'CmsInvitation_invitedById_fkey') THEN
+    ALTER TABLE "CmsInvitation" ADD CONSTRAINT "CmsInvitation_invitedById_fkey" FOREIGN KEY ("invitedById") REFERENCES "CmsUser"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- AddForeignKey
 ALTER TABLE "LoyaltyAccount" ADD CONSTRAINT "LoyaltyAccount_customerId_fkey" FOREIGN KEY ("customerId") REFERENCES "Customer"("id") ON DELETE CASCADE ON UPDATE CASCADE;
