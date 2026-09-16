@@ -110,18 +110,6 @@ async function seedCustomer(label: string, coins: number) {
     select: { id: true },
   });
   const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, customer.id));
-  /*
-   * Opt this fixture OUT of the holdout.
-   *
-   * `ensureAccount` assigns the holdout deterministically from a hash of the
-   * customer id (§13.5), so ~5% of randomly generated UUIDs land in it and
-   * correctly earn nothing. Left alone, a couple of fixtures per run silently
-   * become control-group accounts and whichever test owns them fails — which is
-   * why the failure appeared to move between tests on every run.
-   *
-   * Holdout behaviour itself is covered explicitly in concurrency.test.ts.
-   */
-  await prisma.loyaltyAccount.update({ where: { id: acc.id }, data: { holdout: false } });
 
   if (coins > 0) {
     const expiresAt = new Date();

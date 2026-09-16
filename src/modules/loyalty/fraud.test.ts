@@ -64,15 +64,13 @@ async function seed(label: string, rto?: { count: number; daysAgo: number }) {
   });
   const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, customer.id));
 
-  // Opt out of the holdout — ~5% of random ids land in it by design (§13.5).
   const windowAt = rto ? new Date(Date.now() - rto.daysAgo * 86400000) : null;
-  await prisma.loyaltyAccount.update({
-    where: { id: acc.id },
-    data: {
-      holdout: false,
-      ...(rto ? { rtoCount90d: rto.count, rtoWindowAt: windowAt } : {}),
-    },
-  });
+  if (rto) {
+    await prisma.loyaltyAccount.update({
+      where: { id: acc.id },
+      data: { rtoCount90d: rto.count, rtoWindowAt: windowAt },
+    });
+  }
 
   return { customerId: customer.id, accountId: acc.id };
 }

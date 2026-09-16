@@ -90,7 +90,6 @@ loyaltyAdminRouter.get(
           lifetimeRedeemed: true,
           flaggedDeficit: true,
           status: true,
-          holdout: true,
           customer: {
             select: { id: true, firstName: true, lastName: true, email: true, phone: true },
           },
@@ -629,7 +628,12 @@ loyaltyAdminRouter.put(
       label: z.string().trim().min(1).max(40),
       earningEnabled: z.boolean().optional(),
       redemptionEnabled: z.boolean().optional(),
-      rolloutPct: z.number().int().min(0).max(100).optional(),
+      /*
+       * `rolloutPct` is NOT accepted any more. The §13.5 rollout experiment was
+       * removed, the column is inert legacy, and taking a value here would
+       * suggest it still gates eligibility. New versions inherit whatever the
+       * previous row held.
+       */
       expiryDays: z.number().int().min(1).max(3650).optional(),
       minRedemptionCoins: z.number().int().min(1).optional(),
       maxRedemptionPct: z.number().int().min(1).max(100).optional(),

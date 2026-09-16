@@ -96,10 +96,9 @@ async function makeOrder(opts: {
     select: { id: true },
   });
   const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, customer.id));
-  // ~5% of random ids land in the §13.5 holdout and earn nothing.
   await prisma.loyaltyAccount.update({
     where: { id: acc.id },
-    data: { holdout: false, availableCoins: opts.grantedCoins },
+    data: { availableCoins: opts.grantedCoins },
   });
 
   const family = await prisma.productFamily.create({
@@ -528,7 +527,7 @@ describe('§4 A coupon may block coins outright', () => {
     const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, customer.id));
     await prisma.loyaltyAccount.update({
       where: { id: acc.id },
-      data: { holdout: false, availableCoins: coins },
+      data: { availableCoins: coins },
     });
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 365);

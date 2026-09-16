@@ -96,11 +96,6 @@ async function seed(label: string) {
     select: { id: true, email: true },
   });
   const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, customer.id));
-  // ~5% of random ids land in the §13.5 holdout and earn nothing.
-  await prisma.loyaltyAccount.update({
-    where: { id: acc.id },
-    data: { holdout: false },
-  });
   return { customerId: customer.id, accountId: acc.id, email: customer.email };
 }
 

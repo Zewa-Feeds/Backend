@@ -386,9 +386,8 @@ export async function sweepExpired(now = new Date()): Promise<number> {
  * What the checkout should show for this cart (§10.1).
  *
  * Returns everything the coins box needs, or a null box when the programme is
- * off, the customer is in the holdout, or the balance is negative — §10.1:
- * "Never show a negative balance, and hide the box entirely for negative-balance
- * and holdout customers."
+ * off or the balance is negative — §10.1: "Never show a negative balance, and
+ * hide the box entirely for negative-balance customers."
  */
 export async function quote(
   customerId: string,
@@ -416,7 +415,7 @@ export async function quote(
 
   const acc = await prisma.loyaltyAccount.findUnique({ where: { customerId } });
   if (!acc) return null;
-  if (acc.holdout || acc.availableCoins < 0 || acc.status !== LoyaltyAccountStatus.ACTIVE) {
+  if (acc.availableCoins < 0 || acc.status !== LoyaltyAccountStatus.ACTIVE) {
     return null;
   }
   if (!account.canRedeem(acc)) return null;

@@ -15,7 +15,6 @@ import { AppError, ErrorCode } from '@/lib/errors';
 import { logger } from '@/lib/logger';
 import * as ledger from './ledger.service';
 import type { Tx } from './ledger.service';
-import * as rules from './rules.service';
 
 const log = logger.child({ module: 'loyalty.account' });
 
@@ -26,8 +25,6 @@ const log = logger.child({ module: 'loyalty.account' });
  * concurrent creates resolve to one row, and the upsert swallows the race rather
  * than surfacing a 500 to a customer whose only crime was double-clicking.
  *
- * The holdout bucket is assigned at creation and never recomputed, so a
- * customer cannot drift in or out of the control group (§13.5).
  */
 export async function ensureAccount(
   tx: Tx,
@@ -43,7 +40,9 @@ export async function ensureAccount(
     create: {
       customerId,
       phone: phone ?? null,
-      holdout: rules.isHoldout(customerId),
+      // The §13.5 holdout experiment is over: no account is assigned to a
+      // control group. The column stays as an inert legacy field.
+      holdout: false,
     },
   });
 }
@@ -248,7 +247,6 @@ export async function summary(customerId: string) {
       pendingCoins: true,
       lockedCoins: true,
       status: true,
-      holdout: true,
       redeemEnabled: true,
       earnEnabled: true,
       flaggedDeficit: true,
@@ -260,7 +258,6 @@ export async function summary(customerId: string) {
       available: 0,
       pending: 0,
       negative: false,
-      holdout: false,
       canRedeem: false,
       expiringSoon: [] as { coins: number; expiresAt: Date }[],
       nextUnlockAt: null as Date | null,
@@ -294,10 +291,8 @@ export async function summary(customerId: string) {
     available: negative ? 0 : account.availableCoins,
     pending: account.pendingCoins,
     negative,
-    holdout: account.holdout,
     canRedeem:
       !negative &&
-      !account.holdout &&
       account.redeemEnabled &&
       account.status === LoyaltyAccountStatus.ACTIVE,
     expiringSoon: expiring.map((l) => ({ coins: l.coinsRemaining, expiresAt: l.expiresAt })),
@@ -312,9 +307,7 @@ export async function summary(customerId: string) {
  * (minimum base, eligible SKUs) live in the earning engine.
  */
 export function canEarn(account: LoyaltyAccount): boolean {
-  return (
-    account.status === LoyaltyAccountStatus.ACTIVE && account.earnEnabled && !account.holdout
-  );
+  return account.status === LoyaltyAccountStatus.ACTIVE && account.earnEnabled;
 }
 
 /** Can this account redeem right now? (§4, §6.7) */
@@ -322,7 +315,6 @@ export function canRedeem(account: LoyaltyAccount): boolean {
   return (
     account.status === LoyaltyAccountStatus.ACTIVE &&
     account.redeemEnabled &&
-    !account.holdout &&
     account.availableCoins >= 0 && // §6.7: redemption blocked while negative
     account.mismatchStreak < 2 // §9.2: two consecutive mismatches block redemption
   );

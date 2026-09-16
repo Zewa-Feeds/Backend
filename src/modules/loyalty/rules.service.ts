@@ -88,39 +88,17 @@ export function toCoinRules(v: LoyaltyRuleVersion): CoinRules {
   };
 }
 
-/**
- * Is this customer inside the rollout? (§13.5)
+/*
+ * THE §13.5 HOLDOUT EXPERIMENT WAS REMOVED.
  *
- * Deterministic on customer id, with the HOLDOUT IN THE BOTTOM BUCKETS so a
- * rising `rolloutPct` can never sweep it in. That ordering is the whole reason
- * the holdout survives a ramp: buckets 0–4 are the 5% holdout and are excluded
- * regardless of rollout, while exposure grows downward from 99.
+ * `bucketFor`, `isHoldout`, `HOLDOUT_BUCKETS` and `isExposed` used to place 5%
+ * of customers in a permanent control group, hashed deterministically from the
+ * customer id, and `rolloutPct` was meant to ramp exposure for the rest. Zewa is
+ * not running the experiment, so every eligible customer is now in the
+ * programme and nobody is excluded by a bucket.
  *
- * Uses a stable hash of the id rather than `Math.random`, so a customer's bucket
- * never changes between requests.
+ * `LoyaltyAccount.holdout` and `LoyaltyRuleVersion.rolloutPct` remain in the
+ * schema as INERT LEGACY COLUMNS. Nothing reads them for eligibility. They were
+ * kept rather than dropped so this change needs no migration against a
+ * production database — see the audit that accompanied this removal.
  */
-export function bucketFor(customerId: string): number {
-  let h = 0;
-  for (let i = 0; i < customerId.length; i++) {
-    h = (h * 31 + customerId.charCodeAt(i)) >>> 0;
-  }
-  return h % 100;
-}
-
-/** Holdout occupies the bottom 5 buckets (§13.5). */
-export const HOLDOUT_BUCKETS = 5;
-
-export function isHoldout(customerId: string): boolean {
-  return bucketFor(customerId) < HOLDOUT_BUCKETS;
-}
-
-/**
- * Is the programme live for this customer?
- *
- * Holdout customers are never exposed, whatever the rollout percentage — they
- * see no coin surface at all, which is what makes them a valid control group.
- */
-export function isExposed(customerId: string, rolloutPct: number): boolean {
-  if (isHoldout(customerId)) return false;
-  return bucketFor(customerId) < rolloutPct;
-}

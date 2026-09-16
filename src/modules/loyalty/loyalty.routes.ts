@@ -95,8 +95,8 @@ loyaltyRouter.get(
         coinValuePaise: rv.coinValuePaise,
         minRedemption: rv.minRedemptionCoins,
         expiryDays: rv.expiryDays,
-        // §10.1: hide the box entirely for holdout and negative-balance
-        // customers, and whenever the kill switch is off.
+        // §10.1: hide the box entirely for negative-balance customers, and
+        // whenever the kill switch is off.
         redemptionAvailable: rv.redemptionEnabled && summary.canRedeem,
       },
     });

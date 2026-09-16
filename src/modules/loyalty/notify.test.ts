@@ -62,17 +62,10 @@ async function seed(label: string, opts: { holdout?: boolean } = {}) {
   });
   const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, customer.id));
   /*
-   * Opt this fixture OUT of the holdout.
-   *
-   * `ensureAccount` assigns the holdout deterministically from a hash of the
-   * customer id (§13.5), so ~5% of randomly generated UUIDs land in it and
-   * correctly earn nothing. Left alone, a couple of fixtures per run silently
-   * become control-group accounts and whichever test owns them fails — which is
-   * why the failure appeared to move between tests on every run.
-   *
-   * Holdout behaviour itself is covered explicitly in concurrency.test.ts.
+   * `ensureAccount` no longer buckets anyone — the §13.5 holdout experiment was
+   * removed — so no opt-out is needed. `opts.holdout` remains only so a test can
+   * set the LEGACY flag and prove it no longer suppresses anything.
    */
-  await prisma.loyaltyAccount.update({ where: { id: acc.id }, data: { holdout: false } });
   if (opts.holdout) {
     await prisma.loyaltyAccount.update({ where: { id: acc.id }, data: { holdout: true } });
   }
@@ -213,10 +206,12 @@ describe('The ONE coins-earned email', () => {
     expect(to(email).length).toBeLessThanOrEqual(1);
   });
 
-  it('sends nothing for a holdout customer (§13.5)', async () => {
-    const { accountId, email } = await seed('earned-holdout', { holdout: true });
+  it('still writes to a customer carrying the legacy holdout flag', async () => {
+    // The §13.5 holdout used to silence every coin email. The experiment is
+    // removed, so a stale flag must not suppress the one earning message.
+    const { accountId, email } = await seed('earned-legacy-holdout', { holdout: true });
     await notify.notifyEarned(notice(accountId, 40, 7));
-    expect(to(email)).toHaveLength(0);
+    expect(to(email)).toHaveLength(1);
   });
 
   it('sends nothing when the order earned no coins', async () => {

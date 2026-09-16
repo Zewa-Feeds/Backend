@@ -196,18 +196,6 @@ describe('The −50 floor (§6.7)', () => {
       select: { id: true },
     });
     const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, c.id));
-  /*
-   * Opt this fixture OUT of the holdout.
-   *
-   * `ensureAccount` assigns the holdout deterministically from a hash of the
-   * customer id (§13.5), so ~5% of randomly generated UUIDs land in it and
-   * correctly earn nothing. Left alone, a couple of fixtures per run silently
-   * become control-group accounts and whichever test owns them fails — which is
-   * why the failure appeared to move between tests on every run.
-   *
-   * Holdout behaviour itself is covered explicitly in concurrency.test.ts.
-   */
-  await prisma.loyaltyAccount.update({ where: { id: acc.id }, data: { holdout: false } });
 
     await prisma.$transaction((tx) =>
       ledger.postFlooredDebit(
@@ -255,18 +243,6 @@ describe('FIFO consumption (§4.2)', () => {
       select: { id: true },
     });
     const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, c.id));
-  /*
-   * Opt this fixture OUT of the holdout.
-   *
-   * `ensureAccount` assigns the holdout deterministically from a hash of the
-   * customer id (§13.5), so ~5% of randomly generated UUIDs land in it and
-   * correctly earn nothing. Left alone, a couple of fixtures per run silently
-   * become control-group accounts and whichever test owns them fails — which is
-   * why the failure appeared to move between tests on every run.
-   *
-   * Holdout behaviour itself is covered explicitly in concurrency.test.ts.
-   */
-  await prisma.loyaltyAccount.update({ where: { id: acc.id }, data: { holdout: false } });
 
     const far = new Date();
     far.setDate(far.getDate() + 300);
@@ -299,18 +275,6 @@ describe('FIFO consumption (§4.2)', () => {
       select: { id: true },
     });
     const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, c.id));
-  /*
-   * Opt this fixture OUT of the holdout.
-   *
-   * `ensureAccount` assigns the holdout deterministically from a hash of the
-   * customer id (§13.5), so ~5% of randomly generated UUIDs land in it and
-   * correctly earn nothing. Left alone, a couple of fixtures per run silently
-   * become control-group accounts and whichever test owns them fails — which is
-   * why the failure appeared to move between tests on every run.
-   *
-   * Holdout behaviour itself is covered explicitly in concurrency.test.ts.
-   */
-  await prisma.loyaltyAccount.update({ where: { id: acc.id }, data: { holdout: false } });
 
     const past = new Date();
     past.setDate(past.getDate() - 1);
@@ -336,32 +300,55 @@ describe('FIFO consumption (§4.2)', () => {
   });
 });
 
-describe('Rollout bucketing (§13.5)', () => {
-  it('is deterministic for a given customer id', () => {
-    const id = 'customer-abc-123';
-    expect(rules.bucketFor(id)).toBe(rules.bucketFor(id));
-  });
+describe('The holdout experiment is gone — nobody is bucketed', () => {
+  it('never assigns a new account to a holdout group', async () => {
+    /*
+     * The §13.5 experiment hashed the customer id and put buckets 0–4 (5%) in a
+     * permanent control group. It is removed: every account is created inside
+     * the programme. Asserted over many ids because the old assignment was
+     * deterministic-but-scattered — a single fixture could pass by luck.
+     */
+    const ids: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const c = await prisma.customer.create({
+        data: {
+          email: `zz-ledger-nobucket-${Date.now()}-${i}@zewafeeds.test`,
+          firstName: 'No',
+          lastName: 'Bucket',
+        },
+        select: { id: true },
+      });
+      ids.push(c.id);
+    }
 
-  it('keeps the holdout in the bottom buckets so a ramp can never sweep it in', () => {
-    // The property that matters: a holdout customer is unexposed at EVERY
-    // rollout percentage, including 100.
-    const holdouts = Array.from({ length: 500 }, (_, i) => `cust-${i}`).filter((id) =>
-      rules.isHoldout(id),
-    );
-    expect(holdouts.length).toBeGreaterThan(0);
-    for (const id of holdouts) {
-      for (const pct of [0, 10, 50, 100]) {
-        expect(rules.isExposed(id, pct)).toBe(false);
-      }
+    for (const id of ids) {
+      const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, id));
+      expect(acc.holdout).toBe(false);
+      // …and the account is fully eligible on both sides of the programme.
+      expect(account.canEarn(acc)).toBe(true);
+      expect(account.canRedeem(acc)).toBe(true);
     }
   });
 
-  it('exposes roughly the configured percentage of non-holdout customers', () => {
-    const ids = Array.from({ length: 2000 }, (_, i) => `rollout-${i}`);
-    const exposed = ids.filter((id) => rules.isExposed(id, 50)).length;
-    // Buckets 5–49 are exposed at 50% → ~45% of the population.
-    expect(exposed / ids.length).toBeGreaterThan(0.35);
-    expect(exposed / ids.length).toBeLessThan(0.55);
+  it('treats an account still carrying the legacy flag as eligible', async () => {
+    // Rows written before the removal may still hold `holdout = true`. The
+    // column is inert legacy data: nothing may gate on it.
+    const c = await prisma.customer.create({
+      data: {
+        email: `zz-ledger-legacy-${Date.now()}@zewafeeds.test`,
+        firstName: 'Legacy',
+        lastName: 'Holdout',
+      },
+      select: { id: true },
+    });
+    const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, c.id));
+    const stale = await prisma.loyaltyAccount.update({
+      where: { id: acc.id },
+      data: { holdout: true },
+    });
+
+    expect(account.canEarn(stale)).toBe(true);
+    expect(account.canRedeem(stale)).toBe(true);
   });
 });
 
@@ -372,18 +359,6 @@ describe('Reconciliation (§9.2) — the ledger always wins', () => {
       select: { id: true },
     });
     const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, c.id));
-  /*
-   * Opt this fixture OUT of the holdout.
-   *
-   * `ensureAccount` assigns the holdout deterministically from a hash of the
-   * customer id (§13.5), so ~5% of randomly generated UUIDs land in it and
-   * correctly earn nothing. Left alone, a couple of fixtures per run silently
-   * become control-group accounts and whichever test owns them fails — which is
-   * why the failure appeared to move between tests on every run.
-   *
-   * Holdout behaviour itself is covered explicitly in concurrency.test.ts.
-   */
-  await prisma.loyaltyAccount.update({ where: { id: acc.id }, data: { holdout: false } });
 
     const future = new Date();
     future.setDate(future.getDate() + 100);
@@ -412,18 +387,6 @@ describe('Reconciliation (§9.2) — the ledger always wins', () => {
       select: { id: true },
     });
     const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, c.id));
-  /*
-   * Opt this fixture OUT of the holdout.
-   *
-   * `ensureAccount` assigns the holdout deterministically from a hash of the
-   * customer id (§13.5), so ~5% of randomly generated UUIDs land in it and
-   * correctly earn nothing. Left alone, a couple of fixtures per run silently
-   * become control-group accounts and whichever test owns them fails — which is
-   * why the failure appeared to move between tests on every run.
-   *
-   * Holdout behaviour itself is covered explicitly in concurrency.test.ts.
-   */
-  await prisma.loyaltyAccount.update({ where: { id: acc.id }, data: { holdout: false } });
     const audit = await prisma.$transaction((tx) => ledger.auditAccount(tx, acc.id));
     expect(audit.clean).toBe(true);
   });

@@ -90,13 +90,10 @@ async function recipient(accountId: string) {
   const account = await prisma.loyaltyAccount.findUnique({
     where: { id: accountId },
     select: {
-      holdout: true,
       customer: { select: { email: true, firstName: true } },
     },
   });
   if (!account?.customer?.email) return null;
-  // §13.5: a holdout customer sees no coin surface anywhere — including inboxes.
-  if (account.holdout) return null;
   return { email: account.customer.email, firstName: account.customer.firstName || 'there' };
 }
 
@@ -278,7 +275,7 @@ export async function sendExpiryReminders(now = new Date()): Promise<number> {
       state: 'AVAILABLE',
       coinsRemaining: { gt: 0 },
       expiresAt: { gte: windowStart, lt: windowEnd },
-      account: { status: 'ACTIVE', holdout: false },
+      account: { status: 'ACTIVE' },
     },
     select: { id: true, accountId: true, coinsRemaining: true, expiresAt: true },
     take: 500,

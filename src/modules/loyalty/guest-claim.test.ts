@@ -87,20 +87,9 @@ async function makeCustomer(label: string, opts: { verified: boolean }) {
     select: { id: true, email: true },
   });
 
-  /*
-   * Opt this fixture OUT of the holdout.
-   *
-   * The claim service calls `ensureAccount`, which assigns the holdout
-   * deterministically from a hash of the customer id (§13.5). ~5% of randomly
-   * generated UUIDs land in it and correctly earn nothing, so without this a
-   * couple of fixtures per run silently become control-group accounts and
-   * whichever test owns them fails — which is why the failure appeared to move
-   * between tests on every run.
-   *
-   * Pre-creating the account is safe: `ensureAccount` returns the existing row.
-   */
+  // Pre-creating the account is safe: `ensureAccount` returns the existing row.
   await prisma.loyaltyAccount.create({
-    data: { customerId: customer.id, holdout: false },
+    data: { customerId: customer.id },
   });
 
   return customer;

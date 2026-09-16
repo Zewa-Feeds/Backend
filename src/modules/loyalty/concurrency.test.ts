@@ -77,18 +77,6 @@ async function seedCustomer(label: string, coins: number) {
     select: { id: true },
   });
   const acc = await prisma.$transaction((tx) => account.ensureAccount(tx, customer.id));
-  /*
-   * Opt this fixture OUT of the holdout.
-   *
-   * `ensureAccount` assigns the holdout deterministically from a hash of the
-   * customer id (§13.5), so ~5% of randomly generated UUIDs land in it and
-   * correctly earn nothing. Left alone, a couple of fixtures per run silently
-   * become control-group accounts and whichever test owns them fails — which is
-   * why the failure appeared to move between tests on every run.
-   *
-   * Holdout behaviour itself is covered explicitly in concurrency.test.ts.
-   */
-  await prisma.loyaltyAccount.update({ where: { id: acc.id }, data: { holdout: false } });
 
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 365);
@@ -448,13 +436,21 @@ describe('§6.7 / §13.5 Redemption is blocked where the specification requires'
     expect(await redemption.quote(customerId, LINES)).toBeNull();
   });
 
-  it('shows no coin surface at all to a holdout customer', async () => {
-    const { customerId, accountId } = await seedCustomer('holdout', 100);
+  it('redeems normally for a customer still carrying the legacy holdout flag', async () => {
+    /*
+     * The §13.5 holdout used to hide the coin surface entirely. The experiment
+     * is removed, so a row that still has the stale flag set must redeem like
+     * anyone else — the column is inert legacy data, not an eligibility gate.
+     */
+    const { customerId, accountId } = await seedCustomer('legacyholdout', 100);
     await prisma.loyaltyAccount.update({ where: { id: accountId }, data: { holdout: true } });
 
-    expect(await redemption.quote(customerId, LINES)).toBeNull();
+    const quote = await redemption.quote(customerId, LINES);
+    expect(quote).not.toBeNull();
+    expect(quote!.visible).toBe(true);
+
     const r = await redemption.reserve({ customerId, coins: 50, lines: LINES, cartKey: 'ho' });
-    expect(r.held).toBe(0);
+    expect(r.held).toBe(50);
   });
 
   it('blocks redemption after two consecutive reconciliation mismatches (§9.2)', async () => {

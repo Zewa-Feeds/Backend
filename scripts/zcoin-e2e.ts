@@ -165,7 +165,7 @@ async function main() {
   // Earning is triggered by the payment webhook in production; this calls the
   // same service function the webhook calls.
   const earnResult = await prisma.$transaction((tx) => earnService.earnForOrder(tx, order.id));
-  // `skipped` names the §3.3 gate that blocked the earn (holdout, kill switch,
+  // `skipped` names the §3.3 gate that blocked the earn (kill switch,
   // unpaid, …). Surfacing it turns a bare "got 0" into a diagnosis.
   check(
     'earning was not skipped by a §3.3 gate',
