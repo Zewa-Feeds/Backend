@@ -981,26 +981,6 @@ export async function analytics(couponId: string) {
 }
 
 /** Soft delete — redemption history references the coupon (§10.1 Admin only). */
-export async function remove(id: string, ctx: AuditContext): Promise<void> {
-  const existing = await prisma.coupon.findFirst({
-    where: { id, deletedAt: null },
-    select: { id: true, code: true },
-  });
-  if (!existing) throw notFound('Coupon');
-
-  await prisma.$transaction(async (tx) => {
-    await tx.coupon.update({
-      where: { id },
-      data: { deletedAt: new Date(), isActive: false },
-    });
-    await writeAudit(
-      ctx,
-      { module: AuditModule.COUPONS, action: `Deleted coupon ${existing.code}`, recordId: id },
-      tx,
-    );
-  });
-}
-
 /**
  * Offers the storefront may advertise.
  *

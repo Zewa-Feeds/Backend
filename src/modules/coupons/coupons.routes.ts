@@ -2,7 +2,7 @@
  * Coupon routes — /api/v1/admin/coupons  (§10)
  *
  *   coupons.edit    Ops + Admin
- *   coupons.delete  Admin only
+ *   coupons.delete  Admin only — now gates disabling, not deletion (see below)
  */
 import { Router } from 'express';
 import {
@@ -577,12 +577,12 @@ couponsRouter.post(
   }),
 );
 
-couponsRouter.delete(
-  '/:id',
-  requirePermission('coupons.delete'),
-  validate({ params: idParam }),
-  asyncHandler(async (req, res) => {
-    await couponsService.remove(req.params.id as string, auditContext(req));
-    res.json({ data: { ok: true } });
-  }),
-);
+/*
+ * No DELETE.
+ *
+ * A coupon is the record of a promotion that ran: its redemptions, revenue and
+ * the orders that used it all hang off the row, and reporting on a past
+ * campaign needs it to still be there. Disabling is the whole of what deleting
+ * was ever meant to do — `isActive: false` stops redemption immediately — so
+ * the destructive verb is gone and PATCH carries it instead.
+ */
