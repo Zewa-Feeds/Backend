@@ -208,6 +208,25 @@ loyaltyAdminRouter.post(
     const actorId = req.user!.id;
     const rv = await rulesService.active();
 
+    /*
+     * Idempotency (§9.1), following the checkout convention.
+     *
+     * A client that sends `Idempotency-Key` gets a STABLE key, so a double-click
+     * or a retried request collides on the ledger's unique index and becomes a
+     * no-op rather than crediting twice. Scoped by customer so the same raw key
+     * used for two different customers cannot collide into one another.
+     *
+     * Without the header the key falls back to the previous time-based form,
+     * which keeps existing callers working — but a caller that wants protection
+     * from double submission must send the header, because `Date.now()` cannot
+     * provide it.
+     */
+    const rawKey = req.get('idempotency-key');
+    const idempotencyKey =
+      rawKey && /^[\w-]{8,128}$/.test(rawKey)
+        ? `adjust:${req.params.customerId}:${rawKey}`
+        : `adjust:${req.params.customerId}:${Date.now()}:${actorId}`;
+
     if (Math.abs(coins) > rv.approvalThresholdCoins && !approvedById) {
       throw new AppError(
         400,
@@ -238,7 +257,7 @@ loyaltyAdminRouter.post(
           ruleVersion: rv,
           sourceType: CoinSourceType.MANUAL,
           reason: reason === 'GOODWILL' ? CoinReason.GOODWILL : CoinReason.ADJUSTMENT,
-          idempotencyKey: `adjust:${account.id}:${Date.now()}:${actorId}`,
+          idempotencyKey,
           note,
           actorId,
           approvedById: approvedById ?? null,
@@ -253,7 +272,7 @@ loyaltyAdminRouter.post(
           accountId: account.id,
           coinsDelta: coins,
           reason: CoinReason.ADJUSTMENT,
-          idempotencyKey: `adjust:${account.id}:${Date.now()}:${actorId}`,
+          idempotencyKey,
           note,
           actorId,
           approvedById: approvedById ?? null,
