@@ -54,8 +54,14 @@ export interface TransitionSpec {
   /** Human label for the action, e.g. "Accept order". */
   verb: string;
   fields: readonly TransitionField[];
-  /** Subject line of the customer email sent on completion (§6.3, §15). */
-  email: { subject: string; template: string };
+  /**
+   * Subject line of the customer email sent on completion (§6.3, §15).
+   *
+   * Optional. Only order placement and dispatch email the customer — the
+   * intermediate "being packed" and closing "delivered" notices were dropped
+   * to two messages per order, so PROCESSING and DELIVERED carry no email.
+   */
+  email?: { subject: string; template: string };
   /** Cancelling before dispatch must return reserved stock to the variants. */
   restocks: boolean;
 }
@@ -77,10 +83,8 @@ export const TRANSITIONS: Record<Exclude<OrderStatus, 'PENDING'>, TransitionSpec
      */
     verb: 'Accept order',
     fields: [],
-    email: {
-      subject: 'Your Zewa Feeds order is confirmed',
-      template: 'order-confirmed',
-    },
+    // No customer email. The invoice PDF this step used to carry now rides on
+    // the dispatch email instead.
     restocks: false,
   },
 
@@ -123,10 +127,7 @@ export const TRANSITIONS: Record<Exclude<OrderStatus, 'PENDING'>, TransitionSpec
   [OrderStatus.DELIVERED]: {
     verb: 'Mark delivered',
     fields: [{ key: 'deliveredOn', label: 'Delivered on', required: false }],
-    email: {
-      subject: 'Your order was delivered',
-      template: 'order-delivered',
-    },
+    // No customer email — delivery is visible on the order page.
     restocks: false,
   },
 

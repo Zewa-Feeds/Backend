@@ -44,7 +44,7 @@ export interface CustomerEmailJob {
   orderEmailId: string;
   orderNo: string;
   template: CustomerTemplateName;
-  /** Attach the invoice PDF (order-confirmed only, §6.5). */
+  /** Attach the invoice PDF (order-shipped only, §6.5). */
   attachInvoice?: boolean;
   extra?: Record<string, unknown>;
 }

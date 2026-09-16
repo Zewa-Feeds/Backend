@@ -372,7 +372,7 @@ export async function transition(
     // The row is created inside the transaction so a committed status change
     // always has its email recorded; the actual send is dispatched after commit.
     let queuedEmailId: string | null = null;
-    if (input.notifyCustomer) {
+    if (input.notifyCustomer && spec.email) {
       const row = await tx.orderEmail.create({
         data: {
           orderId: order.id,
@@ -429,15 +429,16 @@ export async function transition(
 
   // 7. Dispatch the send AFTER commit. Enqueuing inside the transaction could
   // let the worker pick the job up before the status change was visible.
-  if (updated.queuedEmailId) {
+  if (updated.queuedEmailId && spec.email) {
     await emailQueue
       .add('customer-email', {
         kind: 'customer',
         orderEmailId: updated.queuedEmailId,
         orderNo,
         template: spec.email.template as CustomerTemplateName,
-        // §6.5 — the confirmation email carries the invoice PDF.
-        attachInvoice: input.to === OrderStatus.PROCESSING,
+        // §6.5 — the dispatch email carries the invoice PDF. It used to ride
+        // on the "being packed" notice, which is no longer sent.
+        attachInvoice: input.to === OrderStatus.SHIPPED,
       })
       .catch((err) => log.error({ err, orderNo }, 'failed to enqueue lifecycle email'));
   }
