@@ -243,6 +243,30 @@ describe('the amount handed to the gateway', () => {
     expect(result.payment.amountPaise! % 100).toBe(paise % 100);
   });
 
+  /*
+   * The reported cart, composed exactly: ₹5.00 product, SPECIAL10 taking 50
+   * paise, ₹60.00 shipping. Pins the COMPOSITION, not just a stored figure —
+   * a rupee-rounding bug anywhere in discount or shipping would land on 6500
+   * (₹65), which is what the Razorpay popup displays.
+   */
+  it('carries ₹5.00 − ₹0.50 + ₹60.00 to the gateway as 6450 paise', async () => {
+    const subtotal = 500;
+    const discount = 50; // SPECIAL10, 10% of ₹5.00
+    const shipping = 6000;
+    const total = subtotal - discount + shipping;
+
+    expect(total).toBe(6450); // not 6500
+
+    findUnique.mockResolvedValue(existingOrder({ totalPaise: total }));
+    priceCartMock.mockResolvedValue(pricedAt(total));
+
+    const result = await checkout(input, ctx);
+
+    expect(result.totalPaise).toBe(6450);
+    expect(result.payment.amountPaise).toBe(6450);
+    expect(result.payment.amountPaise).not.toBe(6500);
+  });
+
   it('keeps sub-rupee precision that a rupee-rounding bug would destroy', async () => {
     findUnique.mockResolvedValue(existingOrder({ totalPaise: 6450 }));
     priceCartMock.mockResolvedValue(pricedAt(6450));
