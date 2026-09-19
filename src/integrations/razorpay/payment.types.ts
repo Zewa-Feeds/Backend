@@ -54,6 +54,13 @@ export interface PaymentProvider {
   readonly name: PaymentProviderName;
   /** True when this provider confirms payments without real money moving. */
   readonly isSimulated: boolean;
+  /**
+   * Public key the browser widget needs, or null for a provider without one.
+   *
+   * Exposed separately from `createOrder` so an idempotent replay can hand the
+   * browser a complete payment block without creating a second gateway order.
+   */
+  readonly publicKey: string | null;
 
   createOrder(input: {
     orderNo: string;

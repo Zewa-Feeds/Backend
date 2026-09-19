@@ -123,17 +123,53 @@ export async function checkout(
   if (input.idempotencyKey) {
     const existing = await prisma.order.findUnique({
       where: { idempotencyKey: input.idempotencyKey },
-      select: { orderNo: true, totalPaise: true, paymentMethod: true, razorpayOrderId: true },
+      select: {
+        orderNo: true,
+        totalPaise: true,
+        paymentMethod: true,
+        razorpayOrderId: true,
+        paymentStatus: true,
+      },
     });
     if (existing) {
       log.info({ orderNo: existing.orderNo }, 'idempotent replay — returning existing order');
+
+      /*
+       * A replay must return EVERYTHING the browser needs to open the widget.
+       *
+       * It used to return only `gatewayOrderId`, omitting `publicKey`,
+       * `amountPaise` and `simulated`. That made retrying after the customer
+       * dismissed Razorpay impossible: the key never changes within a session,
+       * so the second click replayed this branch, the widget was constructed
+       * with `key: undefined` and could not open, and the checkout fell through
+       * to its failure screen. Dismissing is not a failure, so it must not end
+       * up there.
+       *
+       * The gateway order is REUSED rather than recreated. Razorpay orders stay
+       * payable until they are paid or expire, so a dismissal leaves this one
+       * perfectly valid — and creating another would leave two live orders for
+       * one application order, which is exactly the double-charge risk to
+       * avoid. An already-paid order is reported as not requiring payment, so a
+       * replay can never reopen the widget on settled money.
+       */
+      const provider = paymentProvider();
+      const alreadyPaid = existing.paymentStatus === PaymentStatus.PAID;
+      const needsPayment = existing.paymentMethod === PaymentMethod.RAZORPAY && !alreadyPaid;
+
       return {
         orderNo: existing.orderNo,
         totalPaise: existing.totalPaise,
         paymentMethod: existing.paymentMethod,
         payment: {
-          required: existing.paymentMethod === PaymentMethod.RAZORPAY,
+          required: needsPayment,
           gatewayOrderId: existing.razorpayOrderId ?? undefined,
+          // The order's own stored total — never recomputed here, so the
+          // widget cannot be handed an amount that drifted from the invoice.
+          ...(needsPayment ? { amountPaise: existing.totalPaise } : {}),
+          ...(needsPayment && provider?.publicKey ? { publicKey: provider.publicKey } : {}),
+          ...(needsPayment && provider?.isSimulated
+            ? { simulated: true, autoConfirmInSeconds: MOCK_CONFIRM_DELAY_MS / 1000 }
+            : { simulated: false }),
         },
       };
     }

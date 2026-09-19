@@ -34,6 +34,8 @@ function safeCompare(a: string, b: string): boolean {
 export class RazorpayProvider implements PaymentProvider {
   readonly name = 'razorpay' as const;
   readonly isSimulated = false;
+  /** Set in the constructor, once the env vars are known to be present. */
+  publicKey: string | null = null;
 
   private readonly client: Razorpay;
   private readonly keyId: string;
@@ -45,6 +47,7 @@ export class RazorpayProvider implements PaymentProvider {
       throw notConfigured('Razorpay');
     }
     this.keyId = env.RAZORPAY_KEY_ID;
+    this.publicKey = env.RAZORPAY_KEY_ID;
     this.keySecret = env.RAZORPAY_KEY_SECRET;
     this.webhookSecret = env.RAZORPAY_WEBHOOK_SECRET;
     this.client = new Razorpay({ key_id: this.keyId, key_secret: this.keySecret });

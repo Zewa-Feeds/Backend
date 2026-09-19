@@ -59,6 +59,8 @@ function safeCompare(a: string, b: string): boolean {
 export class MockPaymentProvider implements PaymentProvider {
   readonly name = 'mock' as const;
   readonly isSimulated = true;
+  /** The mock has no browser widget, so there is no key to hand out. */
+  readonly publicKey = null;
 
   /** Signs mock ids so they cannot be fabricated client-side. */
   private readonly secret: string;
