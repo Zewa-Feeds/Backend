@@ -193,6 +193,11 @@ export async function priceCart(input: {
    */
   country?: string;
   overlayPromotions?: PromotionRow[];
+  /**
+   * Re-pricing a checkout that already has a PENDING order: that order's own
+   * coupon redemptions must not count against the customer on the retry.
+   */
+  ignoreRedemptionsForOrderId?: string | null;
 }): Promise<PricedCart> {
   if (input.lines.length === 0) {
     throw new AppError(400, ErrorCode.CART_EMPTY, 'Your cart is empty.');
@@ -352,6 +357,7 @@ export async function priceCart(input: {
     customerId: input.customerId,
     state: input.state,
     requestedCodes,
+    ignoreRedemptionsForOrderId: input.ignoreRedemptionsForOrderId,
   }, {
     overlayPromotions: input.overlayPromotions,
   });

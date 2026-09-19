@@ -34,6 +34,7 @@ import { nextOrderNo } from '@/modules/orders/numbering';
 import { likelyStateForPincode, pincodeMatchesState } from '@/lib/pincode';
 import { emailQueue, paymentQueue } from '@/jobs/queues';
 import { serializeOrder, ORDER_SELECT } from '@/modules/orders/orders.serializer';
+import { transition } from '@/modules/orders/orders.service';
 import { assertFulfillable, priceCart, type CartLineInput } from './pricing.service';
 import { resolveAttribution } from './attribution';
 import * as couponsService from '@/modules/coupons/coupons.service';
@@ -120,57 +121,50 @@ export async function checkout(
   ctx: AuditContext,
 ): Promise<CheckoutResult> {
   // ---- 0. Idempotency ------------------------------------------------------
-  if (input.idempotencyKey) {
-    const existing = await prisma.order.findUnique({
-      where: { idempotencyKey: input.idempotencyKey },
-      select: {
-        orderNo: true,
-        totalPaise: true,
-        paymentMethod: true,
-        razorpayOrderId: true,
-        paymentStatus: true,
-      },
-    });
-    if (existing) {
-      log.info({ orderNo: existing.orderNo }, 'idempotent replay — returning existing order');
+  /*
+   * An existing order for this key is a RETRY, not necessarily a replay.
+   *
+   * The browser holds one key for the life of a checkout session, so a second
+   * Pay Online lands here whether the customer changed nothing (dismissed the
+   * modal and tried again) or edited their cart in between. Those need
+   * different answers, and only the server can tell them apart — so the
+   * decision waits until the cart has been priced, below. Anything settled or
+   * already moved on is answered immediately, since no repricing can change it.
+   */
+  const existing = input.idempotencyKey
+    ? await prisma.order.findUnique({
+        where: { idempotencyKey: input.idempotencyKey },
+        select: {
+          id: true,
+          orderNo: true,
+          totalPaise: true,
+          paymentMethod: true,
+          razorpayOrderId: true,
+          paymentStatus: true,
+          status: true,
+        },
+      })
+    : null;
+
+  if (existing) {
+    const settled =
+      existing.paymentStatus === PaymentStatus.PAID ||
+      existing.status !== OrderStatus.PENDING ||
+      existing.paymentMethod === PaymentMethod.COD;
+
+    if (settled) {
+      log.info({ orderNo: existing.orderNo }, 'idempotent replay — order already settled');
 
       /*
-       * A replay must return EVERYTHING the browser needs to open the widget.
-       *
-       * It used to return only `gatewayOrderId`, omitting `publicKey`,
-       * `amountPaise` and `simulated`. That made retrying after the customer
-       * dismissed Razorpay impossible: the key never changes within a session,
-       * so the second click replayed this branch, the widget was constructed
-       * with `key: undefined` and could not open, and the checkout fell through
-       * to its failure screen. Dismissing is not a failure, so it must not end
-       * up there.
-       *
-       * The gateway order is REUSED rather than recreated. Razorpay orders stay
-       * payable until they are paid or expire, so a dismissal leaves this one
-       * perfectly valid — and creating another would leave two live orders for
-       * one application order, which is exactly the double-charge risk to
-       * avoid. An already-paid order is reported as not requiring payment, so a
-       * replay can never reopen the widget on settled money.
+       * Settled, cancelled, shipped or COD — nothing here is payable again, so
+       * the key and amount are withheld and a stale tab cannot re-present
+       * money that is already taken.
        */
-      const provider = paymentProvider();
-      const alreadyPaid = existing.paymentStatus === PaymentStatus.PAID;
-      const needsPayment = existing.paymentMethod === PaymentMethod.RAZORPAY && !alreadyPaid;
-
       return {
         orderNo: existing.orderNo,
         totalPaise: existing.totalPaise,
         paymentMethod: existing.paymentMethod,
-        payment: {
-          required: needsPayment,
-          gatewayOrderId: existing.razorpayOrderId ?? undefined,
-          // The order's own stored total — never recomputed here, so the
-          // widget cannot be handed an amount that drifted from the invoice.
-          ...(needsPayment ? { amountPaise: existing.totalPaise } : {}),
-          ...(needsPayment && provider?.publicKey ? { publicKey: provider.publicKey } : {}),
-          ...(needsPayment && provider?.isSimulated
-            ? { simulated: true, autoConfirmInSeconds: MOCK_CONFIRM_DELAY_MS / 1000 }
-            : { simulated: false }),
-        },
+        payment: { required: false, gatewayOrderId: existing.razorpayOrderId ?? undefined },
       };
     }
   }
@@ -272,6 +266,16 @@ export async function checkout(
     email: input.email,
     customerId: input.customerId,
     state: input.shippingAddress.state,
+    /*
+     * A retry must not be refused its own coupon.
+     *
+     * The PENDING order from the dismissed attempt already holds a redemption
+     * for every code on it. Counting those would make the second Pay Online
+     * fail with "You have already used X" — the customer blocked by their own
+     * abandoned attempt. Excluding that one order is exactly the same
+     * allowance a cancellation gives back.
+     */
+    ignoreRedemptionsForOrderId: existing?.id ?? null,
   });
 
   // A coupon that failed validation must not silently drop — the customer expects
@@ -282,6 +286,100 @@ export async function checkout(
     throw new AppError(409, couponIssue.code as never, couponIssue.message);
   }
   assertFulfillable(cart);
+
+  /*
+   * ---- 4b. Retry: is the existing order still the right one? ---------------
+   *
+   * The cart has now been priced by the server, so the stored total can be
+   * compared against what this checkout would actually cost. The comparison is
+   * deliberately on the AUTHORITATIVE total rather than a fingerprint the
+   * browser sends: the client never gets to assert that its cart is unchanged.
+   *
+   * `totalPaise` is the settlement figure — it already folds in line items,
+   * quantities, coupons, shipping (which moves with state and weight) and coin
+   * redemption. Any change a customer can make that alters what they owe moves
+   * this number, and a change that does not alter it does not need a new
+   * gateway order.
+   *
+   * SAME TOTAL → reuse. A dismissal leaves the Razorpay order payable, so the
+   * customer reopens the one they already had. No second application order, no
+   * second gateway order, no double charge.
+   *
+   * DIFFERENT TOTAL → the old order must not be paid. It is cancelled, which
+   * returns its reserved stock (the CANCELLED transition restocks), and this
+   * request falls through to create a fresh order priced at the current total.
+   * Leaving it PENDING would strand that stock until the unpaid sweep, and
+   * leave a payable gateway order for an amount the customer no longer owes.
+   */
+  if (existing) {
+    const provider = paymentProvider();
+    const unchanged = existing.totalPaise === cart.totalPaise;
+
+    if (unchanged && existing.razorpayOrderId) {
+      log.info(
+        { orderNo: existing.orderNo, totalPaise: existing.totalPaise },
+        'retry with an unchanged total — reusing the existing gateway order',
+      );
+      return {
+        orderNo: existing.orderNo,
+        totalPaise: existing.totalPaise,
+        paymentMethod: existing.paymentMethod,
+        payment: {
+          required: true,
+          gatewayOrderId: existing.razorpayOrderId,
+          // The order's own stored total, never recomputed here.
+          amountPaise: existing.totalPaise,
+          ...(provider?.publicKey ? { publicKey: provider.publicKey } : {}),
+          ...(provider?.isSimulated
+            ? { simulated: true, autoConfirmInSeconds: MOCK_CONFIRM_DELAY_MS / 1000 }
+            : { simulated: false }),
+        },
+      };
+    }
+
+    log.info(
+      {
+        orderNo: existing.orderNo,
+        wasPaise: existing.totalPaise,
+        nowPaise: cart.totalPaise,
+      },
+      'checkout changed since the last attempt — superseding the stale order',
+    );
+
+    /*
+     * Cancelling must not fail the checkout. If it does the customer still gets
+     * a correct new order; the stale one is left to the unpaid sweep, which
+     * checks the gateway before cancelling anything and so cannot cancel an
+     * order that was paid in the meantime.
+     */
+    try {
+      await transition(
+        existing.orderNo,
+        {
+          to: OrderStatus.CANCELLED,
+          fields: { cancelReason: 'Superseded — the cart changed before payment was completed.' },
+          notifyCustomer: false,
+        },
+        ctx,
+      );
+    } catch (err) {
+      log.error(
+        { err, orderNo: existing.orderNo },
+        'could not cancel the superseded order — leaving it to the unpaid sweep',
+      );
+    }
+
+    /*
+     * The key is unique per order, so it has to be freed before the new order
+     * can claim it. The cancelled order keeps its own identity and audit trail;
+     * it simply stops answering for this checkout session.
+     */
+    await prisma.order
+      .update({ where: { id: existing.id }, data: { idempotencyKey: null } })
+      .catch((err) => {
+        log.error({ err, orderNo: existing.orderNo }, 'could not release the idempotency key');
+      });
+  }
 
   /*
    * Affiliate attribution, resolved BEFORE the transaction opens.

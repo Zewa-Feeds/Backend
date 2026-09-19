@@ -43,6 +43,15 @@ export interface PromotionContext {
   state?: string;
   /** Codes the customer applied, oldest first. Order is their intent, not a rule. */
   requestedCodes: string[];
+  /**
+   * An order whose redemptions must NOT count against the customer.
+   *
+   * Set when re-pricing a checkout that already produced a PENDING order — the
+   * customer dismissed the payment modal and is trying again. Those
+   * redemptions belong to this same attempt, so counting them would refuse the
+   * customer their own coupon on the retry.
+   */
+  ignoreRedemptionsForOrderId?: string | null;
 }
 
 /** A promotion that applied, and what it did. */

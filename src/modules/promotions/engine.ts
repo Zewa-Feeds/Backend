@@ -111,6 +111,11 @@ export async function evaluate(
             // A released redemption — cancelled or fully refunded order — must
             // stop counting against the customer's allowance.
             releasedAt: null,
+            // Nor may an order's own redemptions count against a retry of that
+            // same checkout (see ignoreRedemptionsForOrderId).
+            ...(ctx.ignoreRedemptionsForOrderId
+              ? { orderId: { not: ctx.ignoreRedemptionsForOrderId } }
+              : {}),
           },
           select: { couponId: true },
         })
