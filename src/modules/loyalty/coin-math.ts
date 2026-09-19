@@ -236,6 +236,52 @@ export function allocateCoins(lines: CoinLine[], coins: number): Map<string, num
 }
 
 /**
+ * Spread an order-level coupon discount across redeemable lines (§4.1 step 3).
+ *
+ * The promotions engine reports ONE discount for the cart, but the redemption
+ * ceiling is computed per line — §4.1 fixes coupon before coins, so each line
+ * has to know its own share before `maxRedeemableCoins` can be right. Without
+ * this the ceiling was computed on the undiscounted cart and offered more coins
+ * than the order could absorb.
+ *
+ * Only redeemable lines carry a share: a non-redeemable line cannot absorb
+ * coins, so attributing discount to it would shrink the ceiling twice over.
+ * Pro rata by line value, remainder to the largest line, exactly as
+ * allocateCoins() does — so the shares sum to the discount and the two
+ * allocations cannot disagree.
+ *
+ * Mutates nothing: returns fresh lines.
+ */
+export function withCouponDiscount(lines: CoinLine[], discountPaise: number): CoinLine[] {
+  const out = lines.map((l) => ({ ...l, couponDiscountPaise: 0 }));
+  if (discountPaise <= 0) return out;
+
+  const redeemable = out.filter((l) => l.coinRedeemable);
+  const totalPaise = redeemable.reduce((sum, l) => sum + l.lineTotalPaise, 0);
+  if (totalPaise <= 0) return out;
+
+  // A discount larger than the redeemable value would drive the ceiling
+  // negative; eligibleRedemptionValuePaise floors at zero either way, but
+  // capping here keeps the shares meaningful.
+  const capped = Math.min(discountPaise, totalPaise);
+
+  let assigned = 0;
+  for (const l of redeemable) {
+    const share = Math.floor((capped * l.lineTotalPaise) / totalPaise);
+    l.couponDiscountPaise = share;
+    assigned += share;
+  }
+
+  const remainder = capped - assigned;
+  if (remainder > 0) {
+    const biggest = redeemable.reduce((a, b) => (b.lineTotalPaise > a.lineTotalPaise ? b : a));
+    biggest.couponDiscountPaise += remainder;
+  }
+
+  return out;
+}
+
+/**
  * Full per-line allocation for an order (§4.1 step 11, §7.4).
  *
  * This is the structure persisted onto OrderItem at creation and never

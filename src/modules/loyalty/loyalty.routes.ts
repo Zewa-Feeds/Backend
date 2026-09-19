@@ -25,7 +25,11 @@ import * as accountService from './account.service';
 import * as redemption from './redemption.service';
 import * as rulesService from './rules.service';
 import * as guestClaim from './guest-claim.service';
-import { type CoinLine } from './coin-math';
+import { withCouponDiscount, type CoinLine } from './coin-math';
+import { priceCart } from '@/modules/checkout/pricing.service';
+import { logger } from '@/lib/logger';
+
+const log = logger.child({ module: 'loyalty.routes' });
 
 export const loyaltyRouter = Router();
 
@@ -41,9 +45,18 @@ export const loyaltyRouter = Router();
  * of zero from an empty line set, so the box rendered and then `apply` refused
  * with NOTHING_REDEEMABLE. Two endpoints disagreeing about the same cart is far
  * harder to diagnose than one clear 400.
+ *
+ * COUPON DISCOUNTS ARE PRICED, NOT ASSUMED. `couponDiscountPaise` used to be
+ * hard-coded to 0, so the redemption ceiling was computed on the UNDISCOUNTED
+ * cart: a ₹229 cart with 10% off offered 229 redeemable coins against ₹206.10
+ * of actual value. §4.1 fixes the order of operations — coupon first, then
+ * coins — so the discount has to be real here. The cart is priced through the
+ * same engine checkout uses, and the total discount is spread across redeemable
+ * lines pro rata by value, which is the same basis allocateCoins() uses.
  */
 async function resolveCoinLines(
   lines: { sku: string; qty: number }[],
+  couponCodes?: string[],
 ): Promise<CoinLine[]> {
   const wanted = lines.map((l) => l.sku.toUpperCase().trim());
   const variants = await prisma.productVariant.findMany({
@@ -59,7 +72,7 @@ async function resolveCoinLines(
     });
   }
 
-  return lines.map((l) => {
+  const resolved = lines.map((l) => {
     const v = bySku.get(l.sku.toUpperCase().trim())!;
     return {
       id: v.id,
@@ -72,6 +85,29 @@ async function resolveCoinLines(
       couponDiscountPaise: 0,
     };
   });
+
+  if (!couponCodes?.length) return resolved;
+
+  /*
+   * Price the cart to learn what the coupons are actually worth.
+   *
+   * A pricing failure must not break the coins box: §8.1 #11 requires the
+   * loyalty path to fail invisibly, and a zero discount here is the
+   * CONSERVATIVE direction only for the customer's balance, never for ours —
+   * it can only offer a ceiling that `reserve` will then refuse. Logging it
+   * keeps the silence from being total.
+   */
+  let discountPaise = 0;
+  try {
+    const priced = await priceCart({ lines, couponCodes });
+    discountPaise = priced.discountPaise;
+  } catch (err) {
+    log.warn({ err }, 'could not price cart for coin ceiling — treating discount as zero');
+    return resolved;
+  }
+  if (discountPaise <= 0) return resolved;
+
+  return withCouponDiscount(resolved, discountPaise);
 }
 
 
@@ -219,7 +255,7 @@ loyaltyRouter.post(
       lines: { sku: string; qty: number }[];
       couponCodes?: string[];
     };
-    const coinLines = await resolveCoinLines(lines);
+    const coinLines = await resolveCoinLines(lines, couponCodes);
     const quote = await redemption.quote(req.customer!.id, coinLines, couponCodes);
     res.json({ data: quote });
   }),
@@ -257,7 +293,7 @@ loyaltyRouter.post(
       couponCodes?: string[];
     };
 
-    const coinLines = await resolveCoinLines(lines);
+    const coinLines = await resolveCoinLines(lines, couponCodes);
 
     const result = await redemption.reserve({
       customerId: req.customer!.id,

@@ -27,6 +27,7 @@ import {
   coinsForBase,
   eligibleRedemptionValuePaise,
   maxRedeemableCoins,
+  withCouponDiscount,
   allocateCoins,
   allocateOrder,
   computeEarn,
@@ -178,6 +179,51 @@ describe('§6.3 Coupon plus coins — coupon always first (§4.1)', () => {
     // Eligible value is the coupon-reduced amount: ₹1,800 → 1,800 coins.
     expect(eligibleRedemptionValuePaise(lines, RULES)).toBe(180000);
     expect(maxRedeemableCoins(lines, 99999, RULES)).toBe(1800);
+  });
+});
+
+describe('coupon discount spread across lines (§4.1 step 3)', () => {
+  /*
+   * The bug this pins: the redemption ceiling was computed on the UNDISCOUNTED
+   * cart because the route passed couponDiscountPaise: 0. A ₹229 cart with 10%
+   * off offered 229 coins against ₹206.10 of real value, so the order could
+   * never absorb what the box advertised.
+   */
+  it('caps redemption at the post-coupon value, not the subtotal', () => {
+    const raw = [line({ id: 'A', lineTotalPaise: 22900 })];
+    expect(maxRedeemableCoins(raw, 271, RULES)).toBe(229); // the old, wrong answer
+
+    const withDiscount = withCouponDiscount(raw, 2290); // 10% off
+    expect(maxRedeemableCoins(withDiscount, 271, RULES)).toBe(206);
+  });
+
+  it('splits pro rata and the shares sum to the discount exactly', () => {
+    const lines = [
+      line({ id: 'A', lineTotalPaise: 10000 }),
+      line({ id: 'B', lineTotalPaise: 20000 }),
+    ];
+    const out = withCouponDiscount(lines, 999);
+    expect(out.reduce((s, l) => s + l.couponDiscountPaise, 0)).toBe(999);
+    // Remainder lands on the larger line, as allocateCoins() also does.
+    expect(out.find((l) => l.id === 'B')!.couponDiscountPaise).toBeGreaterThan(
+      out.find((l) => l.id === 'A')!.couponDiscountPaise,
+    );
+  });
+
+  it('gives a non-redeemable line no share, so it cannot shrink the ceiling twice', () => {
+    const lines = [
+      line({ id: 'A', lineTotalPaise: 10000 }),
+      line({ id: 'B', lineTotalPaise: 10000, coinRedeemable: false }),
+    ];
+    const out = withCouponDiscount(lines, 1000);
+    expect(out.find((l) => l.id === 'B')!.couponDiscountPaise).toBe(0);
+    expect(out.find((l) => l.id === 'A')!.couponDiscountPaise).toBe(1000);
+  });
+
+  it('never drives the ceiling below zero when the discount exceeds the cart', () => {
+    const lines = [line({ id: 'A', lineTotalPaise: 5000 })];
+    const out = withCouponDiscount(lines, 999999);
+    expect(maxRedeemableCoins(out, 500, RULES)).toBe(0);
   });
 });
 
