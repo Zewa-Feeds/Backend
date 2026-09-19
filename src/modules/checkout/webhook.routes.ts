@@ -35,6 +35,8 @@ interface RazorpayWebhookBody {
         id?: string;
         order_id?: string;
         status?: string;
+        /** Captured amount in paise, as the gateway reports it. */
+        amount?: number;
         notes?: { orderNo?: string };
       };
     };
@@ -84,6 +86,34 @@ webhookRouter.post(
             select: { orderNo: true },
           });
           if (matching) orderNo = matching.orderNo;
+        }
+
+        /*
+         * The captured amount must match what the order says is owed.
+         *
+         * The webhook signature proves the message is Razorpay's, not that the
+         * right amount was taken. Compared in integer paise against our own
+         * record; a mismatch is logged and NOT confirmed, so it surfaces for a
+         * human rather than silently marking an order paid for the wrong sum.
+         */
+        if (orderNo && payment?.amount !== undefined) {
+          const ours = await prisma.order.findUnique({
+            where: { orderNo },
+            select: { totalPaise: true },
+          });
+          if (ours && Number(payment.amount) !== ours.totalPaise) {
+            log.error(
+              {
+                orderNo,
+                paidPaise: Number(payment.amount),
+                expectedPaise: ours.totalPaise,
+                paymentId: payment.id,
+              },
+              'webhook payment amount does not match the order total — not confirming',
+            );
+            res.json({ status: 'ok' });
+            return;
+          }
         }
 
         if (orderNo && payment?.id) {

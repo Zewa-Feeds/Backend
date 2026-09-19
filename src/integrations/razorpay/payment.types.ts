@@ -48,6 +48,15 @@ export interface VerificationPayload {
   gatewayOrderId: string;
   gatewayPaymentId: string;
   signature: string;
+  /**
+   * What the ORDER says is owed, in paise.
+   *
+   * The signature covers `orderId|paymentId` only, so it proves the payment
+   * belongs to that gateway order — not that the right amount was captured.
+   * Passing the order's own total lets the provider refuse a payment that
+   * settled for less than the customer owes.
+   */
+  expectedAmountPaise?: number;
 }
 
 export interface PaymentProvider {

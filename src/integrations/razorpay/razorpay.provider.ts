@@ -111,6 +111,34 @@ export class RazorpayProvider implements PaymentProvider {
           failureReason: `payment_status_${payment.status}`,
         };
       }
+
+      /*
+       * The captured amount must match what the order says is owed.
+       *
+       * The HMAC does not cover the amount, so a payment that settled for less
+       * than the invoice would otherwise verify cleanly. Compared in integer
+       * paise — the gateway's own figure against ours, never a recomputed one.
+       */
+      if (payload.expectedAmountPaise !== undefined) {
+        const paidPaise = Number(payment.amount);
+        if (paidPaise !== payload.expectedAmountPaise) {
+          log.error(
+            {
+              gatewayOrderId: payload.gatewayOrderId,
+              gatewayPaymentId: payload.gatewayPaymentId,
+              paidPaise,
+              expectedPaise: payload.expectedAmountPaise,
+            },
+            'razorpay payment amount does not match the order total — refusing',
+          );
+          return {
+            verified: false,
+            gatewayPaymentId: payload.gatewayPaymentId,
+            failureReason: 'amount_mismatch',
+          };
+        }
+      }
+
       return { verified: true, gatewayPaymentId: payload.gatewayPaymentId };
     } catch (err) {
       log.error({ err, paymentId: payload.gatewayPaymentId }, 'razorpay payment fetch failed');

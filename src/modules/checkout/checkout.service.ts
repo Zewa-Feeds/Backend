@@ -79,6 +79,15 @@ export interface CheckoutResult {
   paymentMethod: PaymentMethod;
   payment: {
     required: boolean;
+    /**
+     * Money has actually been taken for this order.
+     *
+     * Distinct from `!required`, which only means no online payment is owed
+     * RIGHT NOW — true for a COD order too. The storefront may show its
+     * success screen only on this flag, so "nothing to pay online" can never
+     * be mistaken for "paid".
+     */
+    paymentSettled?: boolean;
     gatewayOrderId?: string;
     publicKey?: string | null;
     amountPaise?: number;
@@ -147,6 +156,36 @@ export async function checkout(
     : null;
 
   if (existing) {
+    /*
+     * CANCELLED is not a replay — it is a dead order.
+     *
+     * Returning it with `required: false` told the storefront "no payment
+     * needed", which it reads as a completed checkout. An order that was
+     * cancelled by the unpaid sweep is neither paid nor payable, and
+     * presenting it as done confirms an order nobody paid for. Its stock has
+     * already been returned, so there is nothing to resurrect: refuse, and let
+     * the customer start a fresh checkout.
+     */
+    if (existing.status === OrderStatus.CANCELLED) {
+      log.warn(
+        { orderNo: existing.orderNo },
+        'checkout replayed against a cancelled order — refusing',
+      );
+      throw conflict(
+        'That order was cancelled because payment was not completed. Please place a new order.',
+        ErrorCode.CONFLICT,
+      );
+    }
+
+    /*
+     * Genuinely settled: paid, or moved on to fulfilment, or COD (which is
+     * payable on delivery, never online). Nothing repricing could say would
+     * change any of them.
+     *
+     * `paymentSettled` is what the storefront keys its success screen on. It
+     * is true ONLY for money actually taken — never merely because no online
+     * payment is required — so a COD order cannot be mistaken for a paid one.
+     */
     const settled =
       existing.paymentStatus === PaymentStatus.PAID ||
       existing.status !== OrderStatus.PENDING ||
@@ -154,17 +193,15 @@ export async function checkout(
 
     if (settled) {
       log.info({ orderNo: existing.orderNo }, 'idempotent replay — order already settled');
-
-      /*
-       * Settled, cancelled, shipped or COD — nothing here is payable again, so
-       * the key and amount are withheld and a stale tab cannot re-present
-       * money that is already taken.
-       */
       return {
         orderNo: existing.orderNo,
         totalPaise: existing.totalPaise,
         paymentMethod: existing.paymentMethod,
-        payment: { required: false, gatewayOrderId: existing.razorpayOrderId ?? undefined },
+        payment: {
+          required: false,
+          paymentSettled: existing.paymentStatus === PaymentStatus.PAID,
+          gatewayOrderId: existing.razorpayOrderId ?? undefined,
+        },
       };
     }
   }

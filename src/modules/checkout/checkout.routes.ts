@@ -119,7 +119,7 @@ checkoutRouter.post(
 
     const order = await prisma.order.findUnique({
       where: { orderNo },
-      select: { razorpayOrderId: true },
+      select: { razorpayOrderId: true, totalPaise: true },
     });
     if (!order?.razorpayOrderId) throw notFound('Order');
 
@@ -132,6 +132,9 @@ checkoutRouter.post(
       gatewayOrderId: order.razorpayOrderId,
       gatewayPaymentId: req.body.razorpayPaymentId,
       signature: req.body.razorpaySignature,
+      // The order's OWN total, so a payment that settled for a different
+      // amount cannot confirm it.
+      expectedAmountPaise: order.totalPaise,
     });
 
     if (!verification.verified) {
