@@ -26,6 +26,7 @@ import {
 } from '@/modules/products/products.serializer';
 import * as settingsService from '@/modules/settings/settings.service';
 import * as reviewsService from '@/modules/reviews/reviews.service';
+import { reviewSummary } from '@/modules/reviews/rating';
 import { priceCart } from '@/modules/checkout/pricing.service';
 import { enabledPaymentMethods } from '@/integrations/razorpay/payment.service';
 import * as couponsService from '@/modules/coupons/coupons.service';
@@ -82,8 +83,40 @@ catalogRouter.get(
       orderBy: [{ displayOrder: 'asc' }, { name: 'asc' }],
     });
 
+    /*
+     * Ratings for the whole page in ONE query, not one per card.
+     *
+     * groupBy returns a row per (family, rating), which is all the combiner
+     * needs — the individual reviews are not listed here, only counted.
+     */
+    const grouped = await prisma.review.groupBy({
+      by: ['familyId', 'rating'],
+      where: {
+        familyId: { in: families.map((f) => f.id) },
+        state: ReviewState.APPROVED,
+        // See the detail route: imported rows are already in the baseline.
+        externalSource: null,
+      },
+      _count: { _all: true },
+    });
+    const ratingsByFamily = new Map<string, number[]>();
+    for (const g of grouped) {
+      const list = ratingsByFamily.get(g.familyId) ?? [];
+      for (let i = 0; i < g._count._all; i += 1) list.push(g.rating);
+      ratingsByFamily.set(g.familyId, list);
+    }
+
     res.setHeader('Cache-Control', CACHE_60S);
-    res.json({ data: families.map(serializePublic) });
+    res.json({
+      data: families.map((family) => ({
+        ...serializePublic(family),
+        rating: reviewSummary(
+          family.externalRatingCounts,
+          family.externalReviewSource,
+          ratingsByFamily.get(family.id) ?? [],
+        ),
+      })),
+    });
   }),
 );
 
@@ -104,11 +137,15 @@ catalogRouter.get(
     // Only APPROVED reviews are public (§9).
     const reviews = await prisma.review.findMany({
       where: { familyId: family.id, state: ReviewState.APPROVED },
+      // Imported reviews carry the other platform's date, which is unknown, so
+      // they sort last. This site's own reviews lead, newest first.
       orderBy: { submittedAt: 'desc' },
       take: 20,
       select: {
         rating: true,
         body: true,
+        title: true,
+        externalSource: true,
         isVerifiedPurchase: true,
         submittedAt: true,
         guestName: true,
@@ -116,21 +153,47 @@ catalogRouter.get(
       },
     });
 
-    const ratingSum = reviews.reduce((s, r) => s + r.rating, 0);
+    /*
+     * The headline figure is over EVERY approved rating plus the imported
+     * baseline — not over the 20 listed above.
+     *
+     * Averaging the page was a real bug: a product with 40 approved reviews
+     * reported the mean of its most recent 20 as if it were the mean of all,
+     * and the figure moved whenever an older review fell off the page.
+     */
+    const ratingRows = await prisma.review.findMany({
+      // Site reviews only: an imported row is already one of the baseline's
+      // counts, so including it here would count that rating twice.
+      where: { familyId: family.id, state: ReviewState.APPROVED, externalSource: null },
+      select: { rating: true },
+    });
+    const summary = reviewSummary(
+      family.externalRatingCounts,
+      family.externalReviewSource,
+      ratingRows.map((r) => r.rating),
+    );
 
     res.setHeader('Cache-Control', CACHE_60S);
     res.json({
       data: {
         ...serializePublic(family),
         reviews: {
-          count: reviews.length,
-          average: reviews.length > 0 ? Math.round((ratingSum / reviews.length) * 10) / 10 : null,
+          /** Every rating behind the average, imported included. */
+          count: summary.count,
+          average: summary.average,
+          /** "Amazon" when part of the count came from there, else null. */
+          externalSource: summary.externalSource,
+          /** How many listed reviews there are — smaller than `count`. */
+          listed: reviews.length,
           items: reviews.map((r) => ({
             // First name only — never expose a reviewer's email or full identity.
             author: r.customer?.firstName ?? r.guestName ?? 'Verified buyer',
             rating: r.rating,
+            title: r.title,
             body: r.body,
             verifiedPurchase: r.isVerifiedPurchase,
+            /** Set when written elsewhere, for the "Reviewed on X" note. */
+            source: r.externalSource,
             at: r.submittedAt,
           })),
         },

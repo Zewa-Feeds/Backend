@@ -147,6 +147,10 @@ export const VARIANT_SELECT = {
 export const FAMILY_SELECT = {
   id: true,
   slug: true,
+  // Imported rating baseline — combined with approved reviews for the public
+  // figure. See modules/reviews/rating.ts.
+  externalReviewSource: true,
+  externalRatingCounts: true,
   name: true,
   category: true,
   status: true,

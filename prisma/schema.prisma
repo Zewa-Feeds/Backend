@@ -310,6 +310,24 @@ model ProductFamily {
   representativeVariantId String?
   representativeVariant   ProductVariant? @relation("FamilyRepresentative", fields: [representativeVariantId], references: [id], onDelete: SetNull)
 
+  // ---- Imported rating baseline ------------------------------------------
+  // Ratings this product earned on ANOTHER platform (Amazon), carried over so
+  // a catalogue that is new here does not read as unreviewed.
+  //
+  // Stored as counts per star rather than an average, because an average
+  // cannot be combined with new reviews without knowing how many it came
+  // from. The public figure is these counts plus every APPROVED Review row,
+  // so an approved review moves it on its own — see reviewSummary().
+  //
+  // Only the handful of reviews that had TEXT are imported as Review rows;
+  // the rest exist here only as counts. Inventing a row per rating would put
+  // hundreds of fabricated reviews in the table, indistinguishable from real
+  // ones.
+  /// Where these came from, for the "Reviewed on Amazon" note. Null = none.
+  externalReviewSource String?
+  /// [5★, 4★, 3★, 2★, 1★] counts. Empty when there is no baseline.
+  externalRatingCounts Int[]   @default([])
+
   variants      ProductVariant[]
   draft         ProductDraft?
   reviews       Review[]
@@ -1071,13 +1089,24 @@ model Review {
   /// Null for guest reviews.
   customerId String?
   guestName  String?
-  email      String
+  /// Null ONLY for an imported review — the other platform does not publish
+  /// reviewer emails, and a placeholder address would be a fake contact for a
+  /// real person. Every review submitted through this site still carries one.
+  email      String?
 
   rating Int
   body   String
 
   isVerifiedPurchase Boolean     @default(false)
   state              ReviewState @default(PENDING)
+
+  /// Set when this review was written somewhere else ("Amazon"), so the
+  /// storefront can say so. Null for a review left on this site. An imported
+  /// review is never a verified purchase here — we cannot check an order we
+  /// never took.
+  externalSource String?
+  /// Title the other platform captured. This site's form does not collect one.
+  title          String?
 
   moderatedById String?
   moderatedAt   DateTime?

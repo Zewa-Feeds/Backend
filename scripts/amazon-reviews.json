@@ -1,0 +1,434 @@
+[
+  {
+    "product": "Guppy Bites",
+    "slug": "guppy-bites",
+    "stated_average": 4.54,
+    "stars": [
+      91,
+      23,
+      19,
+      0,
+      0
+    ],
+    "total": 133,
+    "reviews": [
+      {
+        "rating": 5,
+        "author": "Ramesh",
+        "title": "Best in the market",
+        "body": "Excellent Quality and Service from Zewa Feeds. I've been using Zewa Feeds for a while now, and I can confidently say their products are top-notch. The feed is always fresh, consistent in quality, and has made a noticeable difference in the health and productivity of my livestock. Highly recommended for anyone looking for premium feeds nutrition!"
+      },
+      {
+        "rating": 5,
+        "author": "subir das",
+        "title": "Definitely worth the price!",
+        "body": "My guppies absolutely loved this food! The high-quality ingredients make it a healthy and nutritious choice for them. Definitely worth the price and highly recommended!"
+      },
+      {
+        "rating": 5,
+        "author": "soumya",
+        "title": "Must buy - guppies colour and grow big size",
+        "body": "Must buy for guppy fish. Excellent color and growth results."
+      },
+      {
+        "rating": 5,
+        "author": "Sheikh Hassan",
+        "title": "Best for guppy",
+        "body": "Best product for guppy."
+      },
+      {
+        "rating": 4,
+        "author": "Siddhesh Raut",
+        "title": "Good Product",
+        "body": "Good for guppies and mollies."
+      }
+    ]
+  },
+  {
+    "product": "Betta Bites",
+    "slug": "betta-bites",
+    "stated_average": 4.36,
+    "stars": [
+      30,
+      15,
+      10,
+      0,
+      0
+    ],
+    "total": 55,
+    "reviews": [
+      {
+        "rating": 5,
+        "author": "Kapil Choudhary",
+        "title": "Good one",
+        "body": "My betta is only eating live feed so he is not eating this or any other fish food but my guppies and Molly fishes loving it."
+      },
+      {
+        "rating": 5,
+        "author": "Aswin",
+        "title": "Food quality",
+        "body": "Value for money. Fish enjoying their meal. Difference are visible before and after the food. But it takes 3-4 weeks."
+      },
+      {
+        "rating": 5,
+        "author": "ravi kant",
+        "title": "About zewa betta",
+        "body": "Nice but rate is very high. Fish is healthy but colour is not very good. Size is very good."
+      },
+      {
+        "rating": 5,
+        "author": "Nihar Ranjan Paltasingh",
+        "title": "Beta fish eats happily",
+        "body": "After one week I can say, my beta fish is eating them. Impact is under study."
+      },
+      {
+        "rating": 5,
+        "author": "Juhil Mondal",
+        "title": "Very good product",
+        "body": "It's a very good product. My betta was enjoy to eat."
+      }
+    ]
+  },
+  {
+    "product": "Cichlid Bites",
+    "slug": "cichlid-bites-c4",
+    "stated_average": 4.4,
+    "stars": [
+      6,
+      2,
+      2,
+      0,
+      0
+    ],
+    "total": 10,
+    "reviews": [
+      {
+        "rating": 5,
+        "author": "Deroots",
+        "title": "Good slow sinking fish feed",
+        "body": "Good food quality and the fishes like it. These are slow sinking so good for the fishes and doesn't pollute the tank."
+      },
+      {
+        "rating": 5,
+        "author": "HARSHA P P",
+        "title": "Best feed for cichlids",
+        "body": "Ideal for wide ranges of cichlids. Great for colours and keeps water quality."
+      }
+    ]
+  },
+  {
+    "product": "Cichlid Power Bites",
+    "slug": "cichlid-bites-c5",
+    "stated_average": 4.67,
+    "stars": [
+      2,
+      1,
+      0,
+      0,
+      0
+    ],
+    "total": 3,
+    "reviews": [
+      {
+        "rating": 5,
+        "author": "Praveen",
+        "title": "One of the best",
+        "body": "One of the best granular feed for Malawi Cichlids. They are somewhat slow sinking, keeps fishes healthy and colourful."
+      }
+    ]
+  },
+  {
+    "product": "DBSFL",
+    "slug": "dried-bsf-larvae",
+    "stated_average": 4.53,
+    "stars": [
+      31,
+      13,
+      5,
+      0,
+      0
+    ],
+    "total": 49,
+    "reviews": [
+      {
+        "rating": 5,
+        "author": "seshu",
+        "title": "Good product and good packaging",
+        "body": "The fish feed arrived on time and was very well packaged. The quality looks excellent, and my fish seem to enjoy it. Overall, I'm happy with the purchase - good product and good packaging. Would definitely recommend it."
+      },
+      {
+        "rating": 5,
+        "author": "Ashish",
+        "title": "Good feed for big fishes",
+        "body": "My 10\" Oscars love these dried worms. Good product, go for it for big/monster fishes. Only one thing to keep in mind, pre-soak the feed for 15-20 minutes or else it causes bloating."
+      },
+      {
+        "rating": 5,
+        "author": "Sumit kumar",
+        "title": "BSFL",
+        "body": "It's my first time buying BSFL so I cannot compare it but it is clean and my fish loved it."
+      },
+      {
+        "rating": 5,
+        "author": "Raj",
+        "title": "My fishes are taking it aggressively",
+        "body": "My Malawis are loving it. Using as treats for last one month, they love it always. Need more time to see long term results."
+      },
+      {
+        "rating": 5,
+        "author": "Davis",
+        "title": "Good treat food for Oscar",
+        "body": "Best to give as treat. Fishes were attacking this food. Looks to be slightly high protein so giving now once a day."
+      }
+    ]
+  },
+  {
+    "product": "Tetra Pellets",
+    "slug": "tetra-pellets",
+    "stated_average": 4.58,
+    "stars": [
+      8,
+      3,
+      1,
+      0,
+      0
+    ],
+    "total": 12,
+    "reviews": [
+      {
+        "rating": 5,
+        "author": "Raj",
+        "title": "Great quality feed - my fish love it!",
+        "body": "I've been feeding these pellets to my tetras for about a week now, and the results are honestly impressive. The pellet size is perfect - just right for them to consume easily without any waste. From day one, the fish started eating them eagerly, and I've already noticed a boost in their activity levels. Their colors are also looking more vibrant and lively. Will definitely be buying again!"
+      },
+      {
+        "rating": 5,
+        "author": "Deroots",
+        "title": "Slow sinking feed",
+        "body": "The best slow sinking feed till now. The fishes absolutely love the feed and the packaging is great. Would be trying other fish feed also from Zewa soon."
+      },
+      {
+        "rating": 4,
+        "author": "Gopal Das",
+        "title": "No doubt, good food for tetra",
+        "body": "Nice product, it's have the quality. Fish growth is nice and they also likes the food. But MFG date is not showing properly in the bottle."
+      },
+      {
+        "rating": 4,
+        "author": "Bonafide",
+        "title": "Worth trying it atleast!",
+        "body": "Whatever the reviews may be, personally my tetra fishes are feeding well so no complain."
+      },
+      {
+        "rating": 5,
+        "author": "Paul",
+        "title": "Doesn't make tank muddy",
+        "body": "Doesn't make the tank muddy."
+      }
+    ]
+  },
+  {
+    "product": "Gold Fish Bites",
+    "slug": "goldfish-bites",
+    "stated_average": 5.0,
+    "stars": [
+      1,
+      0,
+      0,
+      0,
+      0
+    ],
+    "total": 1,
+    "reviews": [
+      {
+        "rating": 5,
+        "author": "James",
+        "title": "All feed gone in seconds. Perfect size",
+        "body": "Trying this new product first time. Have used old version, but these are better sized and more readily accepted by all my gold fish varieties."
+      }
+    ]
+  },
+  {
+    "product": "Koi Bites",
+    "slug": "koi-bites",
+    "stated_average": 5.0,
+    "stars": [
+      2,
+      0,
+      0,
+      0,
+      0
+    ],
+    "total": 2,
+    "reviews": [
+      {
+        "rating": 5,
+        "author": "Deroots",
+        "title": "Less water pollution",
+        "body": "Love to see the Koi feed from Zewa list on Amazon. Have been using the feed for last 6 months and the results are amazing. Water pollution is much less and the feed is water stable and Koi's love the feed."
+      },
+      {
+        "rating": 5,
+        "author": "Raj",
+        "title": "Good feed for increased activity and health",
+        "body": "Carps are aggressively taking this and showing higher activity levels. Water quality is good and need more time to see long term benefits."
+      }
+    ]
+  },
+  {
+    "product": "Micro Pellets",
+    "slug": "micro-pellets",
+    "stated_average": 4.42,
+    "stars": [
+      48,
+      19,
+      14,
+      0,
+      0
+    ],
+    "total": 81,
+    "reviews": [
+      {
+        "rating": 4,
+        "author": "NABANIL P.",
+        "title": "Good food for small fishes",
+        "body": "Food is good and totally dust form. Especially suitable for baby fries along with small fishes such as mollies, tiger barbs, guppies etc. Water quality remains neutral. I will rate 4.3 out of 5."
+      },
+      {
+        "rating": 5,
+        "author": "Vidushi.R",
+        "title": "Go for it - been using it for a year now!",
+        "body": "My fishes love it so much I'm on my second batch of this food. I've been using it for a year and all my fishes are healthy. Also it's only for smaller fish that's why the pellets are small because they can't eat bigger betta pellets. It's really good."
+      },
+      {
+        "rating": 4,
+        "author": "Excellent Purchase",
+        "title": "Good..",
+        "body": "My fishes indeed liked the food. But, pallet size is pretty small than expected. This size ideally be useful to babies with small mouth."
+      },
+      {
+        "rating": 5,
+        "author": "King Arthur",
+        "title": "It is good food. I tried and I got fins",
+        "body": "Crush and give it to fry... They fight to get it."
+      },
+      {
+        "rating": 5,
+        "author": "Godwin",
+        "title": "Good",
+        "body": "Good. Not changing the water color."
+      }
+    ]
+  },
+  {
+    "product": "Pleco Bites",
+    "slug": "pleco-bites",
+    "stated_average": 4.59,
+    "stars": [
+      68,
+      21,
+      10,
+      0,
+      0
+    ],
+    "total": 99,
+    "reviews": [
+      {
+        "rating": 5,
+        "author": "Darren sohkhlet",
+        "title": "Best for herbivorous algae eaters",
+        "body": "The food is solely meant for plecos. My goldfish and widow tetras sometimes consume a few pellets but it doesn't harm them. The pellets immediately sink to the bottom. This is perfect for plecos, bristlenose plecos, river loaches and other bottom feeders."
+      },
+      {
+        "rating": 4,
+        "author": "Harsh vaskar",
+        "title": "Breeder's opinion on this food",
+        "body": "Absolute best. It turns into powder within 5mins so pleco babies eat quite easily. Growth of babies is comparable to hikari and it doesn't make them bloat like hikari. After using this my pleco fry mortality is less than 5%."
+      },
+      {
+        "rating": 5,
+        "author": "Kshyanaprava Mishra",
+        "title": "Bon Appetite - Affordable",
+        "body": "A must have delicacy for bottom dwellers. My Red cherry shrimps are taking it on alternative days and gobbling the whole thing. The size of the pellets are same as conventional pellets and they sink to the bottom immediately. The packaging is also great."
+      },
+      {
+        "rating": 4,
+        "author": "Andy",
+        "title": "Good product",
+        "body": "Good quality, submersible food. Sinks to the bottom. Fish seem to like it."
+      },
+      {
+        "rating": 5,
+        "author": "Ranjith",
+        "title": "Good",
+        "body": "It's fine small, slowly sinking food. Liked by my fishes."
+      }
+    ]
+  },
+  {
+    "product": "Shrimp Grazers",
+    "slug": "shrimp-grazers",
+    "stated_average": 4.68,
+    "stars": [
+      17,
+      3,
+      2,
+      0,
+      0
+    ],
+    "total": 22,
+    "reviews": [
+      {
+        "rating": 5,
+        "author": "Sebastian",
+        "title": "Ideal food for premium cherry red ornamental shrimps",
+        "body": "This is ideal for premium cherry red, blue and yellow ornamental shrimps. They are eating it like crazy and growth is great so far with my small ones."
+      },
+      {
+        "rating": 5,
+        "author": "Dr. B. Roy",
+        "title": "Happy with the purchase",
+        "body": "Shrimps are growing very fast. Nice food."
+      },
+      {
+        "rating": 5,
+        "author": "seshan",
+        "title": "Shrimps love it",
+        "body": "Nice product. Shrimps love it."
+      },
+      {
+        "rating": 5,
+        "author": "v munna",
+        "title": "Go for it",
+        "body": "Water is crystal clear."
+      },
+      {
+        "rating": 5,
+        "author": "Faseel Anwar",
+        "title": "Good product",
+        "body": "Good shrimp food."
+      }
+    ]
+  },
+  {
+    "product": "Monster Sticks",
+    "slug": "monster-sticks",
+    "stated_average": 5.0,
+    "stars": [
+      1,
+      0,
+      0,
+      0,
+      0
+    ],
+    "total": 1,
+    "reviews": [
+      {
+        "rating": 5,
+        "author": "Ananthu",
+        "title": "My flowerhorn is absolutely loving this!",
+        "body": "I have an 8 inch FH and he was used to some of best imported feeds since a child. Thought he wouldn't take natural food but he is now all over it. Visible difference in activity and colours. But he took a bit of time to adjust though, around 3-4 days had to give in parallel with other foods. But now he is not touching any old foods."
+      }
+    ]
+  }
+]
