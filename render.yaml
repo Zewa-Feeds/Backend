@@ -54,6 +54,13 @@ services:
       #   REDIS_URL    -> Upstash   (rediss://...)
       - key: DATABASE_URL
         sync: false
+      # Same Neon database, WITHOUT `-pooler` in the host. Migrations only.
+      # `migrate deploy` takes a session-scoped advisory lock, which pgbouncer's
+      # transaction pooling breaks — the lock is taken on one backend and the
+      # release lands on another, so it sits held by an idle pooler session and
+      # every later deploy fails with P1002 before the new code starts.
+      - key: DIRECT_URL
+        sync: false
       - key: REDIS_URL
         sync: false
 
