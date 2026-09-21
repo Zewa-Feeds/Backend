@@ -398,6 +398,83 @@ const cartLinesSchema = z.object({
 });
 
 /**
+ * Reviews worth putting on the home page, plus the range-wide rating.
+ *
+ * The marquee there used to hold six INVENTED customers — names, cities and
+ * occupations that belong to nobody — under a "4.9 / 5 across 200+ reviews"
+ * that was also made up. Real reviews exist now, so the fiction has no excuse.
+ *
+ * Only reviews with enough text to read as a quote are returned: a two-word
+ * "Best product" is honest but says nothing on a landing page. The rating is
+ * every rating across the catalogue, imported baseline included, so the
+ * headline figure agrees with the product pages.
+ */
+catalogRouter.get(
+  '/reviews/featured',
+  asyncHandler(async (_req, res) => {
+    const [rows, families] = await Promise.all([
+      prisma.review.findMany({
+        where: {
+          state: ReviewState.APPROVED,
+          // A 3★ "it was fine" is honest but not a testimonial.
+          rating: { gte: 4 },
+        },
+        select: {
+          rating: true,
+          body: true,
+          title: true,
+          guestName: true,
+          externalSource: true,
+          customer: { select: { firstName: true } },
+          family: { select: { name: true } },
+        },
+        orderBy: [{ rating: 'desc' }, { submittedAt: 'desc' }],
+        take: 60,
+      }),
+      prisma.productFamily.findMany({
+        where: { deletedAt: null },
+        select: { externalRatingCounts: true },
+      }),
+    ]);
+
+    const siteRatings = await prisma.review.findMany({
+      where: { state: ReviewState.APPROVED, externalSource: null },
+      select: { rating: true },
+    });
+
+    // One combined figure for the whole range: every family's baseline, plus
+    // every approved site review.
+    const combinedCounts = [0, 0, 0, 0, 0];
+    for (const f of families) {
+      f.externalRatingCounts.forEach((n, i) => {
+        combinedCounts[i] = (combinedCounts[i] ?? 0) + n;
+      });
+    }
+    const summary = reviewSummary(
+      combinedCounts,
+      'Amazon',
+      siteRatings.map((r) => r.rating),
+    );
+
+    const items = rows
+      .filter((r) => r.body.trim().length >= 60)
+      .slice(0, 12)
+      .map((r) => ({
+        // First name only, exactly as the product page does.
+        author: r.customer?.firstName ?? r.guestName ?? 'Verified buyer',
+        rating: r.rating,
+        title: r.title,
+        body: r.body,
+        product: r.family.name,
+        source: r.externalSource,
+      }));
+
+    res.setHeader('Cache-Control', CACHE_60S);
+    res.json({ data: { average: summary.average, count: summary.count, items } });
+  }),
+);
+
+/**
  * Offers the shop is advertising right now.
  *
  * Opt-in per coupon (`showAtCheckout`), so private referral codes and
