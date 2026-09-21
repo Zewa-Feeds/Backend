@@ -680,37 +680,65 @@ export async function update(id: string, input: Partial<CouponInput>, ctx: Audit
   const targeting = buildTargeting(input, productIds);
   const couponData = scalarFields(input);
 
+  /*
+   * Each targeting relation is replaced ONLY when the body carried it.
+   *
+   * `buildTargeting` turns an absent list into `[]`, so replacing all four
+   * unconditionally would erase a coupon's qualifying products, categories and
+   * customer list on any PATCH that did not resend them — including the
+   * one-field `{ isActive }` toggle. Before the update route accepted partial
+   * bodies this could not happen, because the schema always filled the arrays.
+   */
+  const touchesProducts =
+    input.productIds !== undefined ||
+    input.scope !== undefined ||
+    input.qualifyingProductIds !== undefined ||
+    input.excludedProductIds !== undefined;
+  const touchesVariants =
+    input.variantIds !== undefined || input.qualifyingVariantIds !== undefined;
+  const touchesCategories =
+    input.categories !== undefined || input.qualifyingCategories !== undefined;
+  const touchesCustomers = input.customerEmails !== undefined;
+
   const updated = await prisma.$transaction(async (tx) => {
     /*
-     * Replace rather than diff: the sets are small, and a full replace inside
-     * the transaction is atomic in a way a partial diff is not. Deleting first
-     * also means a role change (QUALIFY -> DISCOUNT on the same family) cannot
-     * collide with the composite primary key.
+     * Within a relation the body DID send, replace rather than diff: the sets
+     * are small, and a full replace inside the transaction is atomic in a way a
+     * partial diff is not. Deleting first also means a role change (QUALIFY ->
+     * DISCOUNT on the same family) cannot collide with the composite primary
+     * key. A relation the body left out is not touched at all — see above.
      */
-    await tx.couponProduct.deleteMany({ where: { couponId: id } });
-    await tx.couponVariant.deleteMany({ where: { couponId: id } });
-    await tx.couponCategory.deleteMany({ where: { couponId: id } });
-    await tx.couponCustomer.deleteMany({ where: { couponId: id } });
-
-    if (targeting.products.length > 0) {
-      await tx.couponProduct.createMany({
-        data: targeting.products.map((r) => ({ couponId: id, ...r })),
-      });
+    if (touchesProducts) {
+      await tx.couponProduct.deleteMany({ where: { couponId: id } });
+      if (targeting.products.length > 0) {
+        await tx.couponProduct.createMany({
+          data: targeting.products.map((r) => ({ couponId: id, ...r })),
+        });
+      }
     }
-    if (targeting.variants.length > 0) {
-      await tx.couponVariant.createMany({
-        data: targeting.variants.map((r) => ({ couponId: id, ...r })),
-      });
+    if (touchesVariants) {
+      await tx.couponVariant.deleteMany({ where: { couponId: id } });
+      if (targeting.variants.length > 0) {
+        await tx.couponVariant.createMany({
+          data: targeting.variants.map((r) => ({ couponId: id, ...r })),
+        });
+      }
     }
-    if (targeting.categories.length > 0) {
-      await tx.couponCategory.createMany({
-        data: targeting.categories.map((r) => ({ couponId: id, ...r })),
-      });
+    if (touchesCategories) {
+      await tx.couponCategory.deleteMany({ where: { couponId: id } });
+      if (targeting.categories.length > 0) {
+        await tx.couponCategory.createMany({
+          data: targeting.categories.map((r) => ({ couponId: id, ...r })),
+        });
+      }
     }
-    if (targeting.customers.length > 0) {
-      await tx.couponCustomer.createMany({
-        data: targeting.customers.map((r) => ({ couponId: id, ...r })),
-      });
+    if (touchesCustomers) {
+      await tx.couponCustomer.deleteMany({ where: { couponId: id } });
+      if (targeting.customers.length > 0) {
+        await tx.couponCustomer.createMany({
+          data: targeting.customers.map((r) => ({ couponId: id, ...r })),
+        });
+      }
     }
 
     if (input.bxgy !== undefined) {
