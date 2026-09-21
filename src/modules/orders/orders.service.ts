@@ -1058,13 +1058,13 @@ export async function resendEmail(orderNo: string, emailId: string, ctx: AuditCo
     },
   });
 
-  if (!order) throw notFound('Order', orderNo);
+  if (!order) throw notFound('Order');
 
   const emailRow = await prisma.orderEmail.findFirst({
     where: { id: emailId, orderId: order.id },
   });
 
-  if (!emailRow) throw notFound('Email record', emailId);
+  if (!emailRow) throw notFound('Email record');
 
   const { ctx: emailCtx, email } = buildOrderEmailContext(order);
 
@@ -1191,7 +1191,7 @@ export async function sendOrderEmail(
     },
   });
 
-  if (!order) throw notFound('Order', orderNo);
+  if (!order) throw notFound('Order');
 
   const { ctx: emailCtx, email } = buildOrderEmailContext(order);
   const recipientEmail = input.toEmail?.trim() || email;

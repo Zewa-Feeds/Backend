@@ -9,6 +9,7 @@
 import { OrderStatus, PaymentStatus, type Prisma } from '@prisma/client';
 import { buildTimeline, nextStates, TRANSITIONS } from './lifecycle';
 import { toRupees } from '@/modules/products/products.serializer';
+import { resolveOrderAppliedCoupons } from '@/integrations/pdf/invoice';
 
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   [OrderStatus.PENDING]: 'Pending',
@@ -216,6 +217,13 @@ export function serializeOrder(order: OrderRow) {
     },
 
     couponCode: order.couponCode,
+    /**
+     * Every code applied, resolved to { code, scope, amountPaise }. The detail
+     * page shows the whole stack; `couponCode` above stays the primary code so
+     * the list view and invoices keep reading a single value. Orders placed
+     * before `appliedCoupons` existed resolve from redemptions instead.
+     */
+    appliedCoupons: resolveOrderAppliedCoupons(order as never),
     shippingAddress: order.shippingAddress,
     addressLine: formatAddress(order.shippingAddress),
 

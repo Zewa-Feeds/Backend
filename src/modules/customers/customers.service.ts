@@ -10,7 +10,7 @@
  */
 import { AuditModule, CustomerStatus, PaymentStatus, type Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { AppError, ErrorCode, notFound } from '@/lib/errors';
+import { badRequest, notFound } from '@/lib/errors';
 import { logger } from '@/lib/logger';
 import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
 import { listMeta, toSkipTake } from '@/middleware/validate';
@@ -314,7 +314,7 @@ export async function sendCustomerEmail(
     }));
   } else if (input.audience === 'selected') {
     if (!input.customerIds?.length) {
-      throw new AppError(ErrorCode.BAD_REQUEST, 'No customers selected.');
+      throw badRequest('No customers selected.');
     }
     const customers = await prisma.customer.findMany({
       where: {
@@ -328,7 +328,7 @@ export async function sendCustomerEmail(
     }));
   } else if (input.audience === 'custom') {
     if (!input.customEmails?.length) {
-      throw new AppError(ErrorCode.BAD_REQUEST, 'No email addresses provided.');
+      throw badRequest('No email addresses provided.');
     }
     recipients = input.customEmails.map((e) => ({
       email: e.trim(),
@@ -344,7 +344,7 @@ export async function sendCustomerEmail(
   });
 
   if (uniqueRecipients.length === 0) {
-    throw new AppError(ErrorCode.BAD_REQUEST, 'No valid recipients found.');
+    throw badRequest('No valid recipients found.');
   }
 
   let sentCount = 0;
