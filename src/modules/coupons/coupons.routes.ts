@@ -38,7 +38,7 @@ const idParam = z.object({ id: z.string().uuid() });
  * `discountValue` means different things per type, so it is normalised here:
  * percent stays a whole number, flat converts rupees → paise.
  */
-const couponBodySchema = z
+const couponObject = z
   .object({
     // §10.2: uppercase alphanumeric + hyphens only.
     code: z
@@ -104,7 +104,9 @@ const couponBodySchema = z
       })
       .optional()
       .nullable(),
-  })
+  });
+
+const couponBodySchema = couponObject
   // Caught here so the form gets a field-keyed error rather than a generic 500.
   .refine(
     (v) => v.scope !== CouponScope.SPECIFIC_PRODUCTS || v.productIds.length > 0,
@@ -189,6 +191,69 @@ const couponBodySchema = z
   }));
 
 /**
+ * PATCH body: every field optional, and ONLY the keys actually sent survive.
+ *
+ * A PATCH must not invent values. Validating updates against the full schema
+ * above meant an omitted field took its `.default()` — so saving the edit form
+ * reset `perCustomerLimit` to null (the field the form never sends), and the
+ * active-toggle's `{ isActive }` body was rejected outright for missing `code`.
+ *
+ * The rupee→paise conversions mirror the create transform; they are applied
+ * per-key so an untouched amount is left alone rather than recomputed from a
+ * default. Cross-field rules are re-checked only when the body carries BOTH
+ * sides — a PATCH that sends neither date cannot be judged on their order here,
+ * so the service re-validates the merged result against what is stored.
+ */
+const couponPatchSchema = couponObject
+  .partial()
+  .refine((v) => v.discountValue === undefined || v.discountType !== undefined, {
+    message: 'Send discountType alongside discountValue.',
+    path: ['discountType'],
+  })
+  .refine(
+    (v) => v.endsAt === undefined || v.startsAt === undefined || v.endsAt > v.startsAt,
+    { message: 'The end date must be after the start date.', path: ['endsAt'] },
+  )
+  .refine(
+    (v) =>
+      v.discountType !== DiscountType.PERCENTAGE ||
+      v.discountValue === undefined ||
+      v.discountValue <= 100,
+    { message: 'A percentage discount cannot exceed 100%.', path: ['discountValue'] },
+  )
+  .transform((v) => {
+    const out: Record<string, unknown> = {};
+
+    for (const key of Object.keys(v) as (keyof typeof v)[]) {
+      if (v[key] !== undefined) out[key as string] = v[key];
+    }
+
+    // Fields whose wire format differs from the stored one.
+    //
+    // `discountValue` is rupees for flat types and a whole percent for
+    // PERCENTAGE, so converting it needs the type. A partial body may omit the
+    // type, and guessing would turn ₹50 into 5000 paise or vice versa — so the
+    // pair must travel together. The service rejects a lone value.
+    if (v.discountValue !== undefined && v.discountType !== undefined) {
+      out.discountValue =
+        v.discountType === DiscountType.PERCENTAGE
+          ? Math.round(v.discountValue)
+          : Math.round(v.discountValue * 100);
+    }
+    if (v.minOrder !== undefined) {
+      delete out.minOrder;
+      out.minOrderPaise = Math.round(v.minOrder * 100);
+    }
+    if (v.maxDiscount !== undefined) {
+      delete out.maxDiscount;
+      out.maxDiscountPaise =
+        v.maxDiscount === null ? null : Math.round(v.maxDiscount * 100);
+    }
+
+    return out;
+  });
+
+/**
  * Coupon status is a DERIVED display string (§10.2), not a database enum, so it
  * cannot use the shared `enumFilter` helper — that one uppercases its input.
  * "All" (the CMS's unset sentinel) maps to no filter.
@@ -253,7 +318,7 @@ couponsRouter.post(
 
 couponsRouter.patch(
   '/:id',
-  validate({ params: idParam, body: couponBodySchema }),
+  validate({ params: idParam, body: couponPatchSchema }),
   asyncHandler(async (req, res) => {
     const coupon = await couponsService.update(
       req.params.id as string,
