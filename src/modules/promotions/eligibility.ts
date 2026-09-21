@@ -196,7 +196,12 @@ export function assertEligible(input: EligibilityInput): void {
     );
   }
 
-  if (identified && priorRedemptions >= coupon.perCustomerLimit) {
+  // Null means unlimited, exactly as it does for totalUsageLimit above.
+  if (
+    identified &&
+    coupon.perCustomerLimit !== null &&
+    priorRedemptions >= coupon.perCustomerLimit
+  ) {
     throw new AppError(
       409,
       ErrorCode.COUPON_ALREADY_USED,

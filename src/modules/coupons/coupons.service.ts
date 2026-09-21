@@ -390,7 +390,8 @@ export interface CouponInput {
   startsAt: Date;
   endsAt: Date;
   totalUsageLimit: number | null;
-  perCustomerLimit: number;
+  /** Null means unlimited, as with totalUsageLimit. */
+  perCustomerLimit: number | null;
   isActive: boolean;
   scope: CouponScope;
   /** Product family ids the discount comes off — non-empty when SPECIFIC_PRODUCTS. */

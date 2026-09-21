@@ -1107,9 +1107,11 @@ model Coupon {
   startsAt DateTime
   endsAt   DateTime
 
-  /// Null means unlimited (§10.2).
+  /// Null means unlimited (§10.2). Applies to BOTH limits below.
   totalUsageLimit  Int?
-  perCustomerLimit Int  @default(1)
+  /// Null means unlimited. Defaults to 1 so an existing voucher keeps its
+  /// once-per-customer behaviour; blanking the field in the CMS clears it.
+  perCustomerLimit Int? @default(1)
   usedCount        Int  @default(0)
 
   isActive Boolean @default(true)

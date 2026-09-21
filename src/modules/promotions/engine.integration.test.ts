@@ -100,7 +100,8 @@ interface CouponOpts {
   customerEligibility?: CustomerEligibility;
   firstNOrders?: number | null;
   allowedStates?: string[];
-  perCustomerLimit?: number;
+  /** Null means unlimited. */
+  perCustomerLimit?: number | null;
   totalUsageLimit?: number | null;
   customerEmails?: string[];
   discountFamilies?: string[];
@@ -128,7 +129,9 @@ async function makeCoupon(opts: CouponOpts = {}) {
       firstNOrders: opts.firstNOrders ?? null,
       allowedStates: opts.allowedStates ?? [],
       requireAllQualifiers: opts.requireAllQualifiers ?? false,
-      perCustomerLimit: opts.perCustomerLimit ?? 99,
+      // `??` would swallow an explicit null, which is how unlimited is expressed.
+      perCustomerLimit:
+        opts.perCustomerLimit === undefined ? 99 : opts.perCustomerLimit,
       totalUsageLimit: opts.totalUsageLimit ?? null,
       customers: { create: (opts.customerEmails ?? []).map((email) => ({ email })) },
       products: {
@@ -519,6 +522,34 @@ describe('free shipping promotions', () => {
 });
 
 // ============================================================================
+describe('per-customer limit', () => {
+  /*
+   * Blank in the CMS means unlimited, matching the "Total usage limit" field
+   * beside it. The two behaved oppositely: blanking the total meant unlimited,
+   * while blanking the per-customer one silently coerced to 1, so a coupon
+   * meant to be reusable refused every customer their second order.
+   */
+  it('lets one customer use a coupon repeatedly when the limit is null', async () => {
+    const c = await makeCoupon({ perCustomerLimit: null });
+    const email = `${ns('unl')}@example.invalid`;
+
+    await place([c.code], email);
+    await place([c.code], email);
+    const third = await place([c.code], email);
+
+    expect(third.orderNo).toBeTruthy();
+  });
+
+  it('still refuses a second order when the limit is 1', async () => {
+    const c = await makeCoupon({ perCustomerLimit: 1 });
+    const email = `${ns('lim')}@example.invalid`;
+
+    await place([c.code], email);
+
+    await expect(place([c.code], email)).rejects.toThrow(/already used/i);
+  });
+});
+
 describe('usage release', () => {
   it('hands a coupon use back when the order is cancelled', async () => {
     const c = await makeCoupon({ totalUsageLimit: 1, perCustomerLimit: 1 });
