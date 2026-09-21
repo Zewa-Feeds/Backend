@@ -38,7 +38,7 @@ services:
     # from dist/, so the dev packages are only needed during the build.
     #
     # Migrations run as part of the build, before the new code starts serving.
-    buildCommand: npm ci --include=dev && npm run build && npx prisma migrate deploy
+    buildCommand: npm ci --include=dev && npm run build && npm run prisma:deploy
     startCommand: npm run start
     healthCheckPath: /health
     envVars:

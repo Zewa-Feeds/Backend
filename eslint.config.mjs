@@ -50,4 +50,23 @@ export default tseslint.config(
       'no-console': 'off',
     },
   },
+  {
+    /*
+     * Plain-JS build and tooling scripts. They were matched by no `files`
+     * block, so they inherited no globals and every `process`, `console` and
+     * `URL` reported as undefined.
+     */
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        URL: 'readonly',
+        setTimeout: 'readonly',
+      },
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
 );
