@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   templates,
   staffTemplates,
+  buildCustomEmail,
   type OrderEmailContext,
 } from '@/integrations/zeptomail/templates';
 
@@ -400,3 +401,42 @@ describe('Email Trigger Points & Idempotency Rules', () => {
     expect(result.success).toBe(true);
   });
 });
+
+describe('Custom & Broadcast Email Template (buildCustomEmail)', () => {
+  it('renders custom heading, formatted message paragraphs, and recipient name', () => {
+    const rendered = buildCustomEmail({
+      heading: 'Special Harvest Announcement',
+      message: 'We have freshly harvested batches of BSF larvae.\n\nOrder today to get early access.',
+      customerName: 'Priya Nair',
+    });
+
+    expect(rendered.subject).toBe('Special Harvest Announcement');
+    expect(rendered.html).toContain('Special Harvest Announcement');
+    expect(rendered.html).toContain('Hi Priya,');
+    expect(rendered.html).toContain('We have freshly harvested batches of BSF larvae.');
+    expect(rendered.html).toContain('Order today to get early access.');
+    expect(rendered.html).toContain('Zewa&nbsp;Feeds');
+  });
+
+  it('renders optional CTA button with link and theme styling', () => {
+    const rendered = buildCustomEmail({
+      heading: 'Exclusive Offer',
+      message: 'Use code GUPPY10 for 10% off your next purchase.',
+      ctaText: 'Shop Guppy Bites',
+      ctaUrl: 'https://zewafeeds.com/products/guppy-bites',
+    });
+
+    expect(rendered.html).toContain('Shop Guppy Bites');
+    expect(rendered.html).toContain('https://zewafeeds.com/products/guppy-bites');
+  });
+
+  it('handles HTML formatted input messages safely without double escaping', () => {
+    const rendered = buildCustomEmail({
+      heading: 'Service Update',
+      message: '<p>Our warehouse will be closed on Sunday.</p>',
+    });
+
+    expect(rendered.html).toContain('<p>Our warehouse will be closed on Sunday.</p>');
+  });
+});
+

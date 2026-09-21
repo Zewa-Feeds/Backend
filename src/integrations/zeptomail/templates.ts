@@ -578,6 +578,54 @@ function firstName(full: string): string {
 
 export type CustomerTemplateName = keyof typeof templates;
 
+export interface CustomEmailInput {
+  heading: string;
+  message: string;
+  subject?: string;
+  ctaText?: string | null;
+  ctaUrl?: string | null;
+  customerName?: string | null;
+  preheader?: string | null;
+}
+
+/**
+ * Builds a branded custom or broadcast email using the Zewa Feeds dark theme shell.
+ */
+export function buildCustomEmail(input: CustomEmailInput): { subject: string; html: string } {
+  const greeting = input.customerName
+    ? `<p style="margin:0 0 16px;font-size:15px;font-weight:600;color:${INK};">Hi ${esc(firstName(input.customerName))},</p>`
+    : '';
+
+  const isHtml = /<[a-z][\s\S]*>/i.test(input.message);
+  let formattedBody = '';
+  if (isHtml) {
+    formattedBody = input.message;
+  } else {
+    formattedBody = input.message
+      .split(/\n\s*\n/)
+      .filter((p) => p.trim().length > 0)
+      .map(
+        (p) =>
+          `<p style="margin:0 0 16px;font-size:14.5px;line-height:1.65;color:${INK};">${esc(p.trim()).replace(/\n/g, '<br/>')}</p>`,
+      )
+      .join('');
+  }
+
+  const cta = input.ctaText && input.ctaUrl ? button(input.ctaText, input.ctaUrl) : '';
+
+  const fullBody = greeting + formattedBody + (cta ? `<div style="margin-top:24px;">${cta}</div>` : '');
+
+  const subject = input.subject || input.heading;
+  const html = shell(
+    input.heading,
+    '',
+    fullBody,
+    input.preheader || input.heading,
+  );
+
+  return { subject, html };
+}
+
 // ---- Account templates -----------------------------------------------------
 //
 // Kept apart from `templates` above because those are all keyed to an order and

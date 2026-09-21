@@ -229,3 +229,49 @@ ordersRouter.post(
     res.json(result);
   }),
 );
+
+const emailIdParam = orderNoParam.extend({
+  emailId: z.string().uuid(),
+});
+
+const sendOrderEmailSchema = z.object({
+  template: z
+    .enum(['order-placed', 'order-confirmed', 'order-shipped', 'order-delivered', 'order-cancelled', 'custom'])
+    .optional(),
+  subject: z.string().trim().max(200).optional(),
+  heading: z.string().trim().max(200).optional(),
+  message: z.string().trim().max(5000).optional(),
+  attachInvoice: z.boolean().optional(),
+  toEmail: z.string().email().optional(),
+});
+
+/** Resend a specific order email (§6.3, §15). */
+ordersRouter.post(
+  '/:orderNo/emails/:emailId/resend',
+  requirePermission('orders.status'),
+  validate({ params: emailIdParam }),
+  asyncHandler(async (req, res) => {
+    const order = await ordersService.resendEmail(
+      req.params.orderNo as string,
+      req.params.emailId as string,
+      auditContext(req),
+    );
+    res.json({ data: order });
+  }),
+);
+
+/** Send a direct lifecycle template or custom note for an order. */
+ordersRouter.post(
+  '/:orderNo/send-email',
+  requirePermission('orders.status'),
+  validate({ params: orderNoParam, body: sendOrderEmailSchema }),
+  asyncHandler(async (req, res) => {
+    const order = await ordersService.sendOrderEmail(
+      req.params.orderNo as string,
+      req.body,
+      auditContext(req),
+    );
+    res.json({ data: order });
+  }),
+);
+

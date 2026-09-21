@@ -1039,6 +1039,7 @@ async function queueCustomerEmail(
         orderId,
         subject: `Order ${orderNo} confirmed`,
         toEmail: order.email,
+        template,
       },
       select: { id: true },
     });

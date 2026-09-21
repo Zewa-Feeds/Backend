@@ -35,12 +35,21 @@ import {
   ORDER_LIST_SELECT,
   ORDER_SELECT,
   ORDER_STATUS_LABELS,
+  formatAddress,
   serializeListRow,
   serializeOrder,
 } from './orders.serializer';
 import { logger } from '@/lib/logger';
 import { emailQueue } from '@/jobs/queues';
-import type { CustomerTemplateName } from '@/integrations/zeptomail/templates';
+import { sendEmail } from '@/integrations/zeptomail/zeptomail.client';
+import {
+  buildCustomEmail,
+  templates,
+  type CustomerTemplateName,
+  type OrderEmailContext,
+} from '@/integrations/zeptomail/templates';
+import { formatInvoiceFilename, generateInvoicePdf } from '@/integrations/pdf/invoice';
+import * as settingsService from '@/modules/settings/settings.service';
 import { paymentProvider } from '@/integrations/razorpay/payment.service';
 import * as couponsService from '@/modules/coupons/coupons.service';
 import * as loyaltyLifecycle from '@/modules/loyalty/lifecycle.service';
@@ -379,6 +388,7 @@ export async function transition(
           subject: spec.email.subject,
           toEmail: order.email,
           status: EmailStatus.QUEUED,
+          template: spec.email.template,
         },
         select: { id: true },
       });
@@ -722,6 +732,7 @@ export async function refund(
         orderId: order.id,
         subject: 'Your refund has been processed',
         toEmail: order.email,
+        template: 'refund-processed',
       },
       select: { id: true },
     });
@@ -945,6 +956,7 @@ export async function reconcilePayment(
         subject: `We've received your order ${orderNo}`,
         toEmail: order.email,
         status: EmailStatus.QUEUED,
+        template: 'order-placed',
       },
       select: { id: true },
     });
@@ -982,3 +994,297 @@ export async function reconcilePayment(
     amountPaise: capturedAmountPaise,
   };
 }
+
+/**
+ * Builds OrderEmailContext from order details for deterministic rendering and resending.
+ */
+export function buildOrderEmailContext(order: any): { ctx: OrderEmailContext; email: string } {
+  const addr = (order.shippingAddress ?? {}) as { name?: string; phone?: string };
+  const customerName =
+    addr.name ??
+    (order.customer ? `${order.customer.firstName} ${order.customer.lastName}`.trim() : 'Customer');
+
+  return {
+    email: order.email,
+    ctx: {
+      orderNo: order.orderNo,
+      customerName,
+      customerEmail: order.email,
+      customerPhone: order.phone || addr.phone || '',
+      items: (order.items || []).map((i: any) => ({
+        productName: i.productName,
+        sku: i.sku,
+        pack: i.pack || '',
+        qty: i.qty,
+        unitPricePaise: i.unitPricePaise,
+        lineTotalPaise: i.lineTotalPaise,
+      })),
+      subtotalPaise: order.subtotalPaise ?? order.totalPaise,
+      discountPaise: order.discountPaise ?? 0,
+      shippingPaise: order.shippingPaise ?? 0,
+      taxPaise: order.taxPaise ?? 0,
+      totalPaise: order.totalPaise,
+      paymentMethod: order.paymentMethod === PaymentMethod.COD ? 'COD' : 'RAZORPAY',
+      paymentStatus: order.paymentStatus === 'PAID' ? 'PAID' : 'UNPAID',
+      addressLine: formatAddress(order.shippingAddress),
+      placedAt: order.placedAt,
+      customerNote: order.customerNote,
+      internalNote: order.internalNote,
+      razorpayOrderId: order.razorpayOrderId,
+      razorpayPaymentId: order.razorpayPaymentId,
+      invoiceNumber: order.invoiceNumber,
+      carrier: order.carrier,
+      trackingNumber: order.trackingNumber,
+      trackingUrl: order.trackingUrl,
+      cancelReason: order.cancelReason,
+      deliveredOn: order.deliveredAt,
+    },
+  };
+}
+
+/**
+ * Resend a previously queued/sent/failed order email (§6.3, §15).
+ */
+export async function resendEmail(orderNo: string, emailId: string, ctx: AuditContext) {
+  const order = await prisma.order.findUnique({
+    where: { orderNo },
+    select: {
+      ...ORDER_SELECT,
+      subtotalPaise: true,
+      discountPaise: true,
+      shippingPaise: true,
+      taxPaise: true,
+      paymentMethod: true,
+    },
+  });
+
+  if (!order) throw notFound('Order', orderNo);
+
+  const emailRow = await prisma.orderEmail.findFirst({
+    where: { id: emailId, orderId: order.id },
+  });
+
+  if (!emailRow) throw notFound('Email record', emailId);
+
+  const { ctx: emailCtx, email } = buildOrderEmailContext(order);
+
+  let renderedSubject = emailRow.subject;
+  let renderedHtml = emailRow.bodyHtml;
+  const attachments: { name: string; content: string; mimeType: string }[] = [];
+
+  let templateName = emailRow.template as CustomerTemplateName | null;
+  if (!templateName) {
+    const sub = emailRow.subject.toLowerCase();
+    if (sub.includes('confirmed') || sub.includes('received')) templateName = 'order-placed';
+    else if (sub.includes('pack')) templateName = 'order-confirmed';
+    else if (sub.includes('way') || sub.includes('shipped')) templateName = 'order-shipped';
+    else if (sub.includes('deliver')) templateName = 'order-delivered';
+    else if (sub.includes('cancel')) templateName = 'order-cancelled';
+    else if (sub.includes('refund')) templateName = 'refund-processed';
+    else templateName = 'order-placed';
+  }
+
+  if (templateName && templates[templateName]) {
+    const build = templates[templateName];
+    const res = build(emailCtx as never, emailRow.toEmail || email);
+    renderedSubject = res.subject;
+    renderedHtml = res.html;
+
+    if (templateName === 'order-shipped' || templateName === 'order-confirmed') {
+      if (order.invoiceNumber) {
+        try {
+          const taxConfig = await settingsService.getTaxConfig();
+          const pdf = await generateInvoicePdf(order as any, taxConfig);
+          const customerName = emailCtx.customerName;
+          attachments.push({
+            name: formatInvoiceFilename(order.invoiceNumber, customerName),
+            content: Buffer.from(pdf).toString('base64'),
+            mimeType: 'application/pdf',
+          });
+        } catch (err) {
+          log.warn({ err, orderNo }, 'failed to generate invoice PDF for resend');
+        }
+      }
+    }
+  } else if (!renderedHtml) {
+    const res = buildCustomEmail({
+      heading: emailRow.subject,
+      message: 'Here is a copy of your order communication from Zewa Feeds.',
+      customerName: emailCtx.customerName,
+      subject: emailRow.subject,
+    });
+    renderedHtml = res.html;
+  }
+
+  try {
+    const result = await sendEmail({
+      to: [{ email: emailRow.toEmail || email, name: emailCtx.customerName }],
+      subject: renderedSubject,
+      htmlBody: renderedHtml,
+      attachments,
+      reference: orderNo,
+    });
+
+    await prisma.orderEmail.update({
+      where: { id: emailRow.id },
+      data: {
+        subject: renderedSubject,
+        bodyHtml: renderedHtml,
+        template: templateName,
+        status: result.sent ? EmailStatus.SENT : EmailStatus.QUEUED,
+        sentAt: result.sent ? new Date() : null,
+        providerMessageId: result.messageId,
+        error: result.skipped ? 'ZeptoMail not configured — send skipped' : null,
+      },
+    });
+
+    await writeAudit(ctx, {
+      module: AuditModule.ORDERS,
+      action: `Resent email "${renderedSubject}" to ${emailRow.toEmail || email}`,
+      recordId: orderNo,
+    });
+
+    const updatedOrder = await prisma.order.findUniqueOrThrow({
+      where: { id: order.id },
+      select: ORDER_SELECT,
+    });
+    return serializeOrder(updatedOrder);
+  } catch (err: any) {
+    const errorMsg = (err?.message || 'Failed to resend email').slice(0, 500);
+    await prisma.orderEmail.update({
+      where: { id: emailRow.id },
+      data: {
+        status: EmailStatus.FAILED,
+        error: errorMsg,
+      },
+    });
+    throw err;
+  }
+}
+
+export interface SendOrderEmailInput {
+  template?: 'order-placed' | 'order-confirmed' | 'order-shipped' | 'order-delivered' | 'order-cancelled' | 'custom';
+  subject?: string;
+  heading?: string;
+  message?: string;
+  attachInvoice?: boolean;
+  toEmail?: string;
+}
+
+/**
+ * Send an email directly for an order (either standard template or custom message).
+ */
+export async function sendOrderEmail(
+  orderNo: string,
+  input: SendOrderEmailInput,
+  ctx: AuditContext,
+) {
+  const order = await prisma.order.findUnique({
+    where: { orderNo },
+    select: {
+      ...ORDER_SELECT,
+      subtotalPaise: true,
+      discountPaise: true,
+      shippingPaise: true,
+      taxPaise: true,
+      paymentMethod: true,
+    },
+  });
+
+  if (!order) throw notFound('Order', orderNo);
+
+  const { ctx: emailCtx, email } = buildOrderEmailContext(order);
+  const recipientEmail = input.toEmail?.trim() || email;
+
+  let renderedSubject = input.subject?.trim() || '';
+  let renderedHtml = '';
+  const attachments: { name: string; content: string; mimeType: string }[] = [];
+
+  const templateChoice = input.template || (input.message ? 'custom' : 'order-placed');
+
+  if (templateChoice !== 'custom' && templates[templateChoice as CustomerTemplateName]) {
+    const build = templates[templateChoice as CustomerTemplateName];
+    const res = build(emailCtx as never, recipientEmail);
+    renderedSubject = renderedSubject || res.subject;
+    renderedHtml = res.html;
+  } else {
+    renderedSubject = renderedSubject || `Update regarding your order ${orderNo}`;
+    const heading = input.heading?.trim() || `Update regarding order ${orderNo}`;
+    const res = buildCustomEmail({
+      heading,
+      message: input.message?.trim() || 'Please review your order update.',
+      customerName: emailCtx.customerName,
+      subject: renderedSubject,
+    });
+    renderedHtml = res.html;
+  }
+
+  if (input.attachInvoice) {
+    try {
+      const taxConfig = await settingsService.getTaxConfig();
+      const pdf = await generateInvoicePdf(order as any, taxConfig);
+      const invoiceNo = order.invoiceNumber || orderNo;
+      attachments.push({
+        name: formatInvoiceFilename(invoiceNo, emailCtx.customerName),
+        content: Buffer.from(pdf).toString('base64'),
+        mimeType: 'application/pdf',
+      });
+    } catch (err) {
+      log.warn({ err, orderNo }, 'failed to generate invoice PDF for order email');
+    }
+  }
+
+  const row = await prisma.orderEmail.create({
+    data: {
+      orderId: order.id,
+      template: templateChoice,
+      subject: renderedSubject,
+      toEmail: recipientEmail,
+      status: EmailStatus.QUEUED,
+      bodyHtml: renderedHtml,
+    },
+  });
+
+  try {
+    const result = await sendEmail({
+      to: [{ email: recipientEmail, name: emailCtx.customerName }],
+      subject: renderedSubject,
+      htmlBody: renderedHtml,
+      attachments,
+      reference: orderNo,
+    });
+
+    await prisma.orderEmail.update({
+      where: { id: row.id },
+      data: {
+        status: result.sent ? EmailStatus.SENT : EmailStatus.QUEUED,
+        sentAt: result.sent ? new Date() : null,
+        providerMessageId: result.messageId,
+        error: result.skipped ? 'ZeptoMail not configured — send skipped' : null,
+      },
+    });
+
+    await writeAudit(ctx, {
+      module: AuditModule.ORDERS,
+      action: `Sent email "${renderedSubject}" to ${recipientEmail}`,
+      recordId: orderNo,
+    });
+
+    const updatedOrder = await prisma.order.findUniqueOrThrow({
+      where: { id: order.id },
+      select: ORDER_SELECT,
+    });
+    return serializeOrder(updatedOrder);
+  } catch (err: any) {
+    const errorMsg = (err?.message || 'Failed to send email').slice(0, 500);
+    await prisma.orderEmail.update({
+      where: { id: row.id },
+      data: {
+        status: EmailStatus.FAILED,
+        error: errorMsg,
+      },
+    });
+    throw err;
+  }
+}
+

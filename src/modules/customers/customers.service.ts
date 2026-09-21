@@ -10,11 +10,16 @@
  */
 import { AuditModule, CustomerStatus, PaymentStatus, type Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
-import { notFound } from '@/lib/errors';
+import { AppError, ErrorCode, notFound } from '@/lib/errors';
+import { logger } from '@/lib/logger';
 import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
 import { listMeta, toSkipTake } from '@/middleware/validate';
 import { toRupees } from '@/modules/products/products.serializer';
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS } from '@/modules/orders/orders.serializer';
+import { sendEmail } from '@/integrations/zeptomail/zeptomail.client';
+import { buildCustomEmail, type CustomEmailInput } from '@/integrations/zeptomail/templates';
+
+const log = logger.child({ module: 'customers.service' });
 
 export interface ListParams {
   page: number;
@@ -251,3 +256,140 @@ export async function setStatus(
 
   return byId(id);
 }
+
+export interface SendCustomerEmailInput {
+  audience: 'all' | 'with_orders' | 'selected' | 'custom';
+  customerIds?: string[];
+  customEmails?: string[];
+  subject: string;
+  heading: string;
+  message: string;
+  ctaText?: string | null;
+  ctaUrl?: string | null;
+}
+
+/**
+ * Renders live preview of a custom or broadcast email using the official Zewa Feeds email branding.
+ */
+export function previewCustomerEmail(input: {
+  heading: string;
+  message: string;
+  subject?: string;
+  ctaText?: string | null;
+  ctaUrl?: string | null;
+  customerName?: string | null;
+}) {
+  return buildCustomEmail(input);
+}
+
+/**
+ * Dispatches bulk common or custom emails to targeted customer groups or email addresses.
+ */
+export async function sendCustomerEmail(
+  input: SendCustomerEmailInput,
+  ctx: AuditContext,
+) {
+  let recipients: { email: string; name?: string }[] = [];
+
+  if (input.audience === 'all') {
+    const customers = await prisma.customer.findMany({
+      where: { status: CustomerStatus.ACTIVE },
+      select: { email: true, firstName: true, lastName: true },
+    });
+    recipients = customers.map((c) => ({
+      email: c.email.trim(),
+      name: `${c.firstName} ${c.lastName}`.trim(),
+    }));
+  } else if (input.audience === 'with_orders') {
+    const customers = await prisma.customer.findMany({
+      where: {
+        status: CustomerStatus.ACTIVE,
+        orders: { some: {} },
+      },
+      select: { email: true, firstName: true, lastName: true },
+    });
+    recipients = customers.map((c) => ({
+      email: c.email.trim(),
+      name: `${c.firstName} ${c.lastName}`.trim(),
+    }));
+  } else if (input.audience === 'selected') {
+    if (!input.customerIds?.length) {
+      throw new AppError(ErrorCode.BAD_REQUEST, 'No customers selected.');
+    }
+    const customers = await prisma.customer.findMany({
+      where: {
+        id: { in: input.customerIds },
+      },
+      select: { email: true, firstName: true, lastName: true },
+    });
+    recipients = customers.map((c) => ({
+      email: c.email.trim(),
+      name: `${c.firstName} ${c.lastName}`.trim(),
+    }));
+  } else if (input.audience === 'custom') {
+    if (!input.customEmails?.length) {
+      throw new AppError(ErrorCode.BAD_REQUEST, 'No email addresses provided.');
+    }
+    recipients = input.customEmails.map((e) => ({
+      email: e.trim(),
+    }));
+  }
+
+  const seen = new Set<string>();
+  const uniqueRecipients = recipients.filter((r) => {
+    const emailNorm = r.email.toLowerCase();
+    if (!emailNorm || !emailNorm.includes('@') || seen.has(emailNorm)) return false;
+    seen.add(emailNorm);
+    return true;
+  });
+
+  if (uniqueRecipients.length === 0) {
+    throw new AppError(ErrorCode.BAD_REQUEST, 'No valid recipients found.');
+  }
+
+  let sentCount = 0;
+  let failedCount = 0;
+  let skippedCount = 0;
+
+  for (const recipient of uniqueRecipients) {
+    const rendered = buildCustomEmail({
+      heading: input.heading,
+      message: input.message,
+      subject: input.subject,
+      ctaText: input.ctaText,
+      ctaUrl: input.ctaUrl,
+      customerName: recipient.name,
+    });
+
+    try {
+      const res = await sendEmail({
+        to: [{ email: recipient.email, name: recipient.name }],
+        subject: rendered.subject,
+        htmlBody: rendered.html,
+        reference: `broadcast-${input.audience}`,
+      });
+
+      if (res.sent) sentCount++;
+      else if (res.skipped) skippedCount++;
+      else failedCount++;
+    } catch (err) {
+      failedCount++;
+      log.error({ err, recipient: recipient.email }, 'failed to send customer email');
+    }
+  }
+
+  await writeAudit(ctx, {
+    module: AuditModule.CUSTOMERS,
+    action: `Broadcast email "${input.subject}" sent to ${uniqueRecipients.length} recipient(s) (audience: ${input.audience}, sent: ${sentCount}, skipped: ${skippedCount}, failed: ${failedCount})`,
+    recordId: `broadcast-${Date.now()}`,
+  });
+
+  return {
+    total: uniqueRecipients.length,
+    sentCount,
+    failedCount,
+    skippedCount,
+    message: `Email dispatched to ${uniqueRecipients.length} recipient${uniqueRecipients.length === 1 ? '' : 's'}.`,
+  };
+}
+

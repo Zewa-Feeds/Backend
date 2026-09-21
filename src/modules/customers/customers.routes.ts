@@ -57,3 +57,43 @@ customersRouter.patch(
     res.json({ data: customer });
   }),
 );
+
+const previewEmailSchema = z.object({
+  heading: z.string().trim().min(1, 'Heading is required.').max(200),
+  message: z.string().trim().min(1, 'Message is required.').max(10000),
+  subject: z.string().trim().max(200).optional(),
+  ctaText: z.string().trim().max(50).nullable().optional(),
+  ctaUrl: z.string().trim().nullable().optional(),
+  customerName: z.string().trim().max(100).nullable().optional(),
+});
+
+const sendEmailSchema = z.object({
+  audience: z.enum(['all', 'with_orders', 'selected', 'custom']),
+  customerIds: z.array(z.string().uuid()).optional(),
+  customEmails: z.array(z.string().email('Invalid email address.')).optional(),
+  subject: z.string().trim().min(1, 'Subject is required.').max(200),
+  heading: z.string().trim().min(1, 'Heading is required.').max(200),
+  message: z.string().trim().min(1, 'Message is required.').max(10000),
+  ctaText: z.string().trim().max(50).nullable().optional(),
+  ctaUrl: z.string().trim().nullable().optional(),
+});
+
+/** Generate live HTML preview for custom or broadcast email. */
+customersRouter.post(
+  '/preview-email',
+  validate({ body: previewEmailSchema }),
+  asyncHandler(async (req, res) => {
+    res.json({ data: customersService.previewCustomerEmail(req.body) });
+  }),
+);
+
+/** Send bulk common or custom emails to customers. */
+customersRouter.post(
+  '/send-email',
+  validate({ body: sendEmailSchema }),
+  asyncHandler(async (req, res) => {
+    const result = await customersService.sendCustomerEmail(req.body, auditContext(req));
+    res.json({ data: result });
+  }),
+);
+

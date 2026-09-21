@@ -713,11 +713,13 @@ model OrderEmail {
   id      String @id @default(uuid())
   orderId String
 
+  template          String?
   subject           String
   toEmail           String
   status            EmailStatus @default(QUEUED)
   providerMessageId String?
   error             String?
+  bodyHtml          String?
   queuedAt          DateTime    @default(now())
   sentAt            DateTime?
 

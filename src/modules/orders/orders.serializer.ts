@@ -73,7 +73,17 @@ export const ORDER_SELECT = {
     },
   },
   emails: {
-    select: { id: true, subject: true, toEmail: true, status: true, sentAt: true, queuedAt: true },
+    select: {
+      id: true,
+      subject: true,
+      toEmail: true,
+      status: true,
+      sentAt: true,
+      queuedAt: true,
+      error: true,
+      template: true,
+      bodyHtml: true,
+    },
     orderBy: { queuedAt: 'desc' },
   },
   refunds: {
