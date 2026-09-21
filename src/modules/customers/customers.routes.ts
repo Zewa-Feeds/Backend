@@ -24,7 +24,12 @@ const idParam = z.object({ id: z.string().uuid() });
 
 customersRouter.get(
   '/',
-  validate({ query: paginationSchema.extend({ status: enumFilter(z.nativeEnum(CustomerStatus)) }) }),
+  validate({
+    query: paginationSchema.extend({
+      status: enumFilter(z.nativeEnum(CustomerStatus)),
+      dir: z.enum(['asc', 'desc']).optional(),
+    }),
+  }),
   asyncHandler(async (req, res) => {
     res.json(await customersService.list(req.query as never));
   }),

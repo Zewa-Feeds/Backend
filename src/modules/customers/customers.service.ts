@@ -21,10 +21,12 @@ export interface ListParams {
   limit: number;
   q?: string;
   status?: CustomerStatus;
+  sort?: string;
+  dir?: 'asc' | 'desc';
 }
 
 /**
- * Customer list (§7.1) with lifetime totals.
+ * Customer list (§7.1) with lifetime totals and sorting.
  *
  * Only PAID orders count toward spend — an unpaid or refunded order is not
  * revenue, and showing it as lifetime value would mislead.
@@ -44,27 +46,22 @@ export async function list(params: ListParams) {
       : {}),
   };
 
-  const [rows, total] = await Promise.all([
-    prisma.customer.findMany({
-      where,
-      select: {
-        id: true,
-        email: true,
-        phone: true,
-        firstName: true,
-        lastName: true,
-        status: true,
-        registeredAt: true,
-        emailVerifiedAt: true,
-        orders: {
-          select: { totalPaise: true, paymentStatus: true },
-        },
+  const rows = await prisma.customer.findMany({
+    where,
+    select: {
+      id: true,
+      email: true,
+      phone: true,
+      firstName: true,
+      lastName: true,
+      status: true,
+      registeredAt: true,
+      emailVerifiedAt: true,
+      orders: {
+        select: { totalPaise: true, paymentStatus: true },
       },
-      orderBy: { registeredAt: 'desc' },
-      ...toSkipTake(params),
-    }),
-    prisma.customer.count({ where }),
-  ]);
+    },
+  });
 
   const data = rows.map((c) => {
     const spentPaise = c.orders
@@ -86,7 +83,35 @@ export async function list(params: ListParams) {
     };
   });
 
-  return { data, meta: listMeta(params.page, params.limit, total) };
+  const sort = params.sort || 'spend';
+  const dir = params.dir || (sort === 'name' ? 'asc' : 'desc');
+
+  data.sort((a, b) => {
+    if (sort === 'name') {
+      const diff = (a.name || a.email).localeCompare(b.name || b.email, undefined, { sensitivity: 'base' });
+      return dir === 'desc' ? -diff : diff;
+    }
+    if (sort === 'orders') {
+      const diff = dir === 'asc' ? a.orders - b.orders : b.orders - a.orders;
+      if (diff !== 0) return diff;
+      return (a.name || a.email).localeCompare(b.name || b.email, undefined, { sensitivity: 'base' });
+    }
+    if (sort === 'registered') {
+      const aTime = new Date(a.registeredAt).getTime();
+      const bTime = new Date(b.registeredAt).getTime();
+      return dir === 'asc' ? aTime - bTime : bTime - aTime;
+    }
+    // Default: 'spend' (Total ordered value)
+    const diff = dir === 'asc' ? a.spentPaise - b.spentPaise : b.spentPaise - a.spentPaise;
+    if (diff !== 0) return diff;
+    return (a.name || a.email).localeCompare(b.name || b.email, undefined, { sensitivity: 'base' });
+  });
+
+  const total = data.length;
+  const { skip, take } = toSkipTake(params);
+  const paged = data.slice(skip, skip + take);
+
+  return { data: paged, meta: listMeta(params.page, params.limit, total) };
 }
 
 /** Full profile (§7.2) — contact details, order history, addresses, reviews. */
