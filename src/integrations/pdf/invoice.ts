@@ -355,7 +355,7 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
     }
   }
 
-  text('Invoice', MARGIN, y, { size: 18, font: bold });
+  text('INVOICE', MARGIN, y, { size: 18, font: bold });
   textRight(env.COMPANY_NAME, PAGE_WIDTH - MARGIN, y, { size: 11, font: bold });
   y -= 16;
   /*
