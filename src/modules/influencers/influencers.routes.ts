@@ -58,8 +58,8 @@ const bodyFields = z.object({
 
   /** Total redemptions across all customers. Null/omitted means unlimited. */
   totalUsageLimit: z.number().int().positive().max(1_000_000).nullable().optional(),
-  /** How many times one customer may use it. */
-  perCustomerLimit: z.number().int().positive().max(1000).optional(),
+  /** How many times one customer may use it. Null/omitted means unlimited. */
+  perCustomerLimit: z.number().int().positive().nullable().optional(),
 
   /*
    * NON_STACKABLE by default — one percentage discount per order. The admin may

@@ -54,9 +54,8 @@ const couponBodySchema = z
     startsAt: z.coerce.date(),
     endsAt: z.coerce.date(),
     totalUsageLimit: z.coerce.number().int().positive().nullable().default(null),
-    // Nullable like totalUsageLimit above: null is unlimited. Defaults to 1
-    // so a coupon created without the field stays once-per-customer.
-    perCustomerLimit: z.coerce.number().int().positive().max(100).nullable().default(1),
+    // Nullable like totalUsageLimit above: null is unlimited.
+    perCustomerLimit: z.coerce.number().int().positive().nullable().default(null),
     isActive: z.boolean().default(true),
 
     /** ALL_PRODUCTS, or SPECIFIC_PRODUCTS with a non-empty productIds list. */
