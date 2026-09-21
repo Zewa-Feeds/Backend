@@ -42,6 +42,8 @@ export const ORDER_SELECT = {
   taxPaise: true,
   totalPaise: true,
   couponCode: true,
+  couponCodes: true,
+  appliedCoupons: true,
   shippingAddress: true,
   invoiceNumber: true,
   carrier: true,
@@ -64,6 +66,7 @@ export const ORDER_SELECT = {
       qty: true,
       unitPricePaise: true,
       lineTotalPaise: true,
+      allocatedCouponDiscountPaise: true,
       hsn: true,
       taxRatePct: true,
       variantId: true,
@@ -76,6 +79,20 @@ export const ORDER_SELECT = {
   refunds: {
     select: { id: true, amountPaise: true, reason: true, createdAt: true, processedBy: { select: { name: true } } },
     orderBy: { createdAt: 'desc' },
+  },
+  redemptions: {
+    select: {
+      couponId: true,
+      discountPaise: true,
+      coupon: {
+        select: {
+          code: true,
+          discountType: true,
+          scope: true,
+          name: true,
+        },
+      },
+    },
   },
   customer: { select: { id: true, firstName: true, lastName: true } },
 } satisfies Prisma.OrderSelect;

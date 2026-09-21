@@ -29,8 +29,12 @@ export interface TaxConfig {
 }
 
 export interface TaxableLine {
-  /** Line total as charged to the customer, in paise. */
-  lineTotalPaise: number;
+  /** Line total as charged to the customer, in paise (legacy or gross). */
+  lineTotalPaise?: number;
+  /** Gross line total before discount, in paise. */
+  grossPaise?: number;
+  /** Discount applied to this line, in paise. */
+  discountPaise?: number;
   /** Per-line rate, so a future mixed-rate catalogue still works. */
   taxRatePct: number;
 }
@@ -82,16 +86,23 @@ export function computeLineTax(
   const rate = line.taxRatePct;
   const isInterState = !sameState(customerState, config.sellerState);
 
+  const gross = line.grossPaise ?? line.lineTotalPaise ?? 0;
+  const discount = line.discountPaise ?? 0;
+  const netPaid = Math.max(0, gross - discount);
+
   let taxableValuePaise: number;
   let taxPaise: number;
 
-  if (config.gstInclusive) {
-    // Reverse-calculate: the charged amount already contains the tax.
-    taxPaise = Math.round((line.lineTotalPaise * rate) / (100 + rate));
-    taxableValuePaise = line.lineTotalPaise - taxPaise;
+  if (rate === 0) {
+    taxPaise = 0;
+    taxableValuePaise = netPaid;
+  } else if (config.gstInclusive) {
+    // Reverse-calculate: the net amount already contains the tax.
+    taxPaise = Math.round((netPaid * rate) / (100 + rate));
+    taxableValuePaise = netPaid - taxPaise;
   } else {
-    taxableValuePaise = line.lineTotalPaise;
-    taxPaise = Math.round((line.lineTotalPaise * rate) / 100);
+    taxableValuePaise = netPaid;
+    taxPaise = Math.round((taxableValuePaise * rate) / 100);
   }
 
   if (isInterState) {

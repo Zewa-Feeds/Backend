@@ -584,6 +584,8 @@ model Order {
   couponCode  String?
   /// Every code applied to this order, in the order the engine accepted them.
   couponCodes String[] @default([])
+  /// Applied promotions snapshot: [{ code, name, scope, discountType, amountPaise }]
+  appliedCoupons Json?
 
   // ---- Affiliate attribution snapshot -------------------------------------
   // Written once, when the order is created, and never updated. The influencer

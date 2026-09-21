@@ -380,8 +380,8 @@ export interface InfluencerInput {
   maxDiscountPaise?: number | null;
   /** Total redemptions allowed across all customers. Null for unlimited. */
   totalUsageLimit?: number | null;
-  /** How many times ONE customer may use it. */
-  perCustomerLimit?: number;
+  /** How many times ONE customer may use it. Null for unlimited. */
+  perCustomerLimit?: number | null;
   stackingMode?: AffiliateStacking;
   /** States this code may be used for delivery to. Empty means everywhere. */
   allowedStates?: string[];

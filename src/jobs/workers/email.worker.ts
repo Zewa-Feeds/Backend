@@ -121,6 +121,8 @@ async function handleCustomerEmail(job: Job<EmailJob>): Promise<void> {
         shippingPaise: true,
         totalPaise: true,
         couponCode: true,
+        couponCodes: true,
+        appliedCoupons: true,
         items: {
           select: {
             productName: true,
@@ -129,8 +131,23 @@ async function handleCustomerEmail(job: Job<EmailJob>): Promise<void> {
             qty: true,
             unitPricePaise: true,
             lineTotalPaise: true,
+            allocatedCouponDiscountPaise: true,
             hsn: true,
             taxRatePct: true,
+          },
+        },
+        redemptions: {
+          select: {
+            couponId: true,
+            discountPaise: true,
+            coupon: {
+              select: {
+                code: true,
+                discountType: true,
+                scope: true,
+                name: true,
+              },
+            },
           },
         },
       },

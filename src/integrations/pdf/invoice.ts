@@ -11,7 +11,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PDFDocument, StandardFonts, rgb, type PDFFont } from 'pdf-lib';
-import { computeInvoiceTax, formatInr, type TaxConfig } from '@/modules/orders/tax';
+import { computeInvoiceTax, formatInr, type TaxConfig, type TaxableLine } from '@/modules/orders/tax';
 import { env } from '@/config/env';
 import { logger } from '@/lib/logger';
 
@@ -54,7 +54,19 @@ export interface InvoiceOrder {
   discountPaise: number;
   shippingPaise: number;
   totalPaise: number;
-  couponCode: string | null;
+  couponCode?: string | null;
+  couponCodes?: string[];
+  appliedCoupons?: unknown;
+  redemptions?: {
+    couponId?: string;
+    discountPaise?: number;
+    coupon?: {
+      code?: string;
+      discountType?: string;
+      scope?: string;
+      name?: string | null;
+    } | null;
+  }[];
   items: {
     productName: string;
     sku: string;
@@ -62,6 +74,7 @@ export interface InvoiceOrder {
     qty: number;
     unitPricePaise: number;
     lineTotalPaise: number;
+    allocatedCouponDiscountPaise?: number;
     hsn: string;
     taxRatePct: unknown;
   }[];
@@ -77,10 +90,18 @@ interface Address {
   phone?: string;
 }
 
+export interface AppliedCouponRecord {
+  code: string;
+  scope: 'item' | 'cart' | 'shipping';
+  discountType?: string;
+  amountPaise: number;
+}
+
 // A4 in points.
 const PAGE_WIDTH = 595.28;
 const PAGE_HEIGHT = 841.89;
-const MARGIN = 40;
+const MARGIN = 36;
+const DEFAULT_STANDARD_SHIPPING_PAISE = 6000; // ₹60.00 default standard shipping fee
 
 const INK = rgb(0.05, 0.07, 0.1);
 const MUTED = rgb(0.45, 0.48, 0.55);
@@ -93,7 +114,95 @@ const TEAL = rgb(0.05, 0.72, 0.62);
  * dependency for one glyph, so amounts print as "Rs." instead, which is
  * unambiguous on a tax invoice.
  */
-const money = (paise: number): string => formatInr(paise).replace('₹', 'Rs.');
+const money = (paise: number): string => formatInr(paise).replace('₹', 'Rs. ');
+const formatDecimal = (paise: number): string => (paise / 100).toFixed(2);
+
+/**
+ * Resolves coupon records from order snapshot or redemptions.
+ * Distinguishes shipping coupons (e.g. ZEWA1) from item/cart coupons (e.g. SPECIAL10).
+ */
+export function resolveOrderAppliedCoupons(
+  order: InvoiceOrder,
+  defaultShippingFeePaise = DEFAULT_STANDARD_SHIPPING_PAISE,
+): AppliedCouponRecord[] {
+  if (Array.isArray(order.appliedCoupons) && order.appliedCoupons.length > 0) {
+    return (order.appliedCoupons as any[]).map((c) => ({
+      code: String(c.code || ''),
+      scope: (c.scope === 'shipping' ? 'shipping' : c.scope === 'item' ? 'item' : 'cart') as
+        | 'item'
+        | 'cart'
+        | 'shipping',
+      discountType: c.discountType ? String(c.discountType) : undefined,
+      amountPaise: Number(c.amountPaise) || 0,
+    }));
+  }
+
+  if (order.redemptions && order.redemptions.length > 0) {
+    const list: AppliedCouponRecord[] = [];
+    for (const r of order.redemptions) {
+      const code = r.coupon?.code || 'COUPON';
+      const isShipping = r.coupon?.discountType === 'FREE_SHIPPING';
+      const isItem = r.coupon?.scope === 'SPECIFIC_PRODUCTS';
+      const scope: 'item' | 'cart' | 'shipping' = isShipping ? 'shipping' : isItem ? 'item' : 'cart';
+      const amountPaise = isShipping
+        ? (order.shippingPaise > 0 ? order.shippingPaise : defaultShippingFeePaise)
+        : (r.discountPaise ?? 0);
+      list.push({ code, scope, discountType: r.coupon?.discountType, amountPaise });
+    }
+    const nonShipping = list.filter((c) => c.scope !== 'shipping');
+    const nonShippingTotal = nonShipping.reduce((sum, c) => sum + c.amountPaise, 0);
+    const firstNonShipping = nonShipping[0];
+    if (nonShippingTotal === 0 && order.discountPaise > 0 && firstNonShipping) {
+      firstNonShipping.amountPaise = order.discountPaise;
+    }
+    return list;
+  }
+
+  if (order.couponCode && order.discountPaise > 0) {
+    return [{ code: order.couponCode, scope: 'cart', amountPaise: order.discountPaise }];
+  }
+
+  return [];
+}
+
+/**
+ * Allocates cart discount pro-rata across item lines according to each line's gross value.
+ * Guaranteed to add up exactly to totalDiscountPaise.
+ */
+export function allocateCartDiscount(
+  lines: { lineTotalPaise: number; allocatedCouponDiscountPaise?: number }[],
+  totalDiscountPaise: number,
+): number[] {
+  const existingSum = lines.reduce((sum, l) => sum + (l.allocatedCouponDiscountPaise ?? 0), 0);
+  if (existingSum > 0 && existingSum === totalDiscountPaise) {
+    return lines.map((l) => l.allocatedCouponDiscountPaise ?? 0);
+  }
+
+  const totalGross = lines.reduce((sum, l) => sum + l.lineTotalPaise, 0);
+  if (totalDiscountPaise <= 0 || totalGross <= 0) return lines.map(() => 0);
+
+  let assigned = 0;
+  const out = lines.map((l) => {
+    const share = Math.floor((totalDiscountPaise * l.lineTotalPaise) / totalGross);
+    assigned += share;
+    return share;
+  });
+
+  const remainder = totalDiscountPaise - assigned;
+  if (remainder > 0 && lines.length > 0) {
+    let biggest = 0;
+    for (let i = 1; i < lines.length; i++) {
+      const curr = lines[i];
+      const prev = lines[biggest];
+      if (curr && prev && curr.lineTotalPaise > prev.lineTotalPaise) biggest = i;
+    }
+    const currentShare = out[biggest];
+    if (currentShare !== undefined) {
+      out[biggest] = currentShare + remainder;
+    }
+  }
+  return out;
+}
 
 /**
  * Break a comma-separated address into lines that fit the invoice's right-hand
@@ -148,14 +257,41 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
   const addr = (order.shippingAddress ?? {}) as Address;
   const customerState = addr.state ?? taxConfig.sellerState;
 
-  const tax = computeInvoiceTax(
-    order.items.map((i) => ({
-      lineTotalPaise: i.lineTotalPaise,
-      taxRatePct: Number(i.taxRatePct),
+  // Resolve applied coupons (distinguishing shipping coupons like ZEWA1 from item/cart coupons like SPECIAL10)
+  const appliedCoupons = resolveOrderAppliedCoupons(order);
+  const shippingCoupon = appliedCoupons.find((c) => c.scope === 'shipping');
+  const cartCoupons = appliedCoupons.filter((c) => c.scope === 'cart');
+  const itemCoupons = appliedCoupons.filter((c) => c.scope === 'item');
+
+  // Shipping fee and discount
+  let shippingFeePaise = order.shippingPaise;
+  let shippingDiscountPaise = 0;
+
+  if (shippingCoupon) {
+    shippingFeePaise =
+      shippingCoupon.amountPaise > 0 ? shippingCoupon.amountPaise : DEFAULT_STANDARD_SHIPPING_PAISE;
+    shippingDiscountPaise = shippingFeePaise;
+  }
+
+  // Cart discount pro-rata across item lines
+  const totalCartDiscountPaise = cartCoupons.reduce((sum, c) => sum + c.amountPaise, 0);
+  const lineDiscounts = allocateCartDiscount(order.items, totalCartDiscountPaise);
+
+  const productTaxRatePct = Number(order.items[0]?.taxRatePct ?? taxConfig.gstRatePct ?? 0);
+  const taxableLines: TaxableLine[] = [
+    ...order.items.map((item, idx) => ({
+      grossPaise: item.lineTotalPaise,
+      discountPaise: lineDiscounts[idx],
+      taxRatePct: Number(item.taxRatePct),
     })),
-    taxConfig,
-    customerState,
-  );
+    {
+      grossPaise: shippingFeePaise,
+      discountPaise: shippingDiscountPaise,
+      taxRatePct: productTaxRatePct,
+    },
+  ];
+
+  const tax = computeInvoiceTax(taxableLines, taxConfig, customerState);
 
   let y = PAGE_HEIGHT - MARGIN;
 
@@ -199,7 +335,7 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
   /*
    * Logo above the title, on the left.
    *
-   * Drawn first so `y` can drop by its height before "TAX INVOICE" is placed —
+   * Drawn first so `y` can drop by its height before "Invoice" is placed —
    * the company block on the right is anchored to the same `y`, so both stay
    * aligned whether or not the logo loaded.
    */
@@ -219,11 +355,11 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
     }
   }
 
-  text('TAX INVOICE', MARGIN, y, { size: 18, font: bold });
+  text('Invoice', MARGIN, y, { size: 18, font: bold });
   textRight(env.COMPANY_NAME, PAGE_WIDTH - MARGIN, y, { size: 11, font: bold });
   y -= 16;
   /*
-   * The registered address is long enough to run into the "TAX INVOICE"
+   * The registered address is long enough to run into the "Invoice"
    * heading on the left as a single right-aligned line, so it is wrapped on
    * commas into chunks that fit the right-hand column.
    */
@@ -294,47 +430,101 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
   rule(y);
   y -= 16;
 
-  // ---- Line items --------------------------------------------------------
-  // Columns are right-edge positions for numerics, left for text.
+  // ---- Line items (10 columns as specified in doc) -------------------------
+  // Columns: right-edge positions for numerics, left for text.
   const COL = {
-    item: MARGIN,
-    hsn: 268,
-    qty: 320,
-    rate: 392,
-    taxPct: 440,
-    total: PAGE_WIDTH - MARGIN,
+    item: MARGIN,     // 36 (left)
+    hsn: 180,         // 180 (left)
+    qty: 238,         // right
+    rate: 282,        // right
+    gross: 326,       // right
+    discount: 410,    // right
+    taxable: 456,     // right
+    gstPct: 488,      // right
+    gstInr: 522,      // right
+    total: PAGE_WIDTH - MARGIN, // 559.28 (right)
   };
 
-  text('ITEM', COL.item, y, { size: 7, font: bold, color: MUTED });
+  text('ITEM / SKU', COL.item, y, { size: 7, font: bold, color: MUTED });
   text('HSN', COL.hsn, y, { size: 7, font: bold, color: MUTED });
   textRight('QTY', COL.qty, y, { size: 7, font: bold, color: MUTED });
   textRight('RATE', COL.rate, y, { size: 7, font: bold, color: MUTED });
-  textRight('GST', COL.taxPct, y, { size: 7, font: bold, color: MUTED });
+  textRight('GROSS', COL.gross, y, { size: 7, font: bold, color: MUTED });
+  textRight('DISCOUNT', COL.discount, y, { size: 7, font: bold, color: MUTED });
+  textRight('TAXABLE', COL.taxable, y, { size: 7, font: bold, color: MUTED });
+  textRight('GST %', COL.gstPct, y, { size: 7, font: bold, color: MUTED });
+  textRight('GST (Rs.)', COL.gstInr, y, { size: 7, font: bold, color: MUTED });
   textRight('AMOUNT', COL.total, y, { size: 7, font: bold, color: MUTED });
   y -= 6;
   rule(y);
   y -= 14;
 
-  for (const item of order.items) {
-    // Truncate rather than wrap: keeps row height fixed so the table stays aligned.
-    const name = item.productName.length > 38 ? `${item.productName.slice(0, 37)}…` : item.productName;
-    text(name, COL.item, y, { size: 8.5 });
-    text(item.hsn, COL.hsn, y, { size: 8 , color: MUTED });
-    textRight(String(item.qty), COL.qty, y, { size: 8.5 });
-    textRight(money(item.unitPricePaise), COL.rate, y, { size: 8.5 });
-    textRight(`${Number(item.taxRatePct)}%`, COL.taxPct, y, { size: 8, color: MUTED });
-    textRight(money(item.lineTotalPaise), COL.total, y, { size: 8.5 });
-    y -= 11;
+  const cartCodeLabel = cartCoupons.map((c) => c.code).join(', ');
 
-    text(`${item.sku} · ${item.pack}`, COL.item, y, { size: 7.5, color: MUTED });
-    y -= 14;
+  for (let idx = 0; idx < order.items.length; idx++) {
+    const item = order.items[idx];
+    if (!item) continue;
+    const lineDiscount = lineDiscounts[idx] ?? 0;
+    const lineTaxable = Math.max(0, item.lineTotalPaise - lineDiscount);
+    const ratePct = Number(item.taxRatePct);
+    const lineTax = Math.round((lineTaxable * ratePct) / 100);
+    const lineAmount = lineTaxable + lineTax;
+
+    const discountLabel =
+      lineDiscount > 0
+        ? `${formatDecimal(lineDiscount)}${cartCodeLabel ? ` (${cartCodeLabel})` : ''}`
+        : '0.00';
+
+    // Truncate rather than wrap: keeps row height fixed so the table stays aligned.
+    const name = item.productName.length > 28 ? `${item.productName.slice(0, 27)}…` : item.productName;
+    text(name, COL.item, y, { size: 8 });
+    text(item.hsn, COL.hsn, y, { size: 7.5, color: MUTED });
+    textRight(String(item.qty), COL.qty, y, { size: 8 });
+    textRight(formatDecimal(item.unitPricePaise), COL.rate, y, { size: 8 });
+    textRight(formatDecimal(item.lineTotalPaise), COL.gross, y, { size: 8 });
+    textRight(discountLabel, COL.discount, y, { size: 7.5 });
+    textRight(formatDecimal(lineTaxable), COL.taxable, y, { size: 8 });
+    textRight(`${ratePct}%`, COL.gstPct, y, { size: 7.5 });
+    textRight(formatDecimal(lineTax), COL.gstInr, y, { size: 7.5 });
+    textRight(formatDecimal(lineAmount), COL.total, y, { size: 8 });
+    y -= 10;
+
+    text(`${item.sku} · ${item.pack}`, COL.item, y, { size: 7, color: MUTED });
+    y -= 13;
   }
+
+  // Shipping & Handling row
+  const shippingTaxable = Math.max(0, shippingFeePaise - shippingDiscountPaise);
+  const shipTax = Math.round((shippingTaxable * productTaxRatePct) / 100);
+  const shipAmount = shippingTaxable + shipTax;
+  const shipDiscountLabel =
+    shippingDiscountPaise > 0
+      ? `${formatDecimal(shippingDiscountPaise)} (${shippingCoupon?.code || 'ZEWA1'})`
+      : '0.00';
+
+  text('Shipping & Handling', COL.item, y, { size: 8 });
+  text('—', COL.hsn, y, { size: 7.5, color: MUTED });
+  textRight('1', COL.qty, y, { size: 8 });
+  textRight(formatDecimal(shippingFeePaise), COL.rate, y, { size: 8 });
+  textRight(formatDecimal(shippingFeePaise), COL.gross, y, { size: 8 });
+  textRight(shipDiscountLabel, COL.discount, y, { size: 7.5 });
+  textRight(formatDecimal(shippingTaxable), COL.taxable, y, { size: 8 });
+  textRight(`${productTaxRatePct}%`, COL.gstPct, y, { size: 7.5 });
+  textRight(formatDecimal(shipTax), COL.gstInr, y, { size: 7.5 });
+  textRight(formatDecimal(shipAmount), COL.total, y, { size: 8 });
+  y -= 10;
+
+  text('Standard Delivery', COL.item, y, { size: 7, color: MUTED });
+  y -= 14;
 
   rule(y);
   y -= 18;
 
-  // ---- Totals ------------------------------------------------------------
-  const labelX = PAGE_WIDTH - MARGIN - 170;
+  // ---- Summary block (in requested sequence) ------------------------------
+  const totalGrossPaise = order.items.reduce((sum, i) => sum + i.lineTotalPaise, 0) + shippingFeePaise;
+  const totalTaxablePaise = tax.taxableValuePaise;
+
+  const labelX = PAGE_WIDTH - MARGIN - 180;
   const totalRow = (label: string, value: string, opts: { strong?: boolean } = {}) => {
     text(label, labelX, y, {
       size: opts.strong ? 10 : 8.5,
@@ -348,9 +538,30 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
     y -= opts.strong ? 16 : 13;
   };
 
-  totalRow('Taxable value', money(tax.taxableValuePaise));
+  // 1. Gross value
+  totalRow('Gross value', money(totalGrossPaise));
 
-  // §6.5: CGST + SGST intra-state, IGST inter-state.
+  // 2. Less: Cart/Item coupons
+  for (const c of cartCoupons) {
+    if (c.amountPaise > 0) {
+      totalRow(`Less: ${c.code}`, `- ${money(c.amountPaise)}`);
+    }
+  }
+  for (const c of itemCoupons) {
+    if (c.amountPaise > 0) {
+      totalRow(`Less: ${c.code}`, `- ${money(c.amountPaise)}`);
+    }
+  }
+
+  // 3. Less: Shipping coupon
+  if (shippingCoupon && shippingDiscountPaise > 0) {
+    totalRow(`Less: ${shippingCoupon.code} (shipping)`, `- ${money(shippingDiscountPaise)}`);
+  }
+
+  // 4. Taxable Value
+  totalRow('Taxable Value', money(totalTaxablePaise));
+
+  // 5. Taxes (CGST & SGST or IGST)
   if (tax.isInterState) {
     for (const g of tax.byRate) {
       totalRow(`IGST @ ${g.ratePct}%`, money(g.igstPaise));
@@ -362,14 +573,7 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
     }
   }
 
-  if (order.discountPaise > 0) {
-    totalRow(
-      order.couponCode ? `Discount (${order.couponCode})` : 'Discount',
-      `- ${money(order.discountPaise)}`,
-    );
-  }
-  totalRow('Shipping', order.shippingPaise === 0 ? 'FREE' : money(order.shippingPaise));
-
+  // 6. Grand Total
   y -= 4;
   page.drawLine({
     start: { x: labelX, y },

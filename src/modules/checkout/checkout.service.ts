@@ -650,6 +650,19 @@ export async function checkout(
           totalPaise: Math.max(0, cart.totalPaise - coinDiscountPaise),
           couponCode: cart.coupon?.code ?? null,
           couponCodes: cart.coupons.map((c) => c.code),
+          appliedCoupons: cart.coupons.map((c) => ({
+            code: c.code,
+            name: c.name,
+            scope: c.freeShipping
+              ? 'shipping'
+              : c.appliedTo?.length
+                ? 'item'
+                : 'cart',
+            discountType: c.discountType,
+            amountPaise: c.freeShipping
+              ? (cart.calculatedShippingPaise || 6000)
+              : c.discountPaise,
+          })) as Prisma.InputJsonValue,
           /*
            * Affiliate attribution, written once and never updated. Derived from
            * promotions the engine actually priced, so the percentage and the

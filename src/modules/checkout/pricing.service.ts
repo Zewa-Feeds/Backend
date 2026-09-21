@@ -50,6 +50,7 @@ export interface PricedCart {
   subtotalPaise: number;
   discountPaise: number;
   shippingPaise: number;
+  calculatedShippingPaise?: number;
   taxPaise: number;
   totalPaise: number;
   /** The primary applied promotion — first in the stack. Null when none applied. */
@@ -457,6 +458,7 @@ export async function priceCart(input: {
     subtotalPaise,
     discountPaise,
     shippingPaise,
+    calculatedShippingPaise,
     taxPaise: taxSummary.totalTaxPaise,
     totalPaise,
     coupon,
