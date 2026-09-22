@@ -7,14 +7,19 @@
  *
  * TWO DIFFERENT THINGS are imported, and conflating them would be a lie:
  *
- *   - the star COUNTS (468 ratings), onto ProductFamily. These drive the
- *     headline figure beside the price.
- *   - the 42 reviews that actually had text, as Review rows. These are what
- *     the page can list.
+ *   - the star COUNTS, onto ProductFamily. These drive the headline figure
+ *     beside the price.
+ *   - the reviews that actually had text, as Review rows. These are what the
+ *     page can list.
  *
- * The other 426 ratings have no text and are NOT written as rows. Generating a
- * row per rating would put hundreds of invented reviews in the table, each
- * indistinguishable from one a real customer left here.
+ * Most ratings have no text and are NOT written as rows: today that is 81
+ * texts behind 468 ratings. Generating a row per rating would put hundreds of
+ * invented reviews in the table, each indistinguishable from one a real
+ * customer left here.
+ *
+ * Every review slot the sheet carries is read, however many there are — the
+ * parser that builds amazon-reviews.json discovers them rather than assuming a
+ * fixed five, which silently dropped 39 reviews when the sheet grew to 15.
  *
  * IDEMPOTENT. Re-running replaces this source's baseline and its imported
  * reviews, and never touches a review written on this site.
@@ -78,6 +83,32 @@ async function main() {
           `states ${row.stated_average}. Refusing to import a baseline that ` +
           `does not match its own source.`,
       );
+    }
+
+    /*
+     * The baseline must never claim FEWER ratings than the reviews we import.
+     *
+     * Koi Bites arrived with 3 written reviews against a 2-rating baseline —
+     * the star breakdown and the review list were scraped at different times.
+     * Left alone the page would list three reviews under "2 ratings", and the
+     * third would not be counted in the average at all. Widening the baseline
+     * to the number of real reviews is the conservative repair: it adds only
+     * ratings we can actually see the text of.
+     */
+    if (row.reviews.length > row.total) {
+      const extra = row.reviews.length - row.total;
+      const byStar = [0, 0, 0, 0, 0];
+      for (const r of row.reviews) {
+        const star = r.rating ?? 5;
+        byStar[5 - star] = (byStar[5 - star] ?? 0) + 1;
+      }
+      logger.warn(
+        { module: 'import-reviews', slug: row.slug, ratings: row.total, texts: row.reviews.length },
+        `${row.slug}: ${extra} more review(s) than the baseline counts — ` +
+          `widening the baseline to match the reviews themselves`,
+      );
+      row.stars = byStar;
+      row.total = row.reviews.length;
     }
 
     if (dryRun) {
