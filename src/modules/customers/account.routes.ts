@@ -112,6 +112,58 @@ export const requireCustomer: RequestHandler = async (req, _res, next) => {
   }
 };
 
+/**
+ * Identity WITHOUT requiring it.
+ *
+ * Attaches `req.customer` when a valid session token is present and stays
+ * silent otherwise — no 401, no thrown error. Public endpoints that price a
+ * cart need this: the promotion engine decides "first order only" from the
+ * identity it is given, and an endpoint that cannot see the signed-in customer
+ * treats them as a brand-new one.
+ *
+ * A bad, expired or banned token is treated as ANONYMOUS rather than rejected,
+ * because these routes are legitimately usable signed out. It never grants
+ * more than a valid token would.
+ */
+export const optionalCustomer: RequestHandler = async (req, _res, next) => {
+  try {
+    const header = req.get('authorization');
+    if (!header?.startsWith('Bearer ')) return next();
+
+    const claims = verifyCustomerToken(header.slice(7).trim());
+    const customer = await prisma.customer.findUnique({
+      where: { id: claims.sub },
+      select: {
+        id: true,
+        email: true,
+        status: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        registeredAt: true,
+      },
+    });
+
+    // A banned customer is simply not identified here. The ban is enforced
+    // where it matters — login and order placement — and refusing to price a
+    // cart would only be a confusing way to say it.
+    if (customer && customer.status !== CustomerStatus.BANNED) {
+      req.customer = {
+        id: customer.id,
+        email: customer.email,
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+        phone: customer.phone,
+        registeredAt: customer.registeredAt,
+      };
+    }
+    next();
+  } catch {
+    // Unreadable token: carry on as a guest.
+    next();
+  }
+};
+
 // ============================================================================
 // AUTH
 // ============================================================================

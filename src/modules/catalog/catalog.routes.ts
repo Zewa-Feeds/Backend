@@ -30,6 +30,7 @@ import { reviewSummary } from '@/modules/reviews/rating';
 import { priceCart } from '@/modules/checkout/pricing.service';
 import { enabledPaymentMethods } from '@/integrations/razorpay/payment.service';
 import * as couponsService from '@/modules/coupons/coupons.service';
+import { optionalCustomer } from '@/modules/customers/account.routes';
 
 export const catalogRouter = Router();
 
@@ -500,9 +501,31 @@ catalogRouter.post(
   // Only counts against the budget when a coupon code is attached, so ordinary
   // re-pricing is unthrottled while code-guessing is not.
   cartCouponLimiter,
+  // Identifies a signed-in shopper without requiring one, so eligibility is
+  // decided from the SESSION rather than from whatever the client sends.
+  optionalCustomer,
   validate({ body: cartLinesSchema }),
   asyncHandler(async (req, res) => {
-    const cart = await priceCart(req.body);
+    /*
+     * The signed-in identity WINS over the request body.
+     *
+     * "First order only" was decided from `email` alone, and the cart only
+     * sends one once the checkout form has been filled in. So a signed-in
+     * customer re-pricing before they had typed their address looked anonymous
+     * — `identified` was false, the prior-order count was skipped entirely,
+     * and ZEWA1 was offered to someone who had already used it. Changing the
+     * delivery address re-priced and flipped it back, which is why it appeared
+     * to depend on the address.
+     *
+     * The body's email is still honoured for a genuine guest, who has no
+     * session to read. It can no longer override a real one.
+     */
+    const body = req.body as Record<string, unknown>;
+    const cart = await priceCart({
+      ...body,
+      email: req.customer?.email ?? (body.email as string | undefined),
+      customerId: req.customer?.id ?? null,
+    } as never);
     res.json({ data: cart });
   }),
 );
@@ -522,6 +545,8 @@ catalogRouter.post(
 catalogRouter.post(
   '/coupons/validate',
   couponLimiter,
+  // Same reason as /cart/validate: eligibility is the session's to decide.
+  optionalCustomer,
   validate({
     body: z.object({
       code: z.string().trim().min(1).max(30),
@@ -545,7 +570,9 @@ catalogRouter.post(
       // set is what lets the engine report a stacking conflict here rather than
       // letting the customer discover it at checkout.
       couponCodes: [...(req.body.applied ?? []), req.body.code],
-      email: req.body.email,
+      // Session identity wins; the body's email only serves a real guest.
+      email: req.customer?.email ?? req.body.email,
+      customerId: req.customer?.id ?? null,
       state: req.body.state,
     });
 
