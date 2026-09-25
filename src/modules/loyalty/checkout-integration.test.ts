@@ -21,6 +21,16 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
  */
 vi.hoisted(() => {
   process.env.PAYMENT_COD_ENABLED = 'true';
+  /*
+   * Use the MOCK payment provider for the RAZORPAY tests below.
+   *
+   * Without this `paymentProvider()` picks the live client, and a gateway test
+   * would either reach Razorpay's API or fail with "Razorpay is unavailable"
+   * depending on whether keys happen to be set — neither of which says anything
+   * about the amount this codebase asks for. The mock echoes `amountPaise`, which
+   * is exactly the boundary under test.
+   */
+  process.env.RAZORPAY_AUTO_CONFIRM = 'true';
 });
 
 // The queues are Redis-backed; the coin paths under test never read them back,
@@ -500,5 +510,346 @@ describe('Cart changes after applying (§4.1)', () => {
     });
     expect(result.held).toBe(100);
     expect(result.reduced).toBe(true);
+  });
+});
+
+/*
+ * THE GATEWAY BOUNDARY — the defect this section exists for.
+ *
+ * A 376-coin checkout displayed ₹0.20 and created a ₹376.20 Razorpay order: the
+ * customer paid full price AND lost the coins. The cause was the retry comparison
+ *
+ *     existing.totalPaise === cart.totalPaise
+ *
+ * comparing the stored order total (net of coins) against the freshly priced cart
+ * (which `priceCart` computes WITHOUT coins). Those never match when coins are
+ * applied, so every attempt superseded itself into a full-price order.
+ *
+ * These use RAZORPAY rather than COD, because COD never reaches a gateway and so
+ * cannot observe the amount actually charged.
+ */
+describe('The amount charged equals the amount owed (§4.1)', () => {
+  /** Place an online order, returning both the order row and the gateway amount. */
+  async function placeOnline(customerId: string, extra: Record<string, unknown> = {}) {
+    const result = await checkoutService.checkout(
+      {
+        lines: [{ sku: variantSku, qty: 1 }],
+        email: `${TAG}-buyer@zewafeeds.test`,
+        phone: '+919000000009',
+        shippingAddress: {
+          name: 'Chk Test',
+          phone: '+919000000009',
+          line1: 'Line 1',
+          city: 'Kochi',
+          state: 'Kerala',
+          pincode: '682001',
+        },
+        paymentMethod: PaymentMethod.RAZORPAY,
+        customerId,
+        ...extra,
+      } as Parameters<typeof checkoutService.checkout>[0],
+      ctx as Parameters<typeof checkoutService.checkout>[1],
+    );
+    const row = await prisma.order.findFirstOrThrow({
+      where: { orderNo: result.orderNo },
+      select: { id: true, totalPaise: true, razorpayOrderId: true },
+    });
+    return { result, row };
+  }
+
+  it('charges the discounted total, not the pre-coin cart total', async () => {
+    const { customerId } = await seedCustomer('gw-discount', 500);
+    const cartKey = `${TAG}-gw-${Date.now()}`;
+    await hold(customerId, 200, cartKey);
+
+    const { result, row } = await placeOnline(customerId, { coinCartKey: cartKey });
+
+    // The order records the discounted figure...
+    expect(row.totalPaise).toBe(result.totalPaise);
+    // ...and that is exactly what the gateway was asked for. This is the
+    // assertion the buggy implementation failed.
+    expect(result.payment.amountPaise).toBe(row.totalPaise);
+  });
+
+  /*
+   * The reported case, to the rupee. 376 coins against a cart whose total leaves
+   * ₹0.20 payable — the shape that charged ₹376.20.
+   */
+  it('leaves only the shipping remainder payable when coins cover the products', async () => {
+    const { customerId } = await seedCustomer('gw-376', 400);
+    const cartKey = `${TAG}-gw376-${Date.now()}`;
+
+    /*
+     * `reserve` reports what it actually held, which is 376 or the order ceiling,
+     * whichever is lower — the ceiling depends on the fixture's price and must not
+     * be hard-coded here.
+     */
+    const held = await hold(customerId, 376, cartKey);
+    const coins = held.held;
+    expect(coins).toBeGreaterThan(0);
+
+    const { result, row } = await placeOnline(customerId, { coinCartKey: cartKey });
+
+    const before = await placeOnlineTotalWithoutCoins(customerId);
+    expect(row.totalPaise).toBe(before - coins * 100);
+    expect(result.payment.amountPaise).toBe(row.totalPaise);
+  });
+
+  /** The same cart priced with no hold at all, for the delta above. */
+  async function placeOnlineTotalWithoutCoins(_customerId: string) {
+    const { customerId } = await seedCustomer('gw-baseline', 0);
+    const { row } = await placeOnline(customerId);
+    return row.totalPaise;
+  }
+
+  it('applies no discount when no hold exists', async () => {
+    const { customerId } = await seedCustomer('gw-nohold', 500);
+    const { result, row } = await placeOnline(customerId);
+    expect(result.payment.amountPaise).toBe(row.totalPaise);
+  });
+
+  it('applies no discount when the hold has expired', async () => {
+    const { customerId, accountId } = await seedCustomer('gw-expired', 500);
+    const cartKey = `${TAG}-gw-exp-${Date.now()}`;
+    await hold(customerId, 200, cartKey);
+    // Expire it exactly as the sweeper would find it.
+    await prisma.coinReservation.updateMany({
+      where: { accountId, cartKey },
+      data: { expiresAt: new Date(Date.now() - 60_000) },
+    });
+
+    const baseline = await placeOnlineTotalWithoutCoins(customerId);
+    const { result, row } = await placeOnline(customerId, { coinCartKey: cartKey });
+
+    expect(row.totalPaise).toBe(baseline);
+    expect(result.payment.amountPaise).toBe(row.totalPaise);
+  });
+
+  it('never prices an order below zero, however many coins are held', async () => {
+    const { customerId } = await seedCustomer('gw-floor', 100000);
+    const cartKey = `${TAG}-gw-floor-${Date.now()}`;
+    // Far more coins than the order can absorb; reserve caps it at the ceiling.
+    await hold(customerId, 100000, cartKey);
+
+    const { result, row } = await placeOnline(customerId, { coinCartKey: cartKey });
+
+    expect(row.totalPaise).toBeGreaterThanOrEqual(0);
+    expect(result.payment.amountPaise).toBe(row.totalPaise);
+  });
+});
+
+/*
+ * RETRY. A dismissed Razorpay modal leaves the order payable; pressing Pay again
+ * must reuse it rather than supersede it into a full-price one.
+ */
+describe('Retrying a coin checkout (§8.1 #1)', () => {
+  async function place(customerId: string, extra: Record<string, unknown> = {}) {
+    return checkoutService.checkout(
+      {
+        lines: [{ sku: variantSku, qty: 1 }],
+        email: `${TAG}-buyer@zewafeeds.test`,
+        phone: '+919000000009',
+        shippingAddress: {
+          name: 'Chk Test',
+          phone: '+919000000009',
+          line1: 'Line 1',
+          city: 'Kochi',
+          state: 'Kerala',
+          pincode: '682001',
+        },
+        paymentMethod: PaymentMethod.RAZORPAY,
+        customerId,
+        ...extra,
+      } as Parameters<typeof checkoutService.checkout>[0],
+      ctx as Parameters<typeof checkoutService.checkout>[1],
+    );
+  }
+
+  /*
+   * The regression. With the old comparison this superseded on every retry and
+   * the second gateway order was priced WITHOUT the coins.
+   */
+  it('reuses the same discounted gateway order on an unchanged retry', async () => {
+    const { customerId } = await seedCustomer('retry-same', 500);
+    const cartKey = `${TAG}-retry-${Date.now()}`;
+    await hold(customerId, 200, cartKey);
+    const key = `idem-${TAG}-${Date.now()}`;
+
+    const first = await place(customerId, { coinCartKey: cartKey, idempotencyKey: key });
+    const second = await place(customerId, { coinCartKey: cartKey, idempotencyKey: key });
+
+    expect(second.orderNo).toBe(first.orderNo);
+    expect(second.totalPaise).toBe(first.totalPaise);
+    expect(second.payment.gatewayOrderId).toBe(first.payment.gatewayOrderId);
+    // Still discounted the second time round.
+    expect(second.payment.amountPaise).toBe(first.payment.amountPaise);
+  });
+
+  it('supersedes when the cart genuinely changes', async () => {
+    const { customerId } = await seedCustomer('retry-changed', 500);
+    const key = `idem-chg-${TAG}-${Date.now()}`;
+
+    const first = await place(customerId, { idempotencyKey: key });
+    const second = await checkoutService.checkout(
+      {
+        // Two units rather than one: a real change in what is owed.
+        lines: [{ sku: variantSku, qty: 2 }],
+        email: `${TAG}-buyer@zewafeeds.test`,
+        phone: '+919000000009',
+        shippingAddress: {
+          name: 'Chk Test',
+          phone: '+919000000009',
+          line1: 'Line 1',
+          city: 'Kochi',
+          state: 'Kerala',
+          pincode: '682001',
+        },
+        paymentMethod: PaymentMethod.RAZORPAY,
+        customerId,
+        idempotencyKey: key,
+      } as Parameters<typeof checkoutService.checkout>[0],
+      ctx as Parameters<typeof checkoutService.checkout>[1],
+    );
+
+    expect(second.orderNo).not.toBe(first.orderNo);
+    expect(second.totalPaise).toBeGreaterThan(first.totalPaise);
+  });
+
+  it('prices a cart with no coins exactly as before', async () => {
+    const { customerId } = await seedCustomer('retry-nocoins', 0);
+    const key = `idem-nc-${TAG}-${Date.now()}`;
+
+    const first = await place(customerId, { idempotencyKey: key });
+    const second = await place(customerId, { idempotencyKey: key });
+
+    expect(second.orderNo).toBe(first.orderNo);
+    expect(second.payment.gatewayOrderId).toBe(first.payment.gatewayOrderId);
+  });
+});
+
+/*
+ * The client names a KEY, never an amount (§4.3).
+ *
+ * Asserted rather than assumed: the whole defence against a crafted request
+ * spending coins nobody reserved is that the request has no field for an amount,
+ * and the server reads the figure off its own reservation row.
+ */
+describe('The coin amount is the server\'s, not the client\'s', () => {
+  it('ignores a coin amount smuggled into the placement request', async () => {
+    const { customerId } = await seedCustomer('forge-amount', 500);
+    const cartKey = `${TAG}-forge-${Date.now()}`;
+    const held = await hold(customerId, 50, cartKey);
+    expect(held.held).toBe(50);
+
+    const order = await checkoutService.checkout(
+      {
+        lines: [{ sku: variantSku, qty: 1 }],
+        email: `${TAG}-buyer@zewafeeds.test`,
+        phone: '+919000000009',
+        shippingAddress: {
+          name: 'Chk Test',
+          phone: '+919000000009',
+          line1: 'Line 1',
+          city: 'Kochi',
+          state: 'Kerala',
+          pincode: '682001',
+        },
+        paymentMethod: PaymentMethod.COD,
+        customerId,
+        coinCartKey: cartKey,
+        // Fields a crafted request might carry. None is read.
+        coins: 400,
+        coinDiscountPaise: 40000,
+        discountPaise: 40000,
+      } as unknown as Parameters<typeof checkoutService.checkout>[0],
+      ctx as Parameters<typeof checkoutService.checkout>[1],
+    );
+
+    const row = await prisma.order.findFirstOrThrow({
+      where: { orderNo: order.orderNo },
+      select: { totalPaise: true },
+    });
+    const baseline = await (async () => {
+      const { customerId: plain } = await seedCustomer('forge-baseline', 0);
+      const o = await placeOrder(plain);
+      const r = await prisma.order.findFirstOrThrow({
+        where: { orderNo: o.orderNo },
+        select: { totalPaise: true },
+      });
+      return r.totalPaise;
+    })();
+
+    // Exactly the 50 coins RESERVED, not the 400 claimed.
+    expect(row.totalPaise).toBe(baseline - 50 * 100);
+  });
+
+  /*
+   * A dismissed payment must leave the reservation usable. `releaseForOrder` also
+   * clears `cartKey`, so a hold that was wrongly released cannot be found again —
+   * which is precisely how the retry lost its discount.
+   */
+  it('leaves the reservation pending and findable after an ONLINE placement', async () => {
+    const { customerId, accountId } = await seedCustomer('dismiss', 500);
+    const cartKey = `${TAG}-dismiss-${Date.now()}`;
+    await hold(customerId, 200, cartKey);
+
+    /*
+     * RAZORPAY, not COD. §8.1 #5 has COD redeem at PLACEMENT, which confirms the
+     * reservation and clears `cartKey` — correct for COD, and nothing to do with
+     * the retry path, where money has not moved and the hold must stay live.
+     */
+    await checkoutService.checkout(
+      {
+        lines: [{ sku: variantSku, qty: 1 }],
+        email: `${TAG}-buyer@zewafeeds.test`,
+        phone: '+919000000009',
+        shippingAddress: {
+          name: 'Chk Test',
+          phone: '+919000000009',
+          line1: 'Line 1',
+          city: 'Kochi',
+          state: 'Kerala',
+          pincode: '682001',
+        },
+        paymentMethod: PaymentMethod.RAZORPAY,
+        customerId,
+        coinCartKey: cartKey,
+      } as Parameters<typeof checkoutService.checkout>[0],
+      ctx as Parameters<typeof checkoutService.checkout>[1],
+    );
+
+    const reservation = await prisma.coinReservation.findFirst({
+      where: { accountId, coins: 200 },
+      select: { status: true, cartKey: true, orderId: true },
+    });
+
+    // Bound to the order, still PENDING (no money has moved), and the key still
+    // resolves it — which is what lets a dismissed payment be retried.
+    expect(reservation?.orderId).toBeTruthy();
+    expect(reservation?.status).toBe('PENDING');
+    expect(reservation?.cartKey).toBe(cartKey);
+  });
+
+  /* The discount moves the total once, never twice. */
+  it('applies the discount exactly once', async () => {
+    const { customerId } = await seedCustomer('once', 500);
+    const cartKey = `${TAG}-once-${Date.now()}`;
+    await hold(customerId, 150, cartKey);
+
+    const order = await placeOrder(customerId, { coinCartKey: cartKey });
+    const row = await prisma.order.findFirstOrThrow({
+      where: { orderNo: order.orderNo },
+      select: { totalPaise: true, discountPaise: true },
+    });
+
+    const { customerId: plain } = await seedCustomer('once-baseline', 0);
+    const base = await placeOrder(plain);
+    const baseRow = await prisma.order.findFirstOrThrow({
+      where: { orderNo: base.orderNo },
+      select: { totalPaise: true, discountPaise: true },
+    });
+
+    expect(row.totalPaise).toBe(baseRow.totalPaise - 150 * 100);
+    expect(row.discountPaise).toBe(baseRow.discountPaise + 150 * 100);
   });
 });

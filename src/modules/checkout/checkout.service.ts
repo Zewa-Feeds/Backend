@@ -325,6 +325,55 @@ export async function checkout(
   assertFulfillable(cart);
 
   /*
+   * Resolve the customer's coin hold (ZSOP004 §4.1 step 5, §4.3).
+   *
+   * The AMOUNT comes from the server-side reservation, never from the request:
+   * the client supplies only the cart key it applied under. A reservation that
+   * has expired, been released, or belongs to someone else simply yields zero
+   * coins and the order prices at full value — failing CLOSED, which is the safe
+   * direction for redemption (§8.1 #11).
+   *
+   * Read before the transaction opens, like the affiliate attribution above, to
+   * keep an extra round trip out of a transaction holding stock locks.
+   */
+  let coinHold: { id: string; coins: number } | null = null;
+  // `input.customerId` is the SIGNED-IN customer. A guest cannot hold coins, so
+  // this is also the gate that stops an anonymous checkout claiming a hold.
+  if (input.coinCartKey && input.customerId) {
+    const account = await prisma.loyaltyAccount.findUnique({
+      where: { customerId: input.customerId },
+      select: { id: true },
+    });
+    if (account) {
+      const reservation = await prisma.coinReservation.findFirst({
+        where: {
+          accountId: account.id,
+          cartKey: input.coinCartKey,
+          status: 'PENDING',
+          expiresAt: { gt: new Date() },
+        },
+        select: { id: true, coins: true },
+      });
+      if (reservation) coinHold = reservation;
+    }
+  }
+  const coinDiscountPaise = coinHold?.coins ? coinHold.coins * 100 : 0;
+
+  /**
+   * The amount the customer actually owes, coins included.
+   *
+   * `priceCart` knows nothing about coins — it prices lines, coupons and
+   * shipping. Every comparison and every persisted total below must use THIS
+   * figure, or the number the customer is shown and the number the gateway is
+   * charged diverge, which is exactly the defect this resolves: a 376-coin
+   * order displayed ₹0.20 and created a ₹376.20 Razorpay order.
+   *
+   * Floored at zero — coins can cover the whole order, and a negative total is
+   * not a refund.
+   */
+  const payableTotalPaise = Math.max(0, cart.totalPaise - coinDiscountPaise);
+
+  /*
    * ---- 4b. Retry: is the existing order still the right one? ---------------
    *
    * The cart has now been priced by the server, so the stored total can be
@@ -332,11 +381,16 @@ export async function checkout(
    * deliberately on the AUTHORITATIVE total rather than a fingerprint the
    * browser sends: the client never gets to assert that its cart is unchanged.
    *
-   * `totalPaise` is the settlement figure — it already folds in line items,
-   * quantities, coupons, shipping (which moves with state and weight) and coin
-   * redemption. Any change a customer can make that alters what they owe moves
-   * this number, and a change that does not alter it does not need a new
-   * gateway order.
+   * `payableTotalPaise` is the settlement figure — line items, quantities,
+   * coupons, shipping (which moves with state and weight) AND coin redemption.
+   * Any change a customer can make that alters what they owe moves this number,
+   * and a change that does not alter it does not need a new gateway order.
+   *
+   * It must be compared against `existing.totalPaise`, which is the stored order
+   * total and therefore already net of coins. This used to compare the stored
+   * total against raw `cart.totalPaise`, which is priced BEFORE redemption — so a
+   * coin order compared ₹0.20 against ₹376.20, never matched, and superseded
+   * itself into a full-price gateway order on every retry.
    *
    * SAME TOTAL → reuse. A dismissal leaves the Razorpay order payable, so the
    * customer reopens the one they already had. No second application order, no
@@ -350,7 +404,7 @@ export async function checkout(
    */
   if (existing) {
     const provider = paymentProvider();
-    const unchanged = existing.totalPaise === cart.totalPaise;
+    const unchanged = existing.totalPaise === payableTotalPaise;
 
     if (unchanged && existing.razorpayOrderId) {
       log.info(
@@ -378,7 +432,7 @@ export async function checkout(
       {
         orderNo: existing.orderNo,
         wasPaise: existing.totalPaise,
-        nowPaise: cart.totalPaise,
+        nowPaise: payableTotalPaise,
       },
       'checkout changed since the last attempt — superseding the stale order',
     );
@@ -468,40 +522,6 @@ export async function checkout(
     return out;
   })();
 
-  /*
-   * Resolve the customer's coin hold (ZSOP004 §4.1 step 5, §4.3).
-   *
-   * The AMOUNT comes from the server-side reservation, never from the request:
-   * the client supplies only the cart key it applied under. A reservation that
-   * has expired, been released, or belongs to someone else simply yields zero
-   * coins and the order prices at full value — failing CLOSED, which is the safe
-   * direction for redemption (§8.1 #11).
-   *
-   * Read before the transaction opens, like the affiliate attribution above, to
-   * keep an extra round trip out of a transaction holding stock locks.
-   */
-  let coinHold: { id: string; coins: number } | null = null;
-  // `input.customerId` is the SIGNED-IN customer. A guest cannot hold coins, so
-  // this is also the gate that stops an anonymous checkout claiming a hold.
-  if (input.coinCartKey && input.customerId) {
-    const account = await prisma.loyaltyAccount.findUnique({
-      where: { customerId: input.customerId },
-      select: { id: true },
-    });
-    if (account) {
-      const reservation = await prisma.coinReservation.findFirst({
-        where: {
-          accountId: account.id,
-          cartKey: input.coinCartKey,
-          status: 'PENDING',
-          expiresAt: { gt: new Date() },
-        },
-        select: { id: true, coins: true },
-      });
-      if (reservation) coinHold = reservation;
-    }
-  }
-  const coinDiscountPaise = coinHold?.coins ? coinHold.coins * 100 : 0;
 
   const loyaltyVariants = await prisma.productVariant.findMany({
     where: { id: { in: cart.lines.map((l) => l.variantId) } },
@@ -646,8 +666,12 @@ export async function checkout(
           taxPaise: cart.taxPaise,
           // Coins never pay for shipping or fees — those stay payable in cash
           // (§4). `cart.totalPaise` already includes shipping, so subtracting
-          // here reduces only the product portion the coins were capped against.
-          totalPaise: Math.max(0, cart.totalPaise - coinDiscountPaise),
+          // reduces only the product portion the coins were capped against.
+          //
+          // The SAME figure the retry comparison used, and the same one handed to
+          // the gateway below. One variable, so the displayed total, the persisted
+          // total and the charged amount cannot diverge.
+          totalPaise: payableTotalPaise,
           couponCode: cart.coupon?.code ?? null,
           couponCodes: cart.coupons.map((c) => c.code),
           appliedCoupons: cart.coupons.map((c) => ({
@@ -850,10 +874,40 @@ export async function checkout(
 
   const gatewayOrder = await provider.createOrder({
     orderNo: created.orderNo,
+    // The PERSISTED total, never a recomputed one. Anything else risks charging
+    // an amount the order does not record.
     amountPaise: created.totalPaise,
     email: input.email,
     phone: input.phone,
   });
+
+  /*
+   * The gateway must be asking for exactly what the order says is owed.
+   *
+   * A guard, not a formality: the defect this file just fixed charged ₹376.20
+   * against an order recording ₹0.20, and nothing in the flow objected. Any
+   * future change that lets a different figure reach the provider — a recomputed
+   * total, a stale variable, a provider echoing something else — stops here
+   * instead of taking the wrong amount from a customer.
+   *
+   * Thrown AFTER the order exists, so the order is never silently abandoned; the
+   * unpaid sweep reclaims it, and no gateway order is attached for anyone to pay.
+   */
+  if (gatewayOrder.amountPaise !== created.totalPaise) {
+    log.error(
+      {
+        orderNo: created.orderNo,
+        orderTotalPaise: created.totalPaise,
+        gatewayAmountPaise: gatewayOrder.amountPaise,
+      },
+      'gateway amount does not match the order total — refusing to take payment',
+    );
+    throw new AppError(
+      500,
+      ErrorCode.INTERNAL,
+      'We could not start payment for this order. Please try again.',
+    );
+  }
 
   await prisma.order.update({
     where: { id: created.id },
