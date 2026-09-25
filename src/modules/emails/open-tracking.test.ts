@@ -312,3 +312,92 @@ describe('the endpoint refuses anything it cannot verify', () => {
     expect(await res.json()).toMatchObject({ data: { handled: false } });
   });
 });
+/*
+ * The precedence bug, pinned.
+ *
+ * `verifyWebhook` checks `!key` BEFORE `!header`, so an unconfigured service returns
+ * NOT_CONFIGURED for an unsigned request. While the route keyed its probe branch on
+ * MISSING_HEADER, ZeptoMail's validation POST therefore got a 401 and the webhook
+ * could not be registered at all — which is what "URL cannot be reached" meant.
+ *
+ * The route now decides from the REQUEST (no header) rather than the reason code, so
+ * these run with the key deliberately UNSET.
+ */
+describe('probe handling when ZEPTOMAIL_WEBHOOK_KEY is not configured', () => {
+  let noKeyApp: express.Express;
+  let noKeyServer: Server;
+  const noKeyUrl = () =>
+    `http://127.0.0.1:${(noKeyServer.address() as AddressInfo).port}/webhooks/zeptomail`;
+
+  beforeAll(async () => {
+    vi.resetModules();
+    vi.doMock('@/config/env', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/config/env')>();
+      return { ...actual, env: { ...actual.env, ZEPTOMAIL_WEBHOOK_KEY: undefined } };
+    });
+
+    const routes = await import('./webhook.routes');
+    const { errorHandler: handler } = await import('@/middleware/errorHandler');
+
+    noKeyApp = express();
+    noKeyApp.use('/webhooks/zeptomail', express.raw({ type: '*/*', limit: '256kb' }));
+    noKeyApp.use((req, _res, next) => {
+      (req as express.Request & { id: string }).id = 'test-request';
+      next();
+    });
+    noKeyApp.use('/webhooks/zeptomail', routes.zeptomailWebhookRouter);
+    noKeyApp.use(handler);
+
+    await new Promise<void>((r) => {
+      noKeyServer = noKeyApp.listen(0, r);
+    });
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((r) => noKeyServer.close(() => r()));
+    vi.doUnmock('@/config/env');
+    vi.resetModules();
+  });
+
+  /* The case that was broken: this is ZeptoMail's save-time validation request. */
+  it('200s the unsigned validation request even with no key set', async () => {
+    const row = await seedTracked('msg-nokey-probe');
+
+    const res = await fetch(noKeyUrl(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: openEvent('msg-nokey-probe'),
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ data: { handled: false } });
+
+    const after = await prisma.emailLog.findUniqueOrThrow({ where: { id: row.id } });
+    expect(after.openedAt).toBeNull();
+    expect(after.openCount).toBe(0);
+  });
+
+  /*
+   * The safety property. Acknowledging an unsigned probe must NOT make an
+   * unconfigured service accept signed events: it still cannot verify them, so it
+   * must refuse rather than 200 them and silently record nothing.
+   */
+  it('still 401s a SIGNED request with no key set, rather than turning it into a 200', async () => {
+    const row = await seedTracked('msg-nokey-signed');
+    const body = openEvent('msg-nokey-signed');
+    const mac = createHmac('sha256', KEY).update(body).digest('base64');
+
+    const res = await fetch(noKeyUrl(), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'producer-signature': `ts=${Date.now()};s=${encodeURIComponent(mac)};s-algorithm=HmacSHA256`,
+      },
+      body,
+    });
+
+    expect(res.status).toBe(401);
+    const after = await prisma.emailLog.findUniqueOrThrow({ where: { id: row.id } });
+    expect(after.openCount).toBe(0);
+  });
+});
