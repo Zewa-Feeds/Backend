@@ -226,14 +226,23 @@ loyaltyAdminRouter.post(
         ? `adjust:${req.params.customerId}:${rawKey}`
         : `adjust:${req.params.customerId}:${Date.now()}:${actorId}`;
 
-    if (Math.abs(coins) > rv.approvalThresholdCoins && !approvedById) {
-      throw new AppError(
-        400,
-        ErrorCode.VALIDATION_FAILED,
-        `Adjustments above ${rv.approvalThresholdCoins} coins need a second approver.`,
-        { fields: { approvedById: 'Second-person approval is required for this amount.' } },
-      );
-    }
+    /*
+     * No approval threshold.
+     *
+     * ZSOP004 §9.2 asks for second-person approval above
+     * `approvalThresholdCoins`. Removed by product decision: `loyalty.adjust` is
+     * ADMIN-only in both RBAC tables, so everyone who can reach this route is
+     * already trusted to move coins, and there is no separate approver role to
+     * appeal to. The gate's only effect was to make a large grant unsatisfiable
+     * whenever a second admin was not on hand.
+     *
+     * What replaces it is the audit trail, which is unchanged: every adjustment
+     * still carries the actor, a reason code and a mandatory note, and the
+     * ledger is append-only. `approvedById` stays accepted and stored, so a
+     * co-signature can still be recorded when one exists — it is simply never
+     * required. `approvalThresholdCoins` is left on the rule version so
+     * reinstating the control is a route change, not a migration.
+     */
     if (approvedById && approvedById === actorId) {
       // "Second-person" means a different person, or the control is theatre.
       throw new AppError(

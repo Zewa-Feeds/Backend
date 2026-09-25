@@ -295,16 +295,26 @@ describe('existing validation and authorization are untouched', () => {
     expect(res.status).toBe(422);
   });
 
-  it('still demands a second approver above the threshold', async () => {
+  /*
+   * The second-approver gate was removed by product decision: `loyalty.adjust`
+   * is ADMIN-only, so there is no less-trusted operator for a co-signature to
+   * protect against, and the threshold only served to block large grants when a
+   * second admin was not around. A large grant must now go through on one
+   * admin's authority, with the audit trail as the control.
+   */
+  it('applies a large adjustment without a second approver', async () => {
     const rv = await prisma.loyaltyRuleVersion.findFirstOrThrow({ where: { isActive: true } });
+    const coins = rv.approvalThresholdCoins + 1;
+    const before = await creditedTotal(customerId);
+
     const res = await adjust(
       customerId,
-      { coins: rv.approvalThresholdCoins + 1, note: 'Over the approval threshold' },
+      { coins, note: 'Over the old approval threshold' },
       'over-threshold-0010',
     );
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toMatch(/second approver/i);
+
+    expect(res.status).toBe(200);
+    expect(await creditedTotal(customerId)).toBe(before + coins);
   });
 
   it('refuses to let an admin approve their own adjustment', async () => {
