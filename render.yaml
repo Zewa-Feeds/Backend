@@ -93,10 +93,18 @@ services:
         sync: false
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
-      # Required at boot in production, but the mail client checks it again
-      # before sending and logs "ZeptoMail not configured — email skipped"
-      # rather than throwing. A placeholder therefore boots safely: order
-      # emails are skipped, nothing crashes. Replace with the real token.
+      # Required at boot in production; the mail client also recognises this
+      # exact placeholder as "not configured" and SKIPS sends rather than
+      # calling ZeptoMail with it.
+      #
+      # It did not always: a placeholder is a non-empty string, so it used to
+      # pass the client's `!token` check and every send came back 401
+      # SERR_157 "Invalid API Token found" — which reads as a bad key, not as an
+      # unreplaced default. That took down CMS login OTP, because nobody can
+      # sign in without mail.
+      #
+      # So a placeholder boots AND skips safely now, but mail does not work
+      # until this is replaced with the real key. CMS login needs it.
       - key: ZEPTOMAIL_TOKEN
         value: "placeholder-not-configured"
       - key: ZEPTOMAIL_FROM

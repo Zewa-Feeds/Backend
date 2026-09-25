@@ -47,6 +47,34 @@ export interface SendEmailResult {
  */
 const AUTH_PREFIX = 'Zoho-enczapikey ';
 
+/**
+ * Tokens that mean "nobody has configured this yet".
+ *
+ * `render.yaml` seeds ZEPTOMAIL_TOKEN with a literal placeholder so a fresh
+ * deploy boots (the production env check only asserts the variable is SET). The
+ * comment there promised that a placeholder would skip sends safely — it did
+ * not. The skip below tests `!token`, and a placeholder is a non-empty string,
+ * so every send was built with `Zoho-enczapikey placeholder-not-configured` and
+ * came back 401 `SERR_157 Invalid API Token found`.
+ *
+ * That cost real time to diagnose, because the log says the token is INVALID —
+ * which reads as "the key is wrong" and sends you to the ZeptoMail dashboard,
+ * not to a deploy default that was never replaced. For CMS login OTP it is worse
+ * than a wrong key: nobody can sign in, and the reason looks like a provider
+ * outage.
+ *
+ * Matching the placeholder here makes the promise true: an unreplaced default
+ * skips loudly and says what to do, instead of impersonating a configured
+ * provider. A real key can never collide — ZeptoMail keys are base64-ish blobs.
+ */
+const PLACEHOLDER_TOKENS = new Set(['placeholder-not-configured', 'placeholder', 'changeme']);
+
+function isConfigured(token: string | undefined): token is string {
+  if (!token) return false;
+  const bare = token.trim().replace(new RegExp(`^${AUTH_PREFIX.trim()}\\s*`, 'i'), '');
+  return bare.length > 0 && !PLACEHOLDER_TOKENS.has(bare.toLowerCase());
+}
+
 function authHeader(token: string): string {
   const trimmed = token.trim();
   return trimmed.toLowerCase().startsWith(AUTH_PREFIX.trim().toLowerCase())
@@ -55,10 +83,17 @@ function authHeader(token: string): string {
 }
 
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
-  if (!env.ZEPTOMAIL_TOKEN || !env.ZEPTOMAIL_FROM) {
+  if (!isConfigured(env.ZEPTOMAIL_TOKEN) || !env.ZEPTOMAIL_FROM) {
     log.warn(
-      { to: input.to.map((t) => t.email), subject: input.subject, reference: input.reference },
-      'ZeptoMail not configured — email skipped',
+      {
+        to: input.to.map((t) => t.email),
+        subject: input.subject,
+        reference: input.reference,
+        reason: !env.ZEPTOMAIL_FROM
+          ? 'ZEPTOMAIL_FROM is not set'
+          : 'ZEPTOMAIL_TOKEN is unset or still the deploy placeholder',
+      },
+      'ZeptoMail not configured — email skipped. Set ZEPTOMAIL_TOKEN to the real key.',
     );
     return { sent: false, messageId: null, skipped: true };
   }
