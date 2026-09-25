@@ -21,6 +21,7 @@ import { AppError, ErrorCode, notFound } from '@/lib/errors';
 import { endOfDay } from '@/lib/date';
 import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
 import { listMeta, toSkipTake } from '@/middleware/validate';
+import * as emailsService from '@/modules/emails/emails.service';
 import { formatInr } from './tax';
 import { nextInvoiceNo } from './numbering';
 import {
@@ -1044,122 +1045,44 @@ export function buildOrderEmailContext(order: any): { ctx: OrderEmailContext; em
 
 /**
  * Resend a previously queued/sent/failed order email (§6.3, §15).
+ *
+ * Delegates to the shared email service rather than re-implementing the send.
+ *
+ * It used to do its own: render, send, then UPDATE the same row in place. That
+ * left the product with two different resend behaviours — this one overwrote the
+ * failed attempt, while the `/emails` page preserves it as a new row — so whether
+ * an outage stayed reconstructible depended on which button an operator happened
+ * to press. It also never set SKIPPED, leaving an unconfigured provider looking
+ * like mail still in flight, and it was gated on `orders.status` (OPS + ADMIN),
+ * which quietly bypassed the ADMIN-only `emails.resend`.
+ *
+ * The shared path fixes all three at once. The return value is unchanged — the
+ * CMS order page re-renders from the serialized order.
  */
 export async function resendEmail(orderNo: string, emailId: string, ctx: AuditContext) {
   const order = await prisma.order.findUnique({
     where: { orderNo },
-    select: {
-      ...ORDER_SELECT,
-      subtotalPaise: true,
-      discountPaise: true,
-      shippingPaise: true,
-      taxPaise: true,
-      paymentMethod: true,
-    },
+    select: { id: true },
   });
-
   if (!order) throw notFound('Order');
 
+  /*
+   * Scoped to THIS order. Without the orderId check, an email id from another
+   * order would resend happily via a URL the operator can edit.
+   */
   const emailRow = await prisma.emailLog.findFirst({
     where: { id: emailId, orderId: order.id },
+    select: { id: true },
   });
-
   if (!emailRow) throw notFound('Email record');
 
-  const { ctx: emailCtx, email } = buildOrderEmailContext(order);
+  await emailsService.resend(emailRow.id, ctx);
 
-  let renderedSubject = emailRow.subject;
-  let renderedHtml = emailRow.bodyHtml;
-  const attachments: { name: string; content: string; mimeType: string }[] = [];
-
-  let templateName = emailRow.template as CustomerTemplateName | null;
-  if (!templateName) {
-    const sub = emailRow.subject.toLowerCase();
-    if (sub.includes('confirmed') || sub.includes('received')) templateName = 'order-placed';
-    else if (sub.includes('pack')) templateName = 'order-confirmed';
-    else if (sub.includes('way') || sub.includes('shipped')) templateName = 'order-shipped';
-    else if (sub.includes('deliver')) templateName = 'order-delivered';
-    else if (sub.includes('cancel')) templateName = 'order-cancelled';
-    else if (sub.includes('refund')) templateName = 'refund-processed';
-    else templateName = 'order-placed';
-  }
-
-  if (templateName && templates[templateName]) {
-    const build = templates[templateName];
-    const res = build(emailCtx as never, emailRow.toEmail || email);
-    renderedSubject = res.subject;
-    renderedHtml = res.html;
-
-    if (templateName === 'order-shipped' || templateName === 'order-confirmed') {
-      if (order.invoiceNumber) {
-        try {
-          const taxConfig = await settingsService.getTaxConfig();
-          const pdf = await generateInvoicePdf(order as any, taxConfig);
-          const customerName = emailCtx.customerName;
-          attachments.push({
-            name: formatInvoiceFilename(order.invoiceNumber, customerName),
-            content: Buffer.from(pdf).toString('base64'),
-            mimeType: 'application/pdf',
-          });
-        } catch (err) {
-          log.warn({ err, orderNo }, 'failed to generate invoice PDF for resend');
-        }
-      }
-    }
-  } else if (!renderedHtml) {
-    const res = buildCustomEmail({
-      heading: emailRow.subject,
-      message: 'Here is a copy of your order communication from Zewa Feeds.',
-      customerName: emailCtx.customerName,
-      subject: emailRow.subject,
-    });
-    renderedHtml = res.html;
-  }
-
-  try {
-    const result = await sendEmail({
-      to: [{ email: emailRow.toEmail || email, name: emailCtx.customerName }],
-      subject: renderedSubject,
-      htmlBody: renderedHtml,
-      attachments,
-      reference: orderNo,
-    });
-
-    await prisma.emailLog.update({
-      where: { id: emailRow.id },
-      data: {
-        subject: renderedSubject,
-        bodyHtml: renderedHtml,
-        template: templateName,
-        status: result.sent ? EmailStatus.SENT : EmailStatus.QUEUED,
-        sentAt: result.sent ? new Date() : null,
-        providerMessageId: result.messageId,
-        error: result.skipped ? 'ZeptoMail not configured — send skipped' : null,
-      },
-    });
-
-    await writeAudit(ctx, {
-      module: AuditModule.ORDERS,
-      action: `Resent email "${renderedSubject}" to ${emailRow.toEmail || email}`,
-      recordId: orderNo,
-    });
-
-    const updatedOrder = await prisma.order.findUniqueOrThrow({
-      where: { id: order.id },
-      select: ORDER_SELECT,
-    });
-    return serializeOrder(updatedOrder);
-  } catch (err: any) {
-    const errorMsg = (err?.message || 'Failed to resend email').slice(0, 500);
-    await prisma.emailLog.update({
-      where: { id: emailRow.id },
-      data: {
-        status: EmailStatus.FAILED,
-        error: errorMsg,
-      },
-    });
-    throw err;
-  }
+  const updatedOrder = await prisma.order.findUniqueOrThrow({
+    where: { id: order.id },
+    select: ORDER_SELECT,
+  });
+  return serializeOrder(updatedOrder);
 }
 
 export interface SendOrderEmailInput {

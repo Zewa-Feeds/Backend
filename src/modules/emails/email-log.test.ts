@@ -23,6 +23,7 @@ import { emailsAdminRouter } from './admin.routes';
 import { errorHandler } from '@/middleware/errorHandler';
 import { permissionsFor } from '@/rbac/permissions';
 import * as emailLog from './email-log.service';
+import * as ordersService from '@/modules/orders/orders.service';
 
 const prisma = new PrismaClient();
 
@@ -350,5 +351,70 @@ describe('the incident view', () => {
     const statuses = body.data.map((r) => r.status).sort();
     expect(statuses).toEqual([EmailStatus.FAILED, EmailStatus.QUEUED, EmailStatus.SKIPPED].sort());
     expect(statuses).not.toContain(EmailStatus.SENT);
+  });
+});
+
+/*
+ * The ORDER page has its own resend button, on a different route. It used to run a
+ * separate implementation that UPDATED the row in place, so whether an outage
+ * stayed reconstructible depended on which of the two buttons an operator pressed.
+ * It now delegates here. These tests pin that, because the two paths drifting is
+ * exactly the asymmetry this whole feature exists to remove.
+ */
+/** A valid AuditContext — `ip` is required and non-null. */
+function auditCtx() {
+  return {
+    actorId: staffId,
+    actorName: 'Email Test',
+    actorRole: Role.ADMIN,
+    ip: '127.0.0.1',
+    userAgent: 'vitest',
+  };
+}
+
+describe('the order page resend shares this path', () => {
+  it('creates a new row and leaves the original FAILED', async () => {
+    const order = await prisma.order.findFirst({ select: { id: true, orderNo: true } });
+    if (!order) return;
+
+    const original = await seedRow({ orderId: order.id });
+    const before = await prisma.emailLog.count({ where: { orderId: order.id } });
+
+    await ordersService.resendEmail(order.orderNo, original.id, auditCtx());
+
+    const after = await prisma.emailLog.count({ where: { orderId: order.id } });
+    expect(after).toBe(before + 1);
+
+    const orig = await prisma.emailLog.findUniqueOrThrow({ where: { id: original.id } });
+    expect(orig.status).toBe(EmailStatus.FAILED);
+    expect(orig.error).toMatch(/unavailable/i);
+
+    const fresh = await prisma.emailLog.findFirst({ where: { resentFromId: original.id } });
+    expect(fresh?.toEmail).toBe(original.toEmail);
+  });
+
+  /* A hand-edited URL must not resend another order's mail. */
+  it('refuses an email id that belongs to a different order', async () => {
+    const [a, b] = await prisma.order.findMany({ take: 2, select: { id: true, orderNo: true } });
+    if (!a || !b) return;
+
+    const row = await seedRow({ orderId: a.id });
+
+    await expect(
+      ordersService.resendEmail(b.orderNo, row.id, auditCtx()),
+    ).rejects.toThrow();
+  });
+
+  /* The security rule has to hold on BOTH routes, or it holds on neither. */
+  it('refuses a security template through the order route as well', async () => {
+    const order = await prisma.order.findFirst({ select: { id: true, orderNo: true } });
+    if (!order) return;
+
+    const otp = await seedRow({ orderId: order.id, template: 'cms-login-otp' });
+
+    await expect(
+      ordersService.resendEmail(order.orderNo, otp.id, auditCtx()),
+    ).rejects.toThrow(/single-use|cannot be resent/i);
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 });

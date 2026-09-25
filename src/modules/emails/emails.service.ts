@@ -205,7 +205,7 @@ export async function resend(id: string, ctx: AuditContext) {
     subject,
     htmlBody: html,
     reference: row.order?.orderNo ?? row.template ?? 'resend',
-    template: row.template ?? 'unknown',
+    template: row.template,
     orderId: row.orderId,
     customerId: row.customerId,
     resentFromId: row.id,

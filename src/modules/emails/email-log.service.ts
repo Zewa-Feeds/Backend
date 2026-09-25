@@ -51,8 +51,14 @@ async function resolveCustomerId(
 }
 
 export interface LogAndSendInput extends SendEmailInput {
-  /** Template name, so the CMS can filter and a resend can re-render. */
-  template: string;
+  /**
+   * Template name, so the CMS can filter and a resend can re-render.
+   *
+   * Nullable because legacy rows predate the column. A resend of one must keep the
+   * null rather than substituting a placeholder — a made-up name like "unknown"
+   * would show up in the CMS template filter as though it were a real template.
+   */
+  template: string | null;
   /** Set when the mail belongs to an order. */
   orderId?: string | null;
   /** Set when the recipient is a known customer. */

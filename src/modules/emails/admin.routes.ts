@@ -46,8 +46,18 @@ emailsAdminRouter.get(
       orderId: z.string().uuid().optional(),
       from: z.coerce.date().optional(),
       to: z.coerce.date().optional(),
-      /** The incident view: everything that did not reach the provider. */
-      unsentOnly: z.coerce.boolean().optional(),
+      /**
+       * The incident view: everything that did not reach the provider.
+       *
+       * `z.enum(['true','false'])`, NOT `z.coerce.boolean()`. Coercion follows
+       * JS truthiness, so the string "false" coerces to `true` and
+       * `?unsentOnly=false` would silently TURN THE FILTER ON. Same form the
+       * coupons and analytics routes already use.
+       */
+      unsentOnly: z
+        .enum(['true', 'false'])
+        .optional()
+        .transform((v) => (v === undefined ? undefined : v === 'true')),
     }),
   }),
   asyncHandler(async (req, res) => {

@@ -245,10 +245,17 @@ const sendOrderEmailSchema = z.object({
   toEmail: z.string().email().optional(),
 });
 
-/** Resend a specific order email (§6.3, §15). */
+/**
+ * Resend a specific order email (§6.3, §15).
+ *
+ * `emails.resend`, not `orders.status`. Both reach the same send, and
+ * `orders.status` is OPS + ADMIN — so this route was a way for an operator without
+ * `emails.resend` to put mail in a customer's inbox anyway, which defeats the
+ * point of that permission being ADMIN-only.
+ */
 ordersRouter.post(
   '/:orderNo/emails/:emailId/resend',
-  requirePermission('orders.status'),
+  requirePermission('emails.resend'),
   validate({ params: emailIdParam }),
   asyncHandler(async (req, res) => {
     const order = await ordersService.resendEmail(

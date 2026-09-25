@@ -162,21 +162,27 @@ async function handleCustomerEmail(job: Job<EmailJob>): Promise<void> {
     });
   }
 
+  /*
+   * Store the rendered subject and body BEFORE the provider is called.
+   *
+   * The row is created at enqueue time with a placeholder subject and no body,
+   * because only the worker has the template output. Recording it after the send
+   * meant a throwing provider skipped this write entirely, so a permanently failed
+   * email had no body — and anything whose template cannot be re-rendered (a coin
+   * email, an unknown template) was then unresendable. Writing it first also saves
+   * a round trip, since `finish` no longer has to carry these fields.
+   */
+  await prisma.emailLog.update({
+    where: { id: data.orderEmailId },
+    data: { subject: rendered.subject, bodyHtml: rendered.html, lastAttemptAt: new Date() },
+  });
+
   const result = await sendEmail({
     to: [{ email, name: ctx.customerName }],
     subject: rendered.subject,
     htmlBody: rendered.html,
     attachments,
     reference: data.orderNo,
-  });
-
-  /*
-   * Subject is stored separately from the status transition because the rendered
-   * subject is only known here, after the template runs.
-   */
-  await prisma.emailLog.update({
-    where: { id: data.orderEmailId },
-    data: { subject: rendered.subject, bodyHtml: rendered.html },
   });
 
   /*
