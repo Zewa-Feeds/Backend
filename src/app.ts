@@ -44,6 +44,8 @@ export function createApp(): Express {
   /* Cloudinary signs the RAW body — see webhook.ts. Parsing first breaks every
      signature, so this must stay above express.json(). */
   app.use('/api/v1/webhooks/cloudinary', express.raw({ type: '*/*', limit: '256kb' }));
+  /* ZeptoMail signs the RAW body too — parsing first breaks every HMAC. */
+  app.use('/api/v1/webhooks/zeptomail', express.raw({ type: '*/*', limit: '256kb' }));
 
   app.use(express.json({ limit: BODY_LIMIT }));
   app.use(express.urlencoded({ extended: true, limit: BODY_LIMIT }));

@@ -39,6 +39,7 @@ import {
 import { analyticsRouter } from '@/modules/analytics/analytics.routes';
 import { loyaltyAdminRouter } from '@/modules/loyalty/admin.routes';
 import { emailsAdminRouter } from '@/modules/emails/admin.routes';
+import { zeptomailWebhookRouter } from '@/modules/emails/webhook.routes';
 import { uploadsRouter } from '@/modules/uploads/uploads.routes';
 import { catalogRouter } from '@/modules/catalog/catalog.routes';
 import { previewRouter } from '@/modules/catalog/preview.routes';
@@ -58,6 +59,8 @@ publicRouter.use(publicLimiter);
 /* Cloudinary media notifications. Unauthenticated by necessity — the
    signature is the authentication. See webhook.routes.ts. */
 publicRouter.use('/webhooks/cloudinary', cloudinaryWebhookRouter);
+/* Open-tracking notifications. Signature-verified inside; see webhook.routes.ts. */
+publicRouter.use('/webhooks/zeptomail', zeptomailWebhookRouter);
 publicRouter.use('/', catalogRouter);
 // Draft preview — signed short-lived token, scoped to one resource.
 publicRouter.use('/preview', previewRouter);

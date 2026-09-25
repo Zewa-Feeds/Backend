@@ -21,6 +21,8 @@ import { EmailStatus, Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { logger } from '@/lib/logger';
 import { sendEmail, type SendEmailInput } from '@/integrations/zeptomail/zeptomail.client';
+import { shouldTrackOpens } from './tracking';
+import * as settingsService from '@/modules/settings/settings.service';
 
 const log = logger.child({ module: 'email.log' });
 
@@ -68,6 +70,21 @@ export interface LogAndSendInput extends SendEmailInput {
 }
 
 /**
+ * Per-template tracking overrides from settings.
+ *
+ * Returns `{}` on any failure, so the code defaults apply. Tracking is an
+ * enhancement — a settings outage must never prevent an email being sent.
+ */
+async function trackingOverrides(): Promise<Record<string, boolean>> {
+  try {
+    const s = await settingsService.get('emailTracking');
+    return s?.templates ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Write a QUEUED row, attempt the send, then record the outcome.
  *
  * The row is created BEFORE the provider is called, so an attempt that dies
@@ -76,6 +93,18 @@ export interface LogAndSendInput extends SendEmailInput {
  */
 export async function logAndSend(input: LogAndSendInput): Promise<{ id: string; sent: boolean }> {
   const to = input.to[0]?.email ?? '';
+
+  /*
+   * Decided ONCE, then both stored and sent.
+   *
+   * The column has to record what was actually asked of the provider, not what the
+   * config says now: a template switched off next week must not make last week's
+   * genuine open look like a row that was never tracked.
+   *
+   * A settings read that fails falls back to the code defaults rather than throwing
+   * — tracking is an enhancement, and losing it must never stop an email.
+   */
+  const trackOpens = shouldTrackOpens(input.template, await trackingOverrides());
 
   const row = await prisma.emailLog.create({
     data: {
@@ -87,12 +116,13 @@ export async function logAndSend(input: LogAndSendInput): Promise<{ id: string; 
       orderId: input.orderId ?? null,
       customerId: await resolveCustomerId(input.orderId, input.customerId),
       resentFromId: input.resentFromId ?? null,
+      trackOpens,
     },
     select: { id: true },
   });
 
   try {
-    const result = await sendEmail(input);
+    const result = await sendEmail({ ...input, trackOpens });
     await finish(row.id, result);
     return { id: row.id, sent: result.sent };
   } catch (err) {
@@ -197,25 +227,66 @@ export async function open(data: {
   return row.id;
 }
 
-/** Templates whose body must never be replayed. */
-const SECURITY_TEMPLATES = new Set([
-  'cms-login-otp',
-  'cms-user-invitation',
-  'password-reset',
-  'password-changed',
-  'customer-email-verification',
-]);
-
 /**
- * True when a template carries a single-use, time-limited token.
+ * Record an open against whichever rows carry these provider message ids.
  *
- * Resending the stored body of one of these delivers a code that has already
- * expired or been spent — worse than not resending, because the recipient gets
- * mail that cannot work and reads it as the system being broken. The customer
- * flow that mints a fresh token is the correct path, and it already exists.
+ * Returns how many rows were touched, so the route can log a notification that
+ * matched nothing — the likeliest symptom of a misconfigured Mail Agent.
+ *
+ * Three decisions worth stating:
+ *
+ *   - `openedAt` is set ONLY on the first open (§ZeptoMail fires the opens webhook
+ *     on first open, but retries mean the same one can arrive twice). `openCount`
+ *     still increments, so a retry is visible as a count without corrupting "when
+ *     did they first read it".
+ *   - Rows with `trackOpens: false` are SKIPPED. If tracking was never requested
+ *     for a template, an open event for it is either a stale row from before the
+ *     setting changed or something forged, and neither should write.
+ *   - An unknown message id is not an error. The Mail Agent may carry mail from
+ *     another system, and a notification for a row we do not have is ignored.
  */
-export function isSecurityTemplate(template: string | null | undefined): boolean {
-  return Boolean(template && SECURITY_TEMPLATES.has(template));
+export async function recordOpens(messageIds: string[]): Promise<number> {
+  const ids = [...new Set(messageIds.filter((m) => typeof m === 'string' && m.trim()))];
+  if (ids.length === 0) return 0;
+
+  const rows = await prisma.emailLog.findMany({
+    where: { providerMessageId: { in: ids }, trackOpens: true },
+    select: { id: true, openedAt: true },
+  });
+  if (rows.length === 0) return 0;
+
+  /*
+   * Two statements, not one updateMany: the first open must stamp `openedAt` while
+   * a repeat must leave it alone, and `updateMany` cannot express a per-row
+   * conditional. Grouping keeps it to two queries regardless of batch size.
+   */
+  const firstTime = rows.filter((r) => r.openedAt === null).map((r) => r.id);
+  const repeat = rows.filter((r) => r.openedAt !== null).map((r) => r.id);
+  const now = new Date();
+
+  if (firstTime.length > 0) {
+    await prisma.emailLog.updateMany({
+      where: { id: { in: firstTime } },
+      data: { openedAt: now, openCount: { increment: 1 } },
+    });
+  }
+  if (repeat.length > 0) {
+    await prisma.emailLog.updateMany({
+      where: { id: { in: repeat } },
+      data: { openCount: { increment: 1 } },
+    });
+  }
+
+  return rows.length;
 }
+
+/*
+ * Re-exported, not redefined.
+ *
+ * The same list governs two rules — never replay this body, and never put a
+ * tracking pixel in it — and they must not drift. A template that is too sensitive
+ * to track is exactly one that is too sensitive to replay.
+ */
+export { isSecurityTemplate } from './tracking';
 
 export type EmailLogRow = Prisma.EmailLogGetPayload<object>;

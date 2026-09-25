@@ -138,3 +138,34 @@ describe('a real token still sends', () => {
     await expect(sendEmail(INPUT)).rejects.toThrow(/ZeptoMail/i);
   });
 });
+
+describe('open tracking on the send payload', () => {
+  /*
+   * ZeptoMail's default is off, so OMITTING the field is what keeps an untracked
+   * template's payload byte-identical to before Phase 2. Sending `false`
+   * explicitly would work too, but this pins the weaker change.
+   */
+  it('omits track_opens entirely when tracking is off', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ message_id: 'm' }] }), { status: 200 }),
+    );
+    envState.ZEPTOMAIL_TOKEN = 'PHtE6r0ERrvo2jN+oBUE5fTvEcOtNI8s9+xu2QBH';
+
+    await sendEmail({ ...INPUT, trackOpens: false });
+
+    const body = JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string);
+    expect(body).not.toHaveProperty('track_opens');
+  });
+
+  it('sends track_opens true when tracking is on', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ message_id: 'm' }] }), { status: 200 }),
+    );
+    envState.ZEPTOMAIL_TOKEN = 'PHtE6r0ERrvo2jN+oBUE5fTvEcOtNI8s9+xu2QBH';
+
+    await sendEmail({ ...INPUT, trackOpens: true });
+
+    const body = JSON.parse((fetchSpy.mock.calls[0]![1] as RequestInit).body as string);
+    expect(body.track_opens).toBe(true);
+  });
+});

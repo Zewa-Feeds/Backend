@@ -35,6 +35,9 @@ type Row = {
   sentAt: Date | null;
   lastAttemptAt?: Date | null;
   resentFromId?: string | null;
+  trackOpens?: boolean;
+  openedAt?: Date | null;
+  openCount?: number;
   orderId?: string | null;
   customerId?: string | null;
   order?: { orderNo: string } | null;
@@ -57,6 +60,15 @@ export function serialize(row: Row) {
     /** True when this row is itself a resend of an earlier one. */
     isResend: Boolean(row.resentFromId),
     resentFromId: row.resentFromId ?? null,
+    /*
+     * Open tracking. `trackOpens` is reported alongside the result so the CMS can
+     * distinguish "tracked, not opened" from "never tracked" — without it an
+     * untracked email would render identically to an unopened one, which is the
+     * misreading this data invites.
+     */
+    trackOpens: row.trackOpens ?? false,
+    openedAt: row.openedAt ?? null,
+    openCount: row.openCount ?? 0,
     orderId: row.orderId ?? null,
     orderNo: row.order?.orderNo ?? null,
     customerId: row.customerId ?? null,

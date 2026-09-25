@@ -418,3 +418,54 @@ describe('the order page resend shares this path', () => {
     expect(sendEmail).not.toHaveBeenCalled();
   });
 });
+
+/*
+ * Phase 2 wiring, checked at the seam where the config meets the database. The
+ * stored column and the flag sent to the provider come from ONE decision, so a
+ * template switched off next week cannot make last week's genuine open look like a
+ * row that was never tracked.
+ */
+describe('tracking is decided once, then both stored and sent', () => {
+  it('stores trackOpens true and asks the provider to track, for order mail', async () => {
+    const { id } = await emailLog.logAndSend({
+      to: [{ email: `${ns('trk-on')}@zewafeeds.test` }],
+      subject: 'Your order',
+      htmlBody: '<p>x</p>',
+      template: 'order-placed',
+    });
+
+    const row = await prisma.emailLog.findUniqueOrThrow({ where: { id } });
+    expect(row.trackOpens).toBe(true);
+    expect(sendEmail.mock.calls[0]![0]).toMatchObject({ trackOpens: true });
+  });
+
+  /* The rule that matters: no tracking pixel in a security email. */
+  it.each(['cms-login-otp', 'password-reset', 'customer-email-verification'])(
+    'stores trackOpens false and does not ask the provider to track, for %s',
+    async (template) => {
+      const { id } = await emailLog.logAndSend({
+        to: [{ email: `${ns('trk-off')}@zewafeeds.test` }],
+        subject: 'Your code',
+        htmlBody: '<p>x</p>',
+        template,
+      });
+
+      const row = await prisma.emailLog.findUniqueOrThrow({ where: { id } });
+      expect(row.trackOpens).toBe(false);
+      expect(sendEmail.mock.calls[0]![0]).toMatchObject({ trackOpens: false });
+    },
+  );
+
+  it('starts every row unopened', async () => {
+    const { id } = await emailLog.logAndSend({
+      to: [{ email: `${ns('trk-new')}@zewafeeds.test` }],
+      subject: 'Your order',
+      htmlBody: '<p>x</p>',
+      template: 'order-placed',
+    });
+
+    const row = await prisma.emailLog.findUniqueOrThrow({ where: { id } });
+    expect(row.openedAt).toBeNull();
+    expect(row.openCount).toBe(0);
+  });
+});

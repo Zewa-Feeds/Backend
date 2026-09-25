@@ -25,6 +25,15 @@ export interface SendEmailInput {
   attachments?: { name: string; content: string; mimeType: string }[];
   /** Correlates a send with the order it belongs to, in logs. */
   reference?: string;
+  /**
+   * Ask ZeptoMail to report opens for this message (§Phase 2).
+   *
+   * Implemented provider-side as a 1×1 transparent pixel, so this decides whether
+   * an invisible image goes into the mail. Decided per template by
+   * `modules/emails/tracking.ts`; omitted entirely when false so the payload is
+   * unchanged for everything that does not opt in.
+   */
+  trackOpens?: boolean;
 }
 
 export interface SendEmailResult {
@@ -128,6 +137,11 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
           : {}),
         subject: input.subject,
         htmlbody: input.htmlBody,
+        /*
+         * Only sent when tracking is on. ZeptoMail's default is off, so omitting
+         * the field leaves every untracked template's payload exactly as it was.
+         */
+        ...(input.trackOpens ? { track_opens: true } : {}),
         ...(input.textBody ? { textbody: input.textBody } : {}),
         ...(input.attachments?.length
           ? {

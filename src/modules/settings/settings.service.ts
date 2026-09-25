@@ -101,11 +101,24 @@ export const maintenanceSchema = z.object({
   endAt: z.string().datetime().nullable().default(null),
 });
 
+/**
+ * Per-template open tracking (§Phase 2).
+ *
+ * A map of template name -> boolean, overriding the code defaults in
+ * `modules/emails/tracking.ts`. Deliberately a sparse map rather than a full list:
+ * a template absent here uses its code default, so adding a new template does not
+ * require a settings migration, and the row records only deliberate decisions.
+ */
+const emailTrackingSchema = z.object({
+  templates: z.record(z.string(), z.boolean()).default({}),
+});
+
 export const settingsSchema = z.object({
   shipping: shippingSchema,
   tax: taxSchema,
   announcement: announcementSchema,
   maintenance: maintenanceSchema,
+  emailTracking: emailTrackingSchema,
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -118,6 +131,7 @@ const SCHEMAS = {
   tax: taxSchema,
   announcement: announcementSchema,
   maintenance: maintenanceSchema,
+  emailTracking: emailTrackingSchema,
 } as const;
 
 // ---- Reads -----------------------------------------------------------------
@@ -175,6 +189,7 @@ export async function getAll(): Promise<Settings> {
     tax: raw.tax ?? {},
     announcement: raw.announcement ?? {},
     maintenance: raw.maintenance ?? {},
+    emailTracking: raw.emailTracking ?? {},
   });
   const settings = { ...parsed, shipping: withStateRates(parsed.shipping) };
 

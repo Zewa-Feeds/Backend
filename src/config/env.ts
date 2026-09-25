@@ -142,6 +142,16 @@ const schema = z.object({
    */
   ZEPTOMAIL_REPLY_TO: optionalEmail,
   ZEPTOMAIL_REPLY_TO_NAME: z.string().default('Zewa Feeds Support'),
+  /**
+   * Webhook auth key from the Mail Agent's Webhooks tab (§Phase 2 open tracking).
+   *
+   * Optional: without it the webhook endpoint rejects every request, which is the
+   * safe direction — an unverifiable notification is an unauthenticated write into
+   * the mail log. Open tracking simply does not record until this is set.
+   *
+   * NOT the same value as ZEPTOMAIL_TOKEN, which authenticates outbound sends.
+   */
+  ZEPTOMAIL_WEBHOOK_KEY: optionalStr,
 
   SENTRY_DSN: optionalUrl,
 
