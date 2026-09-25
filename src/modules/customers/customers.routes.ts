@@ -8,13 +8,15 @@
  * and rewriting an email would break order attribution.
  */
 import { Router } from 'express';
-import { CustomerStatus } from '@prisma/client';
+import { AuditModule, CustomerStatus } from '@prisma/client';
 import { z } from 'zod';
 import { asyncHandler } from '@/middleware/asyncHandler';
 import { requirePermission } from '@/middleware/auth';
 import { enumFilter, paginationSchema, validate } from '@/middleware/validate';
-import { auditContext } from '@/modules/audit/audit.service';
+import { auditContext, writeAudit } from '@/modules/audit/audit.service';
+import { AppError, ErrorCode } from '@/lib/errors';
 import * as customersService from './customers.service';
+import { issueVerification } from './verification.service';
 
 export const customersRouter = Router();
 
@@ -97,3 +99,54 @@ customersRouter.post(
   }),
 );
 
+/**
+ * POST /admin/customers/:id/resend-verification — re-issue a verification link.
+ *
+ * The CMS already showed "Email Verified: No" and offered nothing to do about it,
+ * so support could see a stranded signup and not fix it. That happens whenever
+ * mail is down at the moment someone registers.
+ *
+ * This mints a FRESH token rather than resending the old email: the original
+ * token is single-use and 24-hour-bound, so replaying that message would deliver
+ * a link that cannot work. Shares `issueVerification` with the public route so
+ * the two cannot drift.
+ *
+ * `customers.ban` is the gate because it is the existing ADMIN-only customer
+ * permission, and emailing a customer is an outward-facing action.
+ */
+customersRouter.post(
+  '/:id/resend-verification',
+  requirePermission('customers.ban'),
+  validate({ params: idParam }),
+  asyncHandler(async (req, res) => {
+    const customer = await customersService.byId(req.params.id!);
+
+    const result = await issueVerification(customer.email);
+
+    if (!result.issued) {
+      /*
+       * Specific, unlike the public route's deliberately vague reply. There is no
+       * enumeration concern here — the operator is already authenticated and can
+       * see the customer record — and "already verified" vs "banned" are different
+       * things for them to act on.
+       */
+      const message =
+        result.reason === 'already-verified'
+          ? 'This customer has already verified their email.'
+          : result.reason === 'banned'
+            ? 'This customer is banned; no verification email was sent.'
+            : result.reason === 'guest'
+              ? 'This is a guest order record, not a registered account.'
+              : 'No account was found for that address.';
+      throw new AppError(422, ErrorCode.VALIDATION_FAILED, message);
+    }
+
+    await writeAudit(auditContext(req), {
+      module: AuditModule.CUSTOMERS,
+      action: `Re-sent the email verification link to ${customer.email}`,
+      recordId: customer.id,
+    });
+
+    res.json({ data: { ok: true } });
+  }),
+);

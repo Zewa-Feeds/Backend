@@ -382,7 +382,7 @@ export async function transition(
     // always has its email recorded; the actual send is dispatched after commit.
     let queuedEmailId: string | null = null;
     if (input.notifyCustomer && spec.email) {
-      const row = await tx.orderEmail.create({
+      const row = await tx.emailLog.create({
         data: {
           orderId: order.id,
           subject: spec.email.subject,
@@ -727,7 +727,7 @@ export async function refund(
       await couponsService.releaseRedemption(order.id, tx);
     }
 
-    const row = await tx.orderEmail.create({
+    const row = await tx.emailLog.create({
       data: {
         orderId: order.id,
         subject: 'Your refund has been processed',
@@ -950,7 +950,7 @@ export async function reconcilePayment(
 
     await couponsService.confirmRedemption(order.id, tx);
 
-    const emailRow = await tx.orderEmail.create({
+    const emailRow = await tx.emailLog.create({
       data: {
         orderId: order.id,
         subject: `We've received your order ${orderNo}`,
@@ -1060,7 +1060,7 @@ export async function resendEmail(orderNo: string, emailId: string, ctx: AuditCo
 
   if (!order) throw notFound('Order');
 
-  const emailRow = await prisma.orderEmail.findFirst({
+  const emailRow = await prisma.emailLog.findFirst({
     where: { id: emailId, orderId: order.id },
   });
 
@@ -1125,7 +1125,7 @@ export async function resendEmail(orderNo: string, emailId: string, ctx: AuditCo
       reference: orderNo,
     });
 
-    await prisma.orderEmail.update({
+    await prisma.emailLog.update({
       where: { id: emailRow.id },
       data: {
         subject: renderedSubject,
@@ -1151,7 +1151,7 @@ export async function resendEmail(orderNo: string, emailId: string, ctx: AuditCo
     return serializeOrder(updatedOrder);
   } catch (err: any) {
     const errorMsg = (err?.message || 'Failed to resend email').slice(0, 500);
-    await prisma.orderEmail.update({
+    await prisma.emailLog.update({
       where: { id: emailRow.id },
       data: {
         status: EmailStatus.FAILED,
@@ -1234,7 +1234,7 @@ export async function sendOrderEmail(
     }
   }
 
-  const row = await prisma.orderEmail.create({
+  const row = await prisma.emailLog.create({
     data: {
       orderId: order.id,
       template: templateChoice,
@@ -1254,7 +1254,7 @@ export async function sendOrderEmail(
       reference: orderNo,
     });
 
-    await prisma.orderEmail.update({
+    await prisma.emailLog.update({
       where: { id: row.id },
       data: {
         status: result.sent ? EmailStatus.SENT : EmailStatus.QUEUED,
@@ -1277,7 +1277,7 @@ export async function sendOrderEmail(
     return serializeOrder(updatedOrder);
   } catch (err: any) {
     const errorMsg = (err?.message || 'Failed to send email').slice(0, 500);
-    await prisma.orderEmail.update({
+    await prisma.emailLog.update({
       where: { id: row.id },
       data: {
         status: EmailStatus.FAILED,

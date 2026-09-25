@@ -1010,14 +1010,14 @@ export async function confirmPayment(
   return serializeOrder(updated);
 }
 
-/** Create the OrderEmail row and enqueue the send idempotently. */
+/** Create the EmailLog row and enqueue the send idempotently. */
 async function queueCustomerEmail(
   orderId: string,
   orderNo: string,
   template: 'order-placed',
 ): Promise<void> {
   try {
-    const existing = await prisma.orderEmail.findFirst({
+    const existing = await prisma.emailLog.findFirst({
       where: {
         orderId,
         subject: { in: [`Order ${orderNo} confirmed`, `We've received your order ${orderNo}`] },
@@ -1034,7 +1034,7 @@ async function queueCustomerEmail(
       select: { email: true },
     });
 
-    const row = await prisma.orderEmail.create({
+    const row = await prisma.emailLog.create({
       data: {
         orderId,
         subject: `Order ${orderNo} confirmed`,

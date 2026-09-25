@@ -4,7 +4,7 @@
  * Sent DIRECTLY rather than through the BullMQ email queue, for three reasons:
  *
  *   1. `CustomerEmailJob` is keyed to an order: it carries `orderNo` and an
- *      `orderEmailId` audit row to flip to SENT. Account mail has no order, so
+ *      `EmailLog` row id to flip to SENT. Account mail has no order, so
  *      riding that queue would mean inventing a fake one.
  *   2. Redis is not guaranteed. An exhausted cache quota already took the queue
  *      down once, and "you cannot recover your account until the cache is
@@ -16,7 +16,7 @@
  * an unknown address, turning response time into an account-enumeration oracle.
  * Failures are logged, never surfaced to the caller.
  */
-import { sendEmail } from '@/integrations/zeptomail/zeptomail.client';
+import { logAndSend } from '@/modules/emails/email-log.service';
 import { accountTemplates } from '@/integrations/zeptomail/templates';
 import { logger } from '@/lib/logger';
 
@@ -69,6 +69,11 @@ export function sendAccountEmail<T extends CustomerAccountTemplateName>(
   to: string,
   template: T,
   context: AccountContext[T],
+  /**
+   * Links the row to a customer so the CMS can show their mail history, and so a
+   * stuck verification email is findable from the person it belongs to.
+   */
+  customerId?: string | null,
 ): void {
   const build = accountTemplates[template] as (ctx: AccountContext[T]) => {
     subject: string;
@@ -76,8 +81,24 @@ export function sendAccountEmail<T extends CustomerAccountTemplateName>(
   };
   const { subject, html } = build(context);
 
-  void sendEmail({ to: [{ email: to }], subject, htmlBody: html, reference: template })
-    .then(() => log.info({ template, to: redact(to) }, 'account email sent'))
+  /*
+   * Still fire-and-forget, deliberately — `void`, not `await`.
+   *
+   * `logAndSend` writes the EmailLog row BEFORE it calls the provider, so the
+   * attempt is recorded even though this function returns immediately and the
+   * caller never learns the outcome. That ordering is what makes these emails
+   * resendable at all; awaiting would reintroduce the enumeration oracle the
+   * module docblock describes.
+   */
+  void logAndSend({
+    to: [{ email: to }],
+    subject,
+    htmlBody: html,
+    reference: template,
+    template,
+    customerId: customerId ?? null,
+  })
+    .then((r) => log.info({ template, to: redact(to), emailId: r.id }, 'account email sent'))
     .catch((err: unknown) => {
       // Swallowed deliberately: the HTTP response has already been decided, and
       // a mail outage must not tell a caller whether the address exists.

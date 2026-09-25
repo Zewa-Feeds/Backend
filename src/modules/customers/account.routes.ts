@@ -240,11 +240,16 @@ customerAuthRouter.post(
       },
     });
 
-    sendAccountEmail(customer.email, 'customer-email-verification', {
-      firstName: customer.firstName,
-      verifyUrl: `${env.STOREFRONT_ORIGIN}/verify-email?token=${encodeURIComponent(verifyToken)}`,
-      expiresInHours: VERIFICATION_TTL_HOURS,
-    });
+    sendAccountEmail(
+      customer.email,
+      'customer-email-verification',
+      {
+        firstName: customer.firstName,
+        verifyUrl: `${env.STOREFRONT_ORIGIN}/verify-email?token=${encodeURIComponent(verifyToken)}`,
+        expiresInHours: VERIFICATION_TTL_HOURS,
+      },
+      customer.id,
+    );
 
     log.info({ customerId: customer.id }, 'customer registered; verification email sent');
 
@@ -409,11 +414,16 @@ customerAuthRouter.post(
         },
       });
 
-      sendAccountEmail(customer.email, 'customer-email-verification', {
-        firstName: customer.firstName,
-        verifyUrl: `${env.STOREFRONT_ORIGIN}/verify-email?token=${encodeURIComponent(verifyToken)}`,
-        expiresInHours: VERIFICATION_TTL_HOURS,
-      });
+      sendAccountEmail(
+        customer.email,
+        'customer-email-verification',
+        {
+          firstName: customer.firstName,
+          verifyUrl: `${env.STOREFRONT_ORIGIN}/verify-email?token=${encodeURIComponent(verifyToken)}`,
+          expiresInHours: VERIFICATION_TTL_HOURS,
+        },
+        customer.id,
+      );
 
       log.info({ customerId: customer.id }, 'verification email resent');
     }
@@ -529,11 +539,16 @@ customerAuthRouter.post(
 
       // Not awaited — see account.mailer.ts. Awaiting would make this branch
       // slower than the unknown-address branch and leak which emails exist.
-      sendAccountEmail(customer.email, 'password-reset', {
-        firstName: customer.firstName,
-        resetUrl: `${env.STOREFRONT_ORIGIN}/reset-password?token=${encodeURIComponent(token)}`,
-        expiresInMinutes: RESET_TTL_MINUTES,
-      });
+      sendAccountEmail(
+        customer.email,
+        'password-reset',
+        {
+          firstName: customer.firstName,
+          resetUrl: `${env.STOREFRONT_ORIGIN}/reset-password?token=${encodeURIComponent(token)}`,
+          expiresInMinutes: RESET_TTL_MINUTES,
+        },
+        customer.id,
+      );
 
       log.info({ customerId: customer.id }, 'password reset issued');
     }
@@ -605,9 +620,12 @@ customerAuthRouter.post(
       }),
     ]);
 
-    sendAccountEmail(record.customer.email, 'password-changed', {
-      firstName: record.customer.firstName,
-    });
+    sendAccountEmail(
+      record.customer.email,
+      'password-changed',
+      { firstName: record.customer.firstName },
+      record.customer.id,
+    );
 
     // Signed in immediately: bouncing someone to a login form to retype the
     // password they just chose is friction with no security benefit.
@@ -706,7 +724,13 @@ accountRouter.post(
     });
 
     // Tells the owner an account takeover happened if it wasn't them.
-    sendAccountEmail(updated.email, 'password-changed', { firstName: updated.firstName });
+    sendAccountEmail(
+      updated.email,
+      'password-changed',
+      { firstName: updated.firstName },
+      // The signed-in customer, already on the request — no need to re-select it.
+      req.customer!.id,
+    );
 
     res.json({ data: { ok: true } });
   }),

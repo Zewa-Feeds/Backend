@@ -40,7 +40,7 @@ const defaultJobOptions: JobsOptions = {
 
 export interface CustomerEmailJob {
   kind: 'customer';
-  /** OrderEmail row to update on success — the audit of what was actually sent. */
+  /** EmailLog row to update on success — the audit of what was actually sent. */
   orderEmailId: string;
   orderNo: string;
   template: CustomerTemplateName;

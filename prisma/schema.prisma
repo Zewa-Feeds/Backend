@@ -216,6 +216,13 @@ enum EmailStatus {
   QUEUED
   SENT
   FAILED
+  /// Never attempted because the provider was not configured.
+  ///
+  /// Deliberately NOT folded into FAILED: "the provider rejected this" and
+  /// "there was no provider" are different operational problems, and conflating
+  /// them is what made the Sep 2026 ZeptoMail outage slow to diagnose — a
+  /// placeholder token produced a 401 that read as a bad credential.
+  SKIPPED
 }
 
 // ============================================================================
@@ -656,7 +663,7 @@ model Order {
   updatedAt   DateTime  @updatedAt
 
   items       OrderItem[]
-  emails      OrderEmail[]
+  emails      EmailLog[]
   refunds     Refund[]
   redemptions CouponRedemption[]
   returns     OrderReturn[]
@@ -729,9 +736,25 @@ model OrderItem {
 }
 
 /// What the customer was actually sent, and when (§6.3 + §15).
-model OrderEmail {
-  id      String @id @default(uuid())
-  orderId String
+/// Every email this system attempts to send, order-related or not.
+///
+/// Was `OrderEmail`, which could only represent order mail because `orderId` was
+/// required. That left CMS login OTP, password resets, email verification and the
+/// coin emails completely unlogged — so when the Sep 2026 ZeptoMail outage broke
+/// login OTP, the one class of mail that failed was the only class with no record
+/// and therefore no way to resend it, while order mail (which did not break)
+/// already had a working resend button.
+///
+/// One table, not two: two would mean two resend paths, two CMS lists, and a
+/// standing question of which one a given email lives in — exactly the asymmetry
+/// that caused the problem.
+model EmailLog {
+  id String @id @default(uuid())
+
+  /// Null for mail that belongs to no order — OTP, password reset, verification.
+  orderId String?
+  /// Set when the recipient is a known customer; null for staff and operators.
+  customerId String?
 
   template          String?
   subject           String
@@ -740,12 +763,38 @@ model OrderEmail {
   providerMessageId String?
   error             String?
   bodyHtml          String?
-  queuedAt          DateTime    @default(now())
-  sentAt            DateTime?
 
-  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// Resend bookkeeping. A resend writes a NEW row pointing at the one it
+  /// replaces, rather than mutating it: the failed attempt IS the incident
+  /// history, and overwriting it loses the fact that anything went wrong.
+  resentFromId String?
+
+  queuedAt      DateTime  @default(now())
+  sentAt        DateTime?
+  lastAttemptAt DateTime?
+
+  /// Phase 2 (open tracking) columns, added now so enabling it needs no second
+  /// migration against a live table. Nothing writes them yet.
+  trackOpens Boolean   @default(false)
+  openedAt   DateTime?
+  openCount  Int       @default(0)
+
+  /// SetNull, never Cascade, on both relations.
+  ///
+  /// Under Cascade, deleting an order erased the evidence that its confirmation
+  /// email was ever sent. Mail is a record of what we told someone and when, so
+  /// it has to outlive the thing it refers to — the same reasoning that keeps
+  /// CoinLedger's references FK-free.
+  order    Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  customer Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
   @@index([orderId])
+  @@index([customerId])
+  @@index([status, queuedAt])
+  @@index([toEmail])
+  @@index([template])
+  /// Phase 2's webhook arrives carrying only the provider's message id.
+  @@index([providerMessageId])
 }
 
 model Refund {
@@ -815,6 +864,7 @@ model Customer {
   emailVerifications CustomerEmailVerification[]
   loyaltyAccount     LoyaltyAccount?
   earnCapOverrides   CustomerEarnCapOverride[]
+  emails             EmailLog[]
 
   @@index([status])
 }

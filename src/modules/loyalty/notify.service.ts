@@ -3,7 +3,7 @@
  *
  * Reuses the existing account-mail path (`sendAccountEmail`) rather than the
  * order-scoped BullMQ queue: `CustomerEmailJob` carries an `orderNo` and an
- * `OrderEmail` audit row, and a coin expiry reminder has neither. That is the
+ * `EmailLog` order row, and a coin expiry reminder has neither. That is the
  * same reasoning `account.mailer.ts` already documents for password mail.
  *
  * IDEMPOTENCY IS THE ADDITION.
@@ -90,11 +90,17 @@ async function recipient(accountId: string) {
   const account = await prisma.loyaltyAccount.findUnique({
     where: { id: accountId },
     select: {
-      customer: { select: { email: true, firstName: true } },
+      // `id` so the EmailLog row can be attributed to the customer, which is what
+      // lets the CMS show a coin email on the person it was sent to.
+      customer: { select: { id: true, email: true, firstName: true } },
     },
   });
   if (!account?.customer?.email) return null;
-  return { email: account.customer.email, firstName: account.customer.firstName || 'there' };
+  return {
+    id: account.customer.id,
+    email: account.customer.email,
+    firstName: account.customer.firstName || 'there',
+  };
 }
 
 /**
@@ -171,7 +177,7 @@ export async function notifyEarned(input: {
     }),
     orderNo: input.orderNo,
     coinsUrl: coinsUrl(),
-  });
+  }, to.id);
 }
 
 /**
@@ -203,7 +209,7 @@ export async function notifyExpiring(
       year: 'numeric',
     }),
     coinsUrl: coinsUrl(),
-  });
+  }, to.id);
 }
 
 /**
@@ -239,7 +245,7 @@ export async function notifyAdjusted(
     restored: input.restored,
     clawedBack: input.clawedBack,
     coinsUrl: coinsUrl(),
-  });
+  }, to.id);
 }
 
 /**

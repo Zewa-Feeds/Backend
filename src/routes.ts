@@ -38,6 +38,7 @@ import {
 } from '@/modules/dashboard/dashboard.routes';
 import { analyticsRouter } from '@/modules/analytics/analytics.routes';
 import { loyaltyAdminRouter } from '@/modules/loyalty/admin.routes';
+import { emailsAdminRouter } from '@/modules/emails/admin.routes';
 import { uploadsRouter } from '@/modules/uploads/uploads.routes';
 import { catalogRouter } from '@/modules/catalog/catalog.routes';
 import { previewRouter } from '@/modules/catalog/preview.routes';
@@ -99,6 +100,7 @@ adminRouter.use('/settings', settingsRouter); // settings.manage
 adminRouter.use('/analytics', analyticsRouter); // orders.view
 // Z-Coin administration (ZSOP004 §9.4).
 adminRouter.use('/loyalty', loyaltyAdminRouter);
+adminRouter.use('/emails', emailsAdminRouter);
 
 // ============================================================================
 // WEBHOOKS — no CORS, no auth. Verified by HMAC signature over the RAW body.

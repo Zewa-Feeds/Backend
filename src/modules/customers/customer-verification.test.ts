@@ -120,6 +120,11 @@ describe('Customer Signup Email Verification', () => {
         }),
       }),
     );
+    /*
+     * The 4th argument is the customer id, which attributes the EmailLog row to
+     * the person. Without it a stranded verification email cannot be found from
+     * the customer it belongs to — which is the whole point of logging it.
+     */
     expect(sendAccountEmailMock).toHaveBeenCalledWith(
       'newuser@example.com',
       'customer-email-verification',
@@ -128,6 +133,7 @@ describe('Customer Signup Email Verification', () => {
         verifyUrl: expect.stringContaining('/verify-email?token='),
         expiresInHours: 24,
       }),
+      'cust-123',
     );
   });
 
@@ -295,6 +301,7 @@ describe('Customer Signup Email Verification', () => {
       'unverified@example.com',
       'customer-email-verification',
       expect.anything(),
+      'cust-123',
     );
   });
 });

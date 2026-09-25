@@ -2,7 +2,7 @@
  * Email worker — drains the email queue via ZeptoMail (§15).
  *
  * Runs in the worker process, not the API, so a slow mail provider cannot delay a
- * request. On success the `OrderEmail` row is flipped to SENT with the provider's
+ * request. On success the `EmailLog` row is flipped to SENT with the provider's
  * message id, which is what the CMS's "Customer Emails" card displays.
  *
  * Failures are RETHROWN so BullMQ retries with backoff. Only after all attempts
@@ -19,6 +19,7 @@ import { formatInvoiceFilename, generateInvoicePdf } from '@/integrations/pdf/in
 import * as settingsService from '@/modules/settings/settings.service';
 import { formatAddress } from '@/modules/orders/orders.serializer';
 import { QUEUE_NAMES, type EmailJob } from '@/jobs/queues';
+import * as emailLog from '@/modules/emails/email-log.service';
 import { guardWorker } from '@/jobs/workers/guard';
 
 const log = logger.child({ module: 'worker.email' });
@@ -169,17 +170,22 @@ async function handleCustomerEmail(job: Job<EmailJob>): Promise<void> {
     reference: data.orderNo,
   });
 
-  await prisma.orderEmail.update({
+  /*
+   * Subject is stored separately from the status transition because the rendered
+   * subject is only known here, after the template runs.
+   */
+  await prisma.emailLog.update({
     where: { id: data.orderEmailId },
-    data: {
-      subject: rendered.subject,
-      status: result.sent ? EmailStatus.SENT : EmailStatus.QUEUED,
-      providerMessageId: result.messageId,
-      sentAt: result.sent ? new Date() : null,
-      // A skipped send (no credentials) is recorded rather than silently lost.
-      error: result.skipped ? 'ZeptoMail not configured — send skipped' : null,
-    },
+    data: { subject: rendered.subject, bodyHtml: rendered.html },
   });
+
+  /*
+   * One shared writer for the outcome, so the queue path and the direct path
+   * cannot drift on what SENT / SKIPPED mean. Previously a skipped send was left
+   * at QUEUED with the reason pushed into `error`, which made it look like mail
+   * still in flight — during the outage every OTP read as merely slow.
+   */
+  await emailLog.finish(data.orderEmailId, result);
 }
 
 /**
@@ -375,14 +381,15 @@ export function startEmailWorker(): Worker<EmailJob> {
       exhausted ? 'email job failed permanently' : 'email job failed, will retry',
     );
 
-    // Surface a permanent failure in the CMS rather than losing it.
+    /*
+     * Surface a permanent failure in the CMS rather than losing it.
+     *
+     * BullMQ owns the retry decision — this only records the verdict once its
+     * attempts are exhausted. Deliberately the ONLY place a queued email becomes
+     * FAILED, so nothing else races it to that state.
+     */
     if (exhausted && job?.data.kind === 'customer') {
-      void prisma.orderEmail
-        .update({
-          where: { id: job.data.orderEmailId },
-          data: { status: EmailStatus.FAILED, error: err.message.slice(0, 500) },
-        })
-        .catch(() => undefined);
+      void emailLog.markFailed(job.data.orderEmailId, err.message);
     }
   });
 

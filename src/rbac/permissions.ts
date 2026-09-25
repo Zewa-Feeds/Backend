@@ -77,6 +77,17 @@ export const CAN = {
   'loyalty.view': [OPS, ADMIN],
   'loyalty.adjust': [ADMIN],
   'loyalty.config': [ADMIN],
+
+  /*
+   * Email log.
+   *
+   * Support answering "did the customer get their order confirmation?" needs to
+   * READ the log, so OPS can view. RESENDING puts a message in someone's inbox —
+   * an outward-facing action, and during an incident potentially a few hundred of
+   * them at once — so it stays ADMIN.
+   */
+  'emails.view': [OPS, ADMIN],
+  'emails.resend': [ADMIN],
 } as const satisfies Record<string, readonly Role[]>;
 
 export type Permission = keyof typeof CAN;
