@@ -220,13 +220,55 @@ describe('the endpoint refuses anything it cannot verify', () => {
     expect(after.openedAt).toBeNull();
   });
 
-  it('401s a missing signature header', async () => {
+  /*
+   * An UNSIGNED request is ZeptoMail's reachability probe, not an event.
+   *
+   * Their Add Webhook form will not save unless the URL answers 200, and it probes
+   * unsigned — so a signature-verifying endpoint could never be registered. It is
+   * acknowledged, but it must not be PROCESSED: that distinction is the whole point,
+   * so the assertion is on the database, not just the status code.
+   */
+  it('200s an unsigned probe without recording anything', async () => {
+    const row = await seedTracked('msg-probe');
+
     const res = await fetch(url(), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: openEvent('msg-x'),
+      body: openEvent('msg-probe'),
     });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ data: { handled: false } });
+
+    const after = await prisma.emailLog.findUniqueOrThrow({ where: { id: row.id } });
+    expect(after.openedAt).toBeNull();
+    expect(after.openCount).toBe(0);
+  });
+
+  /*
+   * The line that matters: acknowledging an UNSIGNED request must not soften a
+   * request that DOES carry a signature. Forging an event is exactly as hard as
+   * before — an attacker cannot simply omit the header to get their body processed,
+   * because an omitted header means the body is never read at all.
+   */
+  it('still 401s a request carrying a bad signature, and writes nothing', async () => {
+    const row = await seedTracked('msg-still-guarded');
+
+    const res = await post(openEvent('msg-still-guarded'), { key: 'attacker-key' });
+
     expect(res.status).toBe(401);
+    const after = await prisma.emailLog.findUniqueOrThrow({ where: { id: row.id } });
+    expect(after.openCount).toBe(0);
+  });
+
+  it('401s a malformed signature header rather than treating it as a probe', async () => {
+    const row = await seedTracked('msg-malformed');
+
+    const res = await post(openEvent('msg-malformed'), { header: 'not-a-signature-header' });
+
+    expect(res.status).toBe(401);
+    const after = await prisma.emailLog.findUniqueOrThrow({ where: { id: row.id } });
+    expect(after.openCount).toBe(0);
   });
 
   /* Replay bound: an old capture must not be replayable to inflate counts. */

@@ -43,6 +43,34 @@ zeptomailWebhookRouter.post(
     const raw = rawBody(req);
     const verified = verifyWebhook(raw, req.get('producer-signature'));
 
+    /*
+     * A request carrying NO signature header at all is ZeptoMail's reachability
+     * probe, not an event.
+     *
+     * Their "Add Webhook" form refuses to save unless the URL answers 200 ("All API
+     * calls should return status code 200"), and it probes UNSIGNED — so a correctly
+     * signature-verifying endpoint can never be registered. Verified against
+     * production: an unsigned POST, and one carrying their generic Authorization
+     * header, both answered 401.
+     *
+     * Answering 200 here does NOT weaken verification. Nothing is parsed, nothing is
+     * interpreted and nothing is written — the handler returns before any of that.
+     * An unsigned request therefore cannot record an open, which is the only thing
+     * this endpoint writes.
+     *
+     * Keyed strictly on MISSING_HEADER. A request that DOES carry a signature is
+     * still verified in full and still 401s on a bad, malformed or stale one, so
+     * forging an event is exactly as hard as before. NOT_CONFIGURED deliberately
+     * does not qualify: it is checked BEFORE the header, so treating it as a probe
+     * would make a production service with no key silently 200 every real event
+     * instead of surfacing the misconfiguration.
+     */
+    if (!verified.ok && verified.reason === 'MISSING_HEADER') {
+      log.info('unsigned request acknowledged (reachability probe); nothing processed');
+      res.status(200).json({ data: { handled: false, reason: 'no signature — probe' } });
+      return;
+    }
+
     if (!verified.ok) {
       /*
        * Logged at warn, including the reason. NOT_CONFIGURED in particular is a
