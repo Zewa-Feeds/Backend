@@ -76,7 +76,18 @@ export class RazorpayProvider implements PaymentProvider {
         isSimulated: false,
       };
     } catch (err) {
-      log.error({ err, orderNo: input.orderNo }, 'razorpay order creation failed');
+      /*
+       * The amount is logged because the commonest cause of a refusal here is a
+       * total the gateway will not accept — Razorpay rejects anything under 100
+       * paise — and `upstreamFailed` says only "Razorpay is unavailable", which
+       * reads as an outage and invites an endless retry on an order that can
+       * never go through. The redemption ceiling now reserves ₹1 so this should
+       * not be reachable; if it fires, the log says which number caused it.
+       */
+      log.error(
+        { err, orderNo: input.orderNo, amountPaise: input.amountPaise },
+        'razorpay order creation failed',
+      );
       throw upstreamFailed('Razorpay');
     }
   }

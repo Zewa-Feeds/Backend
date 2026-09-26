@@ -41,6 +41,7 @@ import * as couponsService from '@/modules/coupons/coupons.service';
 import * as loyaltyEarn from '@/modules/loyalty/earn.service';
 import * as loyaltyFraud from '@/modules/loyalty/fraud.service';
 import * as loyaltyRedemption from '@/modules/loyalty/redemption.service';
+import { MIN_GATEWAY_PAYABLE_PAISE } from '@/modules/loyalty/coin-math';
 
 const log = logger.child({ module: 'checkout' });
 
@@ -371,7 +372,33 @@ export async function checkout(
    * Floored at zero — coins can cover the whole order, and a negative total is
    * not a refund.
    */
-  const payableTotalPaise = Math.max(0, cart.totalPaise - coinDiscountPaise);
+  const rawPayablePaise = Math.max(0, cart.totalPaise - coinDiscountPaise);
+
+  /*
+   * A prepaid order must stay above the gateway's floor.
+   *
+   * `maxRedeemableCoins` already reserves ₹1 when the hold is granted, so this
+   * is a BACKSTOP rather than the main control: a hold taken before shipping
+   * changed, or against a cart that has since shrunk, could still land under the
+   * minimum, and Razorpay would refuse `orders.create` with an error that reads
+   * as an outage.
+   *
+   * Only the TOTAL is raised — `coinDiscountPaise` is deliberately left alone, so
+   * the reservation, the ledger and the order's own discount line continue to
+   * describe the same number of coins. The customer pays ₹1 instead of ₹0.20 in
+   * the rare case this fires; the alternative is a checkout that cannot complete.
+   *
+   * COD is exempt: no gateway is involved, so a sub-₹1 doorstep total is fine.
+   *
+   * Zero is NOT exempted. It is unreachable through coins — the ceiling reserves
+   * ₹1 of product value — but a gateway rejects a ₹0 order exactly as it rejects
+   * ₹0.20, so carving out a special case would only create a second way to
+   * produce an unpayable order.
+   */
+  const payableTotalPaise =
+    input.paymentMethod === PaymentMethod.COD
+      ? rawPayablePaise
+      : Math.max(rawPayablePaise, MIN_GATEWAY_PAYABLE_PAISE);
 
   /*
    * ---- 4b. Retry: is the existing order still the right one? ---------------

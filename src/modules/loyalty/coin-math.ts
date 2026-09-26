@@ -175,10 +175,32 @@ export function eligibleRedemptionValuePaise(lines: CoinLine[], rules: CoinRules
 }
 
 /**
+ * The smallest amount a payment gateway will accept, in paise.
+ *
+ * Razorpay rejects `orders.create` below 100 paise — "currency subunits should
+ * always be greater than 100" — so an order priced under ₹1 cannot be paid for
+ * at all. The failure surfaces as `upstreamFailed('Razorpay')`, which reads as
+ * an outage rather than as a refused amount, and the customer retries forever.
+ *
+ * Redemption is therefore capped to leave this much payable. Enforced HERE, in
+ * the one function both `quote` and `reserve` call, so the ceiling the customer
+ * is shown, the hold the server grants and the order finally priced cannot
+ * disagree — showing "use all 418 coins" and then refusing them at payment is
+ * the failure this prevents.
+ */
+export const MIN_GATEWAY_PAYABLE_PAISE = 100;
+
+/**
  * The most coins this cart can absorb (§4.1 step 5).
  *
- * MIN(balance, eligible value expressed in coins). Floors, so a part-coin is
- * never granted.
+ * MIN(balance, eligible value expressed in coins), less whatever must remain
+ * payable for a gateway to accept the order. Floors, so a part-coin is never
+ * granted.
+ *
+ * The reserve is taken against the ELIGIBLE PRODUCT VALUE, which is what coins
+ * reduce — shipping and fees stay payable in cash (§4) and are not part of this
+ * figure. When shipping is charged it only widens the margin above the minimum;
+ * when it is free, this reserve is the only thing keeping the order payable.
  */
 export function maxRedeemableCoins(
   lines: CoinLine[],
@@ -186,7 +208,12 @@ export function maxRedeemableCoins(
   rules: CoinRules,
 ): number {
   const valuePaise = eligibleRedemptionValuePaise(lines, rules);
-  const byValue = Math.floor(valuePaise / rules.coinValuePaise);
+  /*
+   * A cart already worth less than the minimum cannot be part-paid in coins and
+   * still reach it, so nothing is redeemable rather than a negative ceiling.
+   */
+  const redeemablePaise = Math.max(0, valuePaise - MIN_GATEWAY_PAYABLE_PAISE);
+  const byValue = Math.floor(redeemablePaise / rules.coinValuePaise);
   return Math.max(0, Math.min(availableCoins, byValue));
 }
 

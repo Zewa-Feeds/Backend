@@ -395,7 +395,8 @@ describe('§4 Redemption limits are enforced server-side', () => {
 
   it('caps at the eligible product value, not the balance', async () => {
     const { customerId } = await seedCustomer('cap', 5000);
-    // A ₹100 cart can absorb at most 100 coins whatever the balance.
+    // A ₹100 cart absorbs at most 99 coins whatever the balance: ₹1 stays
+    // payable, because Razorpay refuses an order under 100 paise.
     const smallCart = [{ ...LINES[0]!, lineTotalPaise: 10000 }];
     const r = await redemption.reserve({
       customerId,
@@ -403,7 +404,7 @@ describe('§4 Redemption limits are enforced server-side', () => {
       lines: smallCart,
       cartKey: 'cap',
     });
-    expect(r.held).toBe(100);
+    expect(r.held).toBe(99);
   });
 
   it('holds nothing when the cart contains no redeemable items (§6.4)', async () => {

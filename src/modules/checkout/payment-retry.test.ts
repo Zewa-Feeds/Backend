@@ -230,7 +230,14 @@ describe('the amount handed to the gateway', () => {
     ['₹99.99', 9999],
     ['₹125.50', 12550],
     ['₹1000.00', 100000],
-    ['₹0.50', 50],
+    /*
+     * ₹0.50 was here to prove sub-rupee amounts are never rounded. It is gone
+     * because such an order can no longer exist online: Razorpay refuses
+     * anything under 100 paise, so checkout now floors a prepaid total at ₹1 —
+     * an order priced at ₹0.50 could never be paid for. ₹1.01 keeps the
+     * no-rounding guarantee at the lowest amount that is still payable.
+     */
+    ['₹1.01', 101],
   ])('passes %s through as %i paise, exactly', async (_label, paise) => {
     findUnique.mockResolvedValue(existingOrder({ totalPaise: paise }));
     priceCartMock.mockResolvedValue(pricedAt(paise));

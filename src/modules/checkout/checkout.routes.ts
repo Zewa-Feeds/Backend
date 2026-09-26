@@ -8,7 +8,7 @@ import { Router } from 'express';
 import { PaymentMethod } from '@prisma/client';
 import { z } from 'zod';
 import { asyncHandler } from '@/middleware/asyncHandler';
-import { attachCustomerIfPresent } from '@/modules/customers/account.routes';
+import { optionalCustomer } from '@/modules/customers/account.routes';
 import { validate, emailSchema, phoneSchema, pincodeSchema } from '@/middleware/validate';
 import { checkoutLimiter } from '@/middleware/rateLimit';
 import { plainText } from '@/lib/sanitize';
@@ -89,7 +89,7 @@ checkoutRouter.post(
    * price while the page showed the discounted total — the customer was charged
    * ₹376.20 against a ₹0.20 checkout.
    */
-  attachCustomerIfPresent,
+  optionalCustomer,
   validate({ body: checkoutSchema }),
   asyncHandler(async (req, res) => {
     // Scoped by email so one client's key cannot collide with another's.

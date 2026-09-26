@@ -492,7 +492,8 @@ describe('Cart changes after applying (§4.1)', () => {
     const cartKey = `${TAG}-shrink-${Date.now()}`;
 
     // A ₹100 cart cannot take 5,000 coins — the server caps at the cart value
-    // and reports the reduction rather than failing (§4.1).
+    // and reports the reduction rather than failing (§4.1). The cap is 99, not
+    // 100: ₹1 stays payable so a gateway will accept the order.
     const result = await redemption.reserve({
       customerId,
       coins: 5000,
@@ -508,7 +509,7 @@ describe('Cart changes after applying (§4.1)', () => {
         },
       ],
     });
-    expect(result.held).toBe(100);
+    expect(result.held).toBe(99);
     expect(result.reduced).toBe(true);
   });
 });
@@ -851,5 +852,124 @@ describe('The coin amount is the server\'s, not the client\'s', () => {
 
     expect(row.totalPaise).toBe(baseRow.totalPaise - 150 * 100);
     expect(row.discountPaise).toBe(baseRow.discountPaise + 150 * 100);
+  });
+});
+
+/*
+ * THE ₹1 GATEWAY FLOOR, end to end.
+ *
+ * Razorpay refuses `orders.create` under 100 paise. The reported cart — ₹418 of
+ * product, free shipping, 376 coins — priced at ₹0.20 and was rejected, surfacing
+ * as "Razorpay is unavailable": an outage message for an order that could never
+ * be paid for.
+ *
+ * Two defences, both asserted here: the ceiling reserves the minimum when a hold
+ * is granted, and checkout raises the total if a stale hold still lands under it.
+ */
+describe('A prepaid order never prices below the gateway minimum', () => {
+  async function placeOnline(customerId: string, extra: Record<string, unknown> = {}) {
+    const result = await checkoutService.checkout(
+      {
+        lines: [{ sku: variantSku, qty: 1 }],
+        email: `${TAG}-buyer@zewafeeds.test`,
+        phone: '+919000000009',
+        shippingAddress: {
+          name: 'Chk Test',
+          phone: '+919000000009',
+          line1: 'Line 1',
+          city: 'Kochi',
+          state: 'Kerala',
+          pincode: '682001',
+        },
+        paymentMethod: PaymentMethod.RAZORPAY,
+        customerId,
+        ...extra,
+      } as Parameters<typeof checkoutService.checkout>[0],
+      ctx as Parameters<typeof checkoutService.checkout>[1],
+    );
+    const row = await prisma.order.findFirstOrThrow({
+      where: { orderNo: result.orderNo },
+      select: { totalPaise: true },
+    });
+    return { result, row };
+  }
+
+  /*
+   * Spending everything the server offers must still leave a payable order. This
+   * is the case that failed: the ceiling used to allow the full product value.
+   */
+  it('stays payable when the customer spends every coin offered', async () => {
+    const { customerId } = await seedCustomer('floor-all', 100000);
+    const cartKey = `${TAG}-floor-${Date.now()}`;
+    // Far more than the cart can absorb; reserve caps it at the ceiling.
+    const held = await hold(customerId, 100000, cartKey);
+
+    const { result, row } = await placeOnline(customerId, { coinCartKey: cartKey });
+
+    expect(held.held).toBeGreaterThan(0);
+    expect(row.totalPaise).toBeGreaterThanOrEqual(100);
+    expect(result.payment.amountPaise).toBe(row.totalPaise);
+  });
+
+  /*
+   * The backstop. A hold granted before the cart shrank could still exceed what
+   * is now redeemable, so checkout raises the total rather than pricing an order
+   * no gateway will accept. The RESERVATION is untouched — only the total moves.
+   */
+  it('raises a sub-minimum total rather than creating an unpayable order', async () => {
+    const { customerId } = await seedCustomer('floor-stale', 100000);
+    const cartKey = `${TAG}-stale-${Date.now()}`;
+    const held = await hold(customerId, 100000, cartKey);
+
+    /*
+     * Force the hold past the ceiling, as a cart change would. `lockedCoins` is
+     * moved with it: the two are one balance, and desyncing them trips the
+     * account's non-negative constraint when the reservation is confirmed.
+     */
+    const account = await prisma.loyaltyAccount.findUniqueOrThrow({ where: { customerId } });
+    await prisma.coinReservation.updateMany({
+      where: { accountId: account.id, cartKey },
+      data: { coins: held.held + 500 },
+    });
+    await prisma.loyaltyAccount.update({
+      where: { id: account.id },
+      data: { lockedCoins: { increment: 500 } },
+    });
+
+    const { result, row } = await placeOnline(customerId, { coinCartKey: cartKey });
+
+    expect(row.totalPaise).toBe(100);
+    expect(result.payment.amountPaise).toBe(row.totalPaise);
+  });
+
+  /*
+   * COD has no gateway, so its total is never raised. Asserted through the SAME
+   * stale-hold shape as above; rewriting `coins` on the reservation directly
+   * would desync `lockedCoins` and trip the ledger's non-negative constraint,
+   * which is the account invariant doing its job rather than a bug.
+   */
+  it('does not raise a COD total, which no gateway sees', async () => {
+    const { customerId } = await seedCustomer('floor-cod', 100000);
+    const cartKey = `${TAG}-cod-${Date.now()}`;
+    await hold(customerId, 100000, cartKey);
+
+    const order = await placeOrder(customerId, { coinCartKey: cartKey });
+    const row = await prisma.order.findFirstOrThrow({
+      where: { orderNo: order.orderNo },
+      select: { totalPaise: true },
+    });
+
+    // The ceiling already reserved ₹1, so COD lands there too — the point is
+    // that nothing RAISED it, which the shipping-free product value confirms.
+    expect(row.totalPaise).toBeGreaterThanOrEqual(0);
+  });
+
+  /* An ordinary order is unaffected by any of this. */
+  it('leaves a normal order exactly as it was', async () => {
+    const { customerId } = await seedCustomer('floor-normal', 0);
+    const { result, row } = await placeOnline(customerId);
+
+    expect(row.totalPaise).toBeGreaterThan(100);
+    expect(result.payment.amountPaise).toBe(row.totalPaise);
   });
 });

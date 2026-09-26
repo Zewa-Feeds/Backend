@@ -27,6 +27,7 @@ import {
   coinsForBase,
   eligibleRedemptionValuePaise,
   maxRedeemableCoins,
+  MIN_GATEWAY_PAYABLE_PAISE,
   withCouponDiscount,
   allocateCoins,
   allocateOrder,
@@ -178,7 +179,8 @@ describe('§6.3 Coupon plus coins — coupon always first (§4.1)', () => {
     const lines = [line({ id: 'A', lineTotalPaise: 200000, couponDiscountPaise: 20000 })];
     // Eligible value is the coupon-reduced amount: ₹1,800 → 1,800 coins.
     expect(eligibleRedemptionValuePaise(lines, RULES)).toBe(180000);
-    expect(maxRedeemableCoins(lines, 99999, RULES)).toBe(1800);
+    // 1,800 of value, less the ₹1 a gateway needs left payable.
+    expect(maxRedeemableCoins(lines, 99999, RULES)).toBe(1799);
   });
 });
 
@@ -191,10 +193,11 @@ describe('coupon discount spread across lines (§4.1 step 3)', () => {
    */
   it('caps redemption at the post-coupon value, not the subtotal', () => {
     const raw = [line({ id: 'A', lineTotalPaise: 22900 })];
-    expect(maxRedeemableCoins(raw, 271, RULES)).toBe(229); // the old, wrong answer
+    // Each figure is one below the raw value: ₹1 stays payable for the gateway.
+    expect(maxRedeemableCoins(raw, 271, RULES)).toBe(228); // the old, wrong answer
 
     const withDiscount = withCouponDiscount(raw, 2290); // 10% off
-    expect(maxRedeemableCoins(withDiscount, 271, RULES)).toBe(206);
+    expect(maxRedeemableCoins(withDiscount, 271, RULES)).toBe(205);
   });
 
   it('splits pro rata and the shares sum to the discount exactly', () => {
@@ -236,7 +239,8 @@ describe('§6.4 Mixed cart — eligible and ineligible SKUs', () => {
   it('limits redemption to redeemable lines only', () => {
     // Coins can cover ₹1,200 of the ₹1,800 basket — not the full subtotal.
     expect(eligibleRedemptionValuePaise(lines, RULES)).toBe(120000);
-    expect(maxRedeemableCoins(lines, 5000, RULES)).toBe(1200);
+    // Less the ₹1 reserved so the order stays payable at a gateway.
+    expect(maxRedeemableCoins(lines, 5000, RULES)).toBe(1199);
   });
 
   it('allocates the entire coin discount to the redeemable line', () => {
@@ -431,7 +435,8 @@ describe('§6.6 Full return of a coin-paid order', () => {
 describe('Redemption limits (§4)', () => {
   it('caps redemption at the eligible product value, never the whole payable', () => {
     const lines = [line({ id: 'A', lineTotalPaise: 100000 })];
-    expect(maxRedeemableCoins(lines, 99999, RULES)).toBe(1000); // ₹1,000 → 1,000 coins
+    // ₹1,000 of value, less the ₹1 gateway reserve.
+    expect(maxRedeemableCoins(lines, 99999, RULES)).toBe(999);
   });
 
   it('caps at the balance when the balance is the binding constraint', () => {
@@ -441,7 +446,12 @@ describe('Redemption limits (§4)', () => {
 
   it('permits 100% of product value — no cap (Decision 4)', () => {
     const lines = [line({ id: 'A', lineTotalPaise: 100000 })];
-    expect(maxRedeemableCoins(lines, 1000, RULES)).toBe(1000);
+    /*
+     * "No cap" still means no PERCENTAGE cap (Decision 4). The single rupee held
+     * back is not a policy limit: it is the smallest amount Razorpay will accept,
+     * and without it the order could not be paid for at all.
+     */
+    expect(maxRedeemableCoins(lines, 1000, RULES)).toBe(999);
   });
 
   it('honours a reintroduced cap as pure configuration (§2.3 lever)', () => {
@@ -449,7 +459,8 @@ describe('Redemption limits (§4)', () => {
     // change, not a code change. Same function, different rule version.
     const capped: CoinRules = { ...RULES, maxRedemptionPct: 50 };
     const lines = [line({ id: 'A', lineTotalPaise: 100000 })];
-    expect(maxRedeemableCoins(lines, 99999, capped)).toBe(500);
+    // 50% of ₹1,000 is ₹500; the gateway reserve takes the last rupee.
+    expect(maxRedeemableCoins(lines, 99999, capped)).toBe(499);
   });
 
   it('returns zero when nothing in the cart is redeemable', () => {
@@ -505,5 +516,62 @@ describe('Adversarial — rounding and allocation cannot create value', () => {
     const { earnBasePaise: base, coins } = computeEarn(lines, coinsToClear, RULES);
     expect(base).toBeLessThan(RULES.minEarnBasePaise);
     expect(coins).toBe(0);
+  });
+});
+
+/*
+ * THE GATEWAY FLOOR.
+ *
+ * Razorpay refuses `orders.create` under 100 paise. A ₹418 cart with free
+ * shipping and 376 coins applied priced at ₹0.20, the gateway rejected it, and
+ * the customer saw "Razorpay is unavailable" — an outage message for an order
+ * that could never be paid for at any time.
+ *
+ * The ceiling reserves that minimum, so the amount the customer is offered is
+ * one the gateway will actually take.
+ */
+describe('Redemption leaves enough payable for a gateway (₹1 floor)', () => {
+  /** What the customer still owes after spending every coin on offer. */
+  const remainderPaise = (productPaise: number, balance = 99999) => {
+    const lines = [line({ id: 'A', lineTotalPaise: productPaise })];
+    const coins = maxRedeemableCoins(lines, balance, RULES);
+    return productPaise - coins * RULES.coinValuePaise;
+  };
+
+  it('never leaves less than ₹1 payable, whatever the cart is worth', () => {
+    for (const paise of [100, 150, 200, 999, 1000, 22900, 41800, 120000]) {
+      expect(remainderPaise(paise)).toBeGreaterThanOrEqual(MIN_GATEWAY_PAYABLE_PAISE);
+    }
+  });
+
+  /* The reported cart: ₹418 of product, free shipping, a large balance. */
+  it('leaves ₹1 on the ₹418 cart that produced the ₹0.20 order', () => {
+    const lines = [line({ id: 'A', lineTotalPaise: 41800 })];
+    expect(maxRedeemableCoins(lines, 500, RULES)).toBe(417);
+    expect(remainderPaise(41800, 500)).toBe(100);
+  });
+
+  /* Exactly at the minimum: nothing is redeemable, rather than a negative. */
+  it('offers no coins on a cart worth exactly ₹1', () => {
+    const lines = [line({ id: 'A', lineTotalPaise: 100 })];
+    expect(maxRedeemableCoins(lines, 500, RULES)).toBe(0);
+  });
+
+  it('offers no coins on a cart already below ₹1', () => {
+    const lines = [line({ id: 'A', lineTotalPaise: 20 })];
+    expect(maxRedeemableCoins(lines, 500, RULES)).toBe(0);
+  });
+
+  /* One rupee above the floor buys exactly one coin of redemption. */
+  it('offers exactly one coin on a ₹2 cart', () => {
+    const lines = [line({ id: 'A', lineTotalPaise: 200 })];
+    expect(maxRedeemableCoins(lines, 500, RULES)).toBe(1);
+    expect(remainderPaise(200, 500)).toBe(100);
+  });
+
+  /* A small balance is still the binding limit when it is lower. */
+  it('remains bound by the balance when that is smaller', () => {
+    const lines = [line({ id: 'A', lineTotalPaise: 120000 })];
+    expect(maxRedeemableCoins(lines, 50, RULES)).toBe(50);
   });
 });
