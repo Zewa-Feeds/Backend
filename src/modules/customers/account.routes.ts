@@ -55,6 +55,60 @@ const customerPasswordSchema = z
   .max(72, 'Use 72 characters or fewer.');
 
 /**
+ * OPTIONAL customer session.
+ *
+ * Attaches `req.customer` when a valid token is present and does nothing at all
+ * otherwise — no throw, no 401. For routes that serve guests and signed-in
+ * customers alike, where being signed in changes what the server may do but is
+ * never required to proceed.
+ *
+ * Checkout is the case this exists for. It must stay open to guests, but a coin
+ * reservation belongs to an ACCOUNT, so the server cannot resolve one without
+ * knowing who is asking. Without this the checkout route never learned the
+ * customer's identity, `coinHold` could not resolve, and every coin order was
+ * created at full price while the page showed the discounted total.
+ *
+ * Every failure mode is silent by design: an expired, malformed or absent token
+ * simply means "treat this as a guest". A BANNED customer is also treated as a
+ * guest rather than rejected — checkout does not gate on account status, and
+ * banning is enforced at login.
+ */
+export const attachCustomerIfPresent: RequestHandler = async (req, _res, next) => {
+  try {
+    const header = req.get('authorization');
+    if (!header?.startsWith('Bearer ')) return next();
+
+    const claims = verifyCustomerToken(header.slice(7).trim());
+    const customer = await prisma.customer.findUnique({
+      where: { id: claims.sub },
+      select: {
+        id: true,
+        email: true,
+        status: true,
+        firstName: true,
+        lastName: true,
+        phone: true,
+        registeredAt: true,
+      },
+    });
+
+    if (customer && customer.status !== CustomerStatus.BANNED) {
+      req.customer = {
+        id: customer.id,
+        email: customer.email,
+        firstName: customer.firstName,
+        lastName: customer.lastName,
+        phone: customer.phone,
+        registeredAt: customer.registeredAt,
+      };
+    }
+  } catch {
+    // A bad token is a guest, not an error. Deliberately swallowed.
+  }
+  next();
+};
+
+/**
  * Customer session guard.
  *
  * Checks the BANNED flag on every request (§7.2: banning prevents login), so a ban

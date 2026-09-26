@@ -8,6 +8,7 @@ import { Router } from 'express';
 import { PaymentMethod } from '@prisma/client';
 import { z } from 'zod';
 import { asyncHandler } from '@/middleware/asyncHandler';
+import { attachCustomerIfPresent } from '@/modules/customers/account.routes';
 import { validate, emailSchema, phoneSchema, pincodeSchema } from '@/middleware/validate';
 import { checkoutLimiter } from '@/middleware/rateLimit';
 import { plainText } from '@/lib/sanitize';
@@ -79,6 +80,16 @@ const orderNoSchema = z
 checkoutRouter.post(
   '/',
   checkoutLimiter,
+  /*
+   * OPTIONAL session — checkout stays open to guests.
+   *
+   * Needed because a coin reservation belongs to an ACCOUNT: the service gates
+   * `coinHold` on `input.customerId`, and nothing was ever setting it. The service
+   * therefore could not resolve any hold, and every coin order was created at full
+   * price while the page showed the discounted total — the customer was charged
+   * ₹376.20 against a ₹0.20 checkout.
+   */
+  attachCustomerIfPresent,
   validate({ body: checkoutSchema }),
   asyncHandler(async (req, res) => {
     // Scoped by email so one client's key cannot collide with another's.
@@ -87,7 +98,17 @@ checkoutRouter.post(
       rawKey && /^[\w-]{8,128}$/.test(rawKey) ? `${req.body.email}:${rawKey}` : undefined;
 
     const result = await checkoutService.checkout(
-      { ...req.body, idempotencyKey },
+      {
+        ...req.body,
+        idempotencyKey,
+        /*
+         * From the SESSION, never the body. `checkoutSchema` has no `customerId`
+         * field, so a crafted request cannot name someone else's account and spend
+         * their coins; the spread above cannot introduce one either, because Zod
+         * strips unknown keys.
+         */
+        customerId: req.customer?.id ?? null,
+      },
       auditContext(req),
     );
 
