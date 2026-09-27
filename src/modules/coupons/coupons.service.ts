@@ -25,6 +25,8 @@ import {
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { AppError, ErrorCode, conflict, notFound } from '@/lib/errors';
+import { assertCustomerEligible } from '@/modules/promotions/eligibility';
+import { qualifyingOrderCount } from '@/modules/promotions/orderHistory';
 import { endOfDay } from '@/lib/date';
 import { type AuditContext, buildDiff, writeAudit } from '@/modules/audit/audit.service';
 import { listMeta, toSkipTake } from '@/middleware/validate';
@@ -1021,7 +1023,10 @@ export async function analytics(couponId: string) {
  * human label and the minimum spend. No usage counts, no internal names, and
  * nothing that would let a code be reverse-engineered.
  */
-export async function listPublicOffers() {
+export async function listPublicOffers(viewer?: {
+  email?: string | null;
+  customerId?: string | null;
+}) {
   const now = new Date();
   const rows = await prisma.coupon.findMany({
     where: {
@@ -1034,6 +1039,7 @@ export async function listPublicOffers() {
       influencerId: null,
     },
     select: {
+      id: true,
       code: true,
       name: true,
       description: true,
@@ -1041,11 +1047,80 @@ export async function listPublicOffers() {
       discountValue: true,
       minOrderPaise: true,
       customerEligibility: true,
+      firstNOrders: true,
+      totalUsageLimit: true,
+      usedCount: true,
+      perCustomerLimit: true,
+      customers: { select: { email: true } },
       endsAt: true,
     },
     orderBy: [{ priority: 'asc' }, { code: 'asc' }],
     take: 12,
   });
+
+  /*
+   * Why this endpoint takes a viewer at all.
+   *
+   * It used to take none, so it advertised every public coupon to everybody. A
+   * signed-in customer was shown one they had already used, the cart applied it,
+   * and only the final `place()` refused it — three surfaces giving two different
+   * answers about one coupon, and the customer blocked at payment by a code the
+   * shop had just offered them.
+   *
+   * The rules are NOT reimplemented here. `assertCustomerEligible` is the same
+   * function `assertEligible` calls during checkout, so a rule added there reaches
+   * this list too and the two cannot drift.
+   *
+   * Only WHO-based rules are judged. Minimum spend, quantity bands and state
+   * restrictions need a cart, which a catalogue listing does not have — the cart
+   * predicts the shortfall itself and checkout decides for real.
+   */
+  const email = viewer?.email?.toLowerCase() ?? null;
+  const identified = Boolean(email);
+
+  const [priorOrders, redemptionRows] = await Promise.all([
+    identified
+      ? qualifyingOrderCount(email ?? undefined, viewer?.customerId ?? null)
+      : Promise.resolve(0),
+    identified && rows.length > 0
+      ? prisma.couponRedemption.findMany({
+          where: {
+            couponId: { in: rows.map((r) => r.id) },
+            email: email!,
+            // A released redemption — cancelled or refunded — must stop counting
+            // against the customer, exactly as it does in the engine.
+            releasedAt: null,
+          },
+          select: { couponId: true },
+        })
+      : Promise.resolve([] as { couponId: string }[]),
+  ]);
+
+  const redemptionsByCoupon = new Map<string, number>();
+  for (const r of redemptionRows) {
+    redemptionsByCoupon.set(r.couponId, (redemptionsByCoupon.get(r.couponId) ?? 0) + 1);
+  }
+
+  /** The reason this viewer cannot use a coupon, or null when they can. */
+  const ineligibleReason = (c: (typeof rows)[number]): string | null => {
+    try {
+      assertCustomerEligible({
+        coupon: c as never,
+        email,
+        priorOrders,
+        priorRedemptions: redemptionsByCoupon.get(c.id) ?? 0,
+        identified,
+      });
+      return null;
+    } catch (err) {
+      /*
+       * The rule's own wording is reused verbatim. It is already written for the
+       * customer — "You have already used ZEWA1." — and rephrasing it here would
+       * be a second copy to keep in step with the first.
+       */
+      return err instanceof AppError ? err.message : 'Not available on your account.';
+    }
+  };
 
   return rows.map((c) => ({
     code: c.code,
@@ -1061,6 +1136,13 @@ export async function listPublicOffers() {
     minOrderPaise: c.minOrderPaise,
     minOrder: toRupees(c.minOrderPaise),
     firstOrderOnly: c.customerEligibility === CustomerEligibility.FIRST_ORDER,
+    /*
+     * Null when this viewer may use the coupon. The storefront greys out a row
+     * that carries a reason and shows the reason under it, so an unusable coupon
+     * is visible but not offerable — the shopper can see the shop has it, and is
+     * not invited to tap something that can only fail.
+     */
+    unavailableReason: ineligibleReason(c),
     endsAt: c.endsAt,
   }));
 }

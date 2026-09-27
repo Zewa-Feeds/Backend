@@ -485,8 +485,20 @@ catalogRouter.get(
  */
 catalogRouter.get(
   '/offers',
-  asyncHandler(async (_req, res) => {
-    res.json({ data: await couponsService.listPublicOffers() });
+  /*
+   * Identifies a signed-in shopper without requiring one, exactly as
+   * `/cart/validate` does. Without it this endpoint advertised every public
+   * coupon to everybody — including ones the viewer had already used, which the
+   * cart then applied and only `place()` refused.
+   */
+  optionalCustomer,
+  asyncHandler(async (req, res) => {
+    res.json({
+      data: await couponsService.listPublicOffers({
+        email: req.customer?.email ?? null,
+        customerId: req.customer?.id ?? null,
+      }),
+    });
   }),
 );
 

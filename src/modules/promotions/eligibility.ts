@@ -46,6 +46,122 @@ export interface EligibilityInput {
   identified: boolean;
 }
 
+
+/**
+ * The rules that depend only on WHO is shopping, not on what is in their cart.
+ *
+ * Split out of `assertEligible` so the public offers list can apply the very same
+ * rules. Before this, `GET /offers` had no customer context at all: it advertised
+ * a coupon the signed-in customer had already used, the cart applied it, and only
+ * the final `place()` refused it — three surfaces giving two different answers
+ * about one coupon, with the customer blocked at payment by a code the shop had
+ * just offered them.
+ *
+ * Deliberately NOT a second implementation. `assertEligible` calls this, so a rule
+ * added here reaches checkout and the offers list together and the two cannot
+ * drift apart.
+ *
+ * Cart rules — minimum spend, quantity bands, state restrictions, which lines
+ * qualify — stay in `assertEligible`, because an offers listing has no cart to
+ * judge them against.
+ */
+export function assertCustomerEligible(input: {
+  coupon: Pick<
+    PromotionRow,
+    | 'code'
+    | 'customerEligibility'
+    | 'firstNOrders'
+    | 'customers'
+    | 'totalUsageLimit'
+    | 'usedCount'
+    | 'perCustomerLimit'
+  >;
+  email?: string | null;
+  priorOrders: number;
+  priorRedemptions: number;
+  identified: boolean;
+}): void {
+  const { coupon, email, priorOrders, priorRedemptions, identified } = input;
+
+  // ---- Customer eligibility ------------------------------------------------
+  switch (coupon.customerEligibility) {
+    case CustomerEligibility.FIRST_ORDER:
+      if (identified && priorOrders > 0) {
+        throw new AppError(
+          409,
+          ErrorCode.COUPON_NOT_ELIGIBLE,
+          `${coupon.code} is valid only on your first order.`,
+        );
+      }
+      break;
+
+    case CustomerEligibility.FIRST_N_ORDERS: {
+      const n = coupon.firstNOrders ?? 1;
+      if (identified && priorOrders >= n) {
+        throw new AppError(
+          409,
+          ErrorCode.COUPON_NOT_ELIGIBLE,
+          `${coupon.code} is valid only for your first ${n} orders.`,
+        );
+      }
+      break;
+    }
+
+    case CustomerEligibility.EXISTING_CUSTOMER:
+      if (!identified || priorOrders === 0) {
+        throw new AppError(
+          409,
+          ErrorCode.COUPON_NOT_ELIGIBLE,
+          `${coupon.code} is for returning customers.`,
+        );
+      }
+      break;
+
+    case CustomerEligibility.SPECIFIC_CUSTOMERS: {
+      const allowed = new Set(coupon.customers.map((c) => c.email.toLowerCase()));
+      if (!identified || !email || !allowed.has(email.toLowerCase())) {
+        throw new AppError(
+          409,
+          ErrorCode.COUPON_NOT_ELIGIBLE,
+          `${coupon.code} is not available for your account.`,
+        );
+      }
+      break;
+    }
+
+    case CustomerEligibility.ALL_CUSTOMERS:
+    default:
+      break;
+  }
+
+  // ---- Usage limits --------------------------------------------------------
+  // A stale read by design: the authoritative check is the conditional UPDATE in
+  // the checkout transaction. This one exists so a customer is told before they
+  // reach payment, not after.
+  if (coupon.totalUsageLimit !== null && coupon.usedCount >= coupon.totalUsageLimit) {
+    throw new AppError(
+      409,
+      ErrorCode.COUPON_LIMIT_REACHED,
+      `${coupon.code} has reached its usage limit.`,
+    );
+  }
+
+  // Null means unlimited, exactly as it does for totalUsageLimit above.
+  if (
+    identified &&
+    coupon.perCustomerLimit !== null &&
+    priorRedemptions >= coupon.perCustomerLimit
+  ) {
+    throw new AppError(
+      409,
+      ErrorCode.COUPON_ALREADY_USED,
+      coupon.perCustomerLimit === 1
+        ? `You have already used ${coupon.code}.`
+        : `You have already used ${coupon.code} ${coupon.perCustomerLimit} times.`,
+    );
+  }
+}
+
 /** Throws the first failing rule, or returns for an eligible promotion. */
 export function assertEligible(input: EligibilityInput): void {
   const { coupon, ctx, targeting, priorOrders, priorRedemptions, identified } = input;
@@ -133,81 +249,5 @@ export function assertEligible(input: EligibilityInput): void {
     }
   }
 
-  // ---- Customer eligibility ------------------------------------------------
-  switch (coupon.customerEligibility) {
-    case CustomerEligibility.FIRST_ORDER:
-      if (identified && priorOrders > 0) {
-        throw new AppError(
-          409,
-          ErrorCode.COUPON_NOT_ELIGIBLE,
-          `${coupon.code} is valid only on your first order.`,
-        );
-      }
-      break;
-
-    case CustomerEligibility.FIRST_N_ORDERS: {
-      const n = coupon.firstNOrders ?? 1;
-      if (identified && priorOrders >= n) {
-        throw new AppError(
-          409,
-          ErrorCode.COUPON_NOT_ELIGIBLE,
-          `${coupon.code} is valid only for your first ${n} orders.`,
-        );
-      }
-      break;
-    }
-
-    case CustomerEligibility.EXISTING_CUSTOMER:
-      if (!identified || priorOrders === 0) {
-        throw new AppError(
-          409,
-          ErrorCode.COUPON_NOT_ELIGIBLE,
-          `${coupon.code} is for returning customers.`,
-        );
-      }
-      break;
-
-    case CustomerEligibility.SPECIFIC_CUSTOMERS: {
-      const allowed = new Set(coupon.customers.map((c) => c.email.toLowerCase()));
-      if (!identified || !ctx.email || !allowed.has(ctx.email.toLowerCase())) {
-        throw new AppError(
-          409,
-          ErrorCode.COUPON_NOT_ELIGIBLE,
-          `${coupon.code} is not available for your account.`,
-        );
-      }
-      break;
-    }
-
-    case CustomerEligibility.ALL_CUSTOMERS:
-    default:
-      break;
-  }
-
-  // ---- Usage limits --------------------------------------------------------
-  // A stale read by design: the authoritative check is the conditional UPDATE in
-  // the checkout transaction. This one exists so a customer is told before they
-  // reach payment, not after.
-  if (coupon.totalUsageLimit !== null && coupon.usedCount >= coupon.totalUsageLimit) {
-    throw new AppError(
-      409,
-      ErrorCode.COUPON_LIMIT_REACHED,
-      `${coupon.code} has reached its usage limit.`,
-    );
-  }
-
-  // Null means unlimited, exactly as it does for totalUsageLimit above.
-  if (
-    identified &&
-    coupon.perCustomerLimit !== null &&
-    priorRedemptions >= coupon.perCustomerLimit
-  ) {
-    throw new AppError(
-      409,
-      ErrorCode.COUPON_ALREADY_USED,
-      coupon.perCustomerLimit === 1
-        ? `You have already used ${coupon.code}.`
-        : `You have already used ${coupon.code} ${coupon.perCustomerLimit} times.`,
-    );
-  }
+  assertCustomerEligible({ coupon, email: ctx.email, priorOrders, priorRedemptions, identified });
 }
