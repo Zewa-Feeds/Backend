@@ -1,0 +1,20 @@
+-- Add the missing `Order.appliedCoupons` column.
+--
+-- Hand-written on purpose, and it is a catch-up migration, not a new feature.
+-- `appliedCoupons` has existed in schema.prisma and in the live database for a
+-- while, but NO migration ever created it: it reached the database out-of-band,
+-- so the recorded history could not rebuild `Order` from scratch. Restoring the
+-- production data into a database built purely from migrations failed with
+-- 42703 (column does not exist) on this column.
+--
+-- Same defect and same remedy as `EmailLog.template` / `EmailLog.bodyHtml`.
+--
+-- The column holds the applied-promotions snapshot:
+--   [{ code, name, scope, discountType, amountPaise }]
+-- `couponCodes` keeps only the code list, so this is the sole record of which
+-- coupon contributed which amount. It cannot be recomputed from `discountPaise`.
+--
+-- Nullable with no default, matching `appliedCoupons Json?` in the schema and the
+-- live column type (jsonb). `IF NOT EXISTS` makes it a no-op where it already
+-- exists, so a database that has the column is unaffected.
+ALTER TABLE "Order" ADD COLUMN IF NOT EXISTS "appliedCoupons" JSONB;

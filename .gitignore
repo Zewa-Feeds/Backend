@@ -7,6 +7,10 @@ npm-debug.log*
 .env
 .env.local
 .env.*.local
+# Timestamped copies taken before a credential/host switch. They hold REAL
+# secrets — the Neon URL, JWT secrets, the ZeptoMail token — so they must never
+# be committed, and a bare `git add -A` would otherwise pick them up.
+.env.backup-*
 
 # Prisma
 prisma/*.db

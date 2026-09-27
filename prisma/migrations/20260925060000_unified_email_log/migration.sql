@@ -20,6 +20,15 @@ ALTER TABLE "OrderEmail" RENAME TO "EmailLog";
 ALTER TABLE "EmailLog" ALTER COLUMN "orderId" DROP NOT NULL;
 
 -- 4. New columns. All nullable or defaulted, so existing rows stay valid.
+--
+-- `template` and `bodyHtml` are added here because NO migration ever created
+-- them: they reached the live database out-of-band, so the recorded history could
+-- not rebuild this table from scratch. This migration then indexed `template`
+-- below and failed with 42703 the first time it ran against an empty database.
+-- `IF NOT EXISTS` makes both a no-op where they already exist, so a database that
+-- has them is unaffected.
+ALTER TABLE "EmailLog" ADD COLUMN IF NOT EXISTS "template" TEXT;
+ALTER TABLE "EmailLog" ADD COLUMN IF NOT EXISTS "bodyHtml" TEXT;
 ALTER TABLE "EmailLog" ADD COLUMN IF NOT EXISTS "customerId" TEXT;
 ALTER TABLE "EmailLog" ADD COLUMN IF NOT EXISTS "resentFromId" TEXT;
 ALTER TABLE "EmailLog" ADD COLUMN IF NOT EXISTS "lastAttemptAt" TIMESTAMP(3);
