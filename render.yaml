@@ -27,8 +27,22 @@
 services:
   # ---- HTTP API ------------------------------------------------------------
   - type: web
-    name: zewa-api
+    # RENAMED FROM `zewa-api`, DELIBERATELY.
+    #
+    # Render fixes a service's region at creation and cannot move it, so
+    # Singapore has to be a NEW service rather than a relocation of the Oregon
+    # one. A different name is what makes Render create it instead of trying to
+    # reconcile the existing entry.
+    #
+    # The Oregon `zewa-api` service is NOT renamed or deleted in the dashboard.
+    # It keeps serving until Singapore is verified, and is the rollback: point
+    # NEXT_PUBLIC_API_URL back at it and redeploy the frontends.
+    name: zewa-api-sg
     runtime: node
+    # Supabase is in ap-south-1. Singapore is ~50ms away; Oregon was ~250ms, and
+    # the catalogue query issues one round trip per relation — which is how that
+    # gap surfaced as 7-20s product pages.
+    region: singapore
     plan: starter
     # `--include=dev` is required, not optional. NODE_ENV=production (set below)
     # makes npm skip devDependencies, but typescript, tsc-alias, prisma and the
@@ -47,26 +61,54 @@ services:
       - key: NODE_VERSION
         value: "20"
 
-      # Managed infra — set in the dashboard.
-      # External free tiers: Render has no free Redis, and its free Postgres
-      # expires after 30 days.
-      #   DATABASE_URL -> Neon      (postgresql://...)
-      #   REDIS_URL    -> Upstash   (rediss://...)
+      # Managed infra.
+      #   DATABASE_URL -> the EXISTING Supabase database in ap-south-1, via the
+      #                   SESSION pooler on port 5432. Never
+      #                   db.<ref>.supabase.co (IPv6-only, and the P1001 a
+      #                   previous deploy hit from Render), and never port 6543
+      #                   (transaction pooling breaks Prisma's interactive
+      #                   transactions and `migrate deploy`'s advisory lock).
+      #                   Copied verbatim from Oregon — same database, no
+      #                   migration, no new instance.
+      #   REDIS_URL    -> wired below from the Singapore Key Value resource, not
+      #                   set by hand.
       - key: DATABASE_URL
         sync: false
-      # Same Neon database, WITHOUT `-pooler` in the host. Migrations only.
-      # `migrate deploy` takes a session-scoped advisory lock, which pgbouncer's
-      # transaction pooling breaks — the lock is taken on one backend and the
-      # release lands on another, so it sits held by an idle pooler session and
-      # every later deploy fails with P1002 before the new code starts.
+      # The SAME Supabase database, for migrations only.
+      #
+      # Also the session pooler (5432), which is the point: it keeps one backend
+      # per client session, so `migrate deploy`'s session-scoped advisory lock is
+      # taken and released on the same connection. Transaction pooling (6543)
+      # hands each statement whichever backend is free, the release lands
+      # elsewhere, and every later deploy dies with P1002 before the new code
+      # starts serving.
       - key: DIRECT_URL
         sync: false
-      - key: REDIS_URL
-        sync: false
 
-      # Generated once by Render. The worker reads these back via fromService
-      # below, so both processes verify the same tokens — if they diverged, a
-      # token minted by the API would be rejected everywhere else.
+      # Wired to the Singapore Key Value resource below rather than pasted in.
+      #
+      # Redis is read on EVERY request — rate limiting is Redis-backed — so it
+      # has to sit in the same region as this service. The Oregon instance
+      # (`oregon-keyvalue.render.com`) stays exactly where it is, serving the
+      # Oregon service; nothing here points at it.
+      - key: REDIS_URL
+        fromService:
+          name: zewa-keyvalue-sg
+          type: keyvalue
+          property: connectionString
+
+      # ⚠️ OVERWRITE ALL THREE WITH OREGON'S VALUES ON FIRST DEPLOY.
+      #
+      # `generateValue` mints a fresh secret per service, which is right for a
+      # brand-new environment and WRONG for this migration. These sign customer
+      # and CMS sessions: if Singapore generates its own, every signed-in user is
+      # logged out, and during the overlap a refresh token minted by Oregon is
+      # rejected here (and vice versa).
+      #
+      # So let Render create them, then immediately replace all three in the
+      # dashboard with the exact values the Oregon service holds. Kept as
+      # `generateValue` rather than `sync: false` so a genuinely new environment
+      # still boots without hand-built secrets.
       - key: JWT_ACCESS_SECRET
         generateValue: true
       - key: JWT_REFRESH_SECRET
@@ -93,20 +135,23 @@ services:
         sync: false
       - key: RAZORPAY_WEBHOOK_SECRET
         sync: false
-      # Required at boot in production; the mail client also recognises this
-      # exact placeholder as "not configured" and SKIPS sends rather than
-      # calling ZeptoMail with it.
+      # Required at boot in production. No longer a hardcoded placeholder.
       #
-      # It did not always: a placeholder is a non-empty string, so it used to
-      # pass the client's `!token` check and every send came back 401
-      # SERR_157 "Invalid API Token found" — which reads as a bad key, not as an
-      # unreplaced default. That took down CMS login OTP, because nobody can
-      # sign in without mail.
+      # This used to default to "placeholder-not-configured", and the mail client
+      # recognises that exact string as "not configured" and SKIPS sends. Safe,
+      # but silent: a new service would inherit it, boot green, pass every health
+      # check, and send no mail at all — CMS login OTP included, so nobody could
+      # sign in.
       #
-      # So a placeholder boots AND skips safely now, but mail does not work
-      # until this is replaced with the real key. CMS login needs it.
+      # (It was worse before that: a placeholder is a non-empty string, so it
+      # passed the client's `!token` check and every send came back 401 SERR_157
+      # "Invalid API Token found", which reads as a bad key rather than an
+      # unreplaced default.)
+      #
+      # `sync: false` makes the omission surface at boot instead of in
+      # production. Enter the real token in the dashboard, never in this file.
       - key: ZEPTOMAIL_TOKEN
-        value: "placeholder-not-configured"
+        sync: false
       - key: ZEPTOMAIL_FROM
         sync: false
       - key: CLOUDINARY_CLOUD_NAME
@@ -119,6 +164,11 @@ services:
       # This service's own public origin. Signed into every upload signature as
       # Cloudinary's notification_url — without it no webhook is ever requested
       # and media state is resolved only by the hourly reconciliation sweep.
+      #
+      # Set this to the hostname RENDER ACTUALLY GENERATES for this service once
+      # it exists — read it off the dashboard rather than assuming it follows
+      # from the name. A wrong value here is silent: uploads still succeed and
+      # only the notification never arrives.
       - key: PUBLIC_API_ORIGIN
         sync: false
 
@@ -151,3 +201,36 @@ services:
       # its entire job.
       - key: RUN_WORKERS_IN_API
         value: "true"
+
+  # ---- Queue + rate-limit store --------------------------------------------
+  #
+  # Co-located with the API on purpose. Redis is read on EVERY request, because
+  # rate limiting is Redis-backed, so a cross-region instance would add a round
+  # trip to every call — which is the mistake this whole migration exists to
+  # undo. Putting the store in Oregon while the service runs in Singapore would
+  # trade one latency problem for another.
+  #
+  # SEPARATE FROM THE OREGON INSTANCE, and deliberately so. The two services run
+  # isolated queues during the overlap: no shared-consumer races, but also no
+  # handover, so anything still queued in Oregon is drained by Oregon. That is
+  # another reason to leave it running rather than stopping it at cutover.
+  - type: keyvalue
+    name: zewa-keyvalue-sg
+    region: singapore
+    # Smallest paid tier. The free one has no persistence, which a job queue
+    # cannot tolerate — a restart would drop pending payment confirmations and
+    # order emails. Sized against what actually lives here: short-TTL rate
+    # counters, three low-volume queues (email, payment, maintenance) and a
+    # handful of lock keys.
+    plan: starter
+    # Private network only. Nothing outside Render needs to reach this, and the
+    # API talks to it over the internal address.
+    ipAllowList: []
+    # A queue must not silently discard jobs when memory fills. `noeviction`
+    # makes a full store fail loudly instead of quietly dropping the oldest
+    # payment confirmation.
+    maxmemoryPolicy: noeviction
+    # Survive a restart. Without persistence, a redeploy loses every delayed job
+    # in flight — including the release-unpaid sweeps that free coupon and coin
+    # holds.
+    persistenceMode: journal-snapshot
