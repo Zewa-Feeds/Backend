@@ -246,6 +246,31 @@ describe('the endpoint refuses anything it cannot verify', () => {
   });
 
   /*
+   * A GET must answer 200 as well.
+   *
+   * Their documented rules say POST-only, but the Add Webhook form's "Verify"
+   * button probes with GET — and a 404 there reads to it as "URL cannot be
+   * reached", so the webhook cannot be saved at all. The POST probe branch above
+   * was not enough on its own.
+   *
+   * Like the POST probe, this must ACKNOWLEDGE without PROCESSING. A GET carries
+   * no body to verify, so there is nothing to act on and nothing to forge: the
+   * handler returns a fixed 200 and never touches the mail log.
+   */
+  it('200s a GET reachability probe without recording anything', async () => {
+    const row = await seedTracked('msg-get-probe');
+
+    const res = await fetch(url(), { method: 'GET' });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ data: { handled: false } });
+
+    const after = await prisma.emailLog.findUniqueOrThrow({ where: { id: row.id } });
+    expect(after.openedAt).toBeNull();
+    expect(after.openCount).toBe(0);
+  });
+
+  /*
    * The line that matters: acknowledging an UNSIGNED request must not soften a
    * request that DOES carry a signature. Forging an event is exactly as hard as
    * before — an attacker cannot simply omit the header to get their body processed,

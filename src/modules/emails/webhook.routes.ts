@@ -37,6 +37,24 @@ function rawBody(req: Request): string {
   return typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {});
 }
 
+/**
+ * Reachability probe — GET.
+ *
+ * ZeptoMail's own rules say POST-only, but the Add Webhook form's "Verify"
+ * button probes with GET, and a 404 there reads to it as "URL cannot be
+ * reached". The form then refuses to save, so the webhook could not be
+ * registered at all even though the POST endpoint was answering correctly.
+ *
+ * Acknowledge without processing, exactly like the unsigned POST probe below. A
+ * GET carries no body, so there is nothing to verify and nothing to act on: this
+ * returns a fixed 200 and never reads the mail log. It widens no attack surface
+ * — recording an open requires a SIGNED POST, and that path is untouched.
+ */
+zeptomailWebhookRouter.get('/', (_req, res) => {
+  log.info('GET reachability probe acknowledged; nothing processed');
+  res.status(200).json({ data: { handled: false, reason: 'reachability probe' } });
+});
+
 zeptomailWebhookRouter.post(
   '/',
   asyncHandler(async (req, res) => {

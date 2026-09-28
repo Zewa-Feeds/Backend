@@ -30,7 +30,8 @@ const line = (lineTotalPaise: number, couponDiscountPaise = 0) => ({
   lineTotalPaise,
   couponDiscountPaise,
   coinRedeemable: true,
-  gstRateBp: 0,
+  earnEligible: true,
+  taxRatePct: 0,
 });
 
 describe('maxRedemptionPct = 90', () => {
