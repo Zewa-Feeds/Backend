@@ -226,6 +226,63 @@ async function opsRecipients(inboxName: string): Promise<{ email: string; name?:
   return recipients;
 }
 
+/**
+ * Send one staff alert to every recipient, as SEPARATE requests.
+ *
+ * ZeptoMail validates a transactional send as a whole: if ONE address in `to`
+ * is rejected (unverified, bounced, suppressed), the API fails the entire
+ * request and NOBODY receives the mail. That is how a new-order alert reached
+ * one admin and neither info@ nor the others — a single bad address silently
+ * suppressed the whole fan-out.
+ *
+ * One request per recipient costs a few extra calls on a low-volume internal
+ * alert and buys isolation: a broken address now loses only its own copy.
+ *
+ * Staff mail writes no EmailLog row (those are customer-facing), so the result
+ * of each send is logged explicitly — otherwise a silent failure leaves no
+ * evidence anywhere that an operator never got the alert.
+ */
+export async function sendToEachRecipient(
+  recipients: { email: string; name?: string }[],
+  message: { subject: string; htmlBody: string; reference: string },
+): Promise<void> {
+  if (recipients.length === 0) {
+    log.warn({ subject: message.subject }, 'staff alert has no recipients — nobody was notified');
+    return;
+  }
+
+  const results = await Promise.allSettled(
+    recipients.map((r) =>
+      sendEmail({
+        to: [r],
+        subject: message.subject,
+        htmlBody: message.htmlBody,
+        // Per-recipient reference so retries stay idempotent per address.
+        reference: `${message.reference}-${r.email}`,
+      }),
+    ),
+  );
+
+  const failed: string[] = [];
+  results.forEach((res, i) => {
+    const email = recipients[i]?.email ?? 'unknown';
+    if (res.status === 'rejected') {
+      failed.push(email);
+      log.error({ err: res.reason, email, subject: message.subject }, 'staff alert failed');
+    } else if (res.value.skipped) {
+      log.warn({ email, subject: message.subject }, 'staff alert skipped — mail not configured');
+    } else {
+      log.info({ email, subject: message.subject }, 'staff alert sent');
+    }
+  });
+
+  // One broken address must not fail the job and retry the whole fan-out —
+  // that would re-send to everyone who already received it.
+  if (failed.length === recipients.length) {
+    throw new Error(`staff alert failed for every recipient: ${failed.join(', ')}`);
+  }
+}
+
 async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
   const data = job.data;
   if (data.kind !== 'staff') return;
@@ -236,27 +293,7 @@ async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
     const build = staffTemplates['staff-new-order'];
     const rendered = build(ctx);
 
-    const recipients: { email: string; name?: string }[] = [
-      { email: 'info@zewafeeds.com', name: 'Zewa Feeds Orders' },
-    ];
-
-    const staffUsers = await prisma.cmsUser.findMany({
-      where: {
-        status: 'ACTIVE',
-        deletedAt: null,
-        role: { in: [Role.OPS_MANAGER, Role.ADMIN] },
-      },
-      select: { email: true, name: true },
-    });
-
-    for (const u of staffUsers) {
-      if (u.email.toLowerCase() !== 'info@zewafeeds.com') {
-        recipients.push({ email: u.email, name: u.name });
-      }
-    }
-
-    await sendEmail({
-      to: recipients,
+    await sendToEachRecipient(await opsRecipients('Zewa Feeds Orders'), {
       subject: rendered.subject,
       htmlBody: rendered.html,
       reference: `staff-${orderNo}`,
@@ -270,27 +307,7 @@ async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
     const build = staffTemplates['staff-refund-processed'];
     const rendered = build({ ...ctx, ...(data.context as any) });
 
-    const recipients: { email: string; name?: string }[] = [
-      { email: 'info@zewafeeds.com', name: 'Zewa Feeds Team' },
-    ];
-
-    const staffUsers = await prisma.cmsUser.findMany({
-      where: {
-        status: 'ACTIVE',
-        deletedAt: null,
-        role: { in: [Role.OPS_MANAGER, Role.ADMIN] },
-      },
-      select: { email: true, name: true },
-    });
-
-    for (const u of staffUsers) {
-      if (u.email.toLowerCase() !== 'info@zewafeeds.com') {
-        recipients.push({ email: u.email, name: u.name });
-      }
-    }
-
-    await sendEmail({
-      to: recipients,
+    await sendToEachRecipient(await opsRecipients('Zewa Feeds Team'), {
       subject: rendered.subject,
       htmlBody: rendered.html,
       reference: `staff-refund-${orderNo}-${data.context.refundId ?? '1'}`,
@@ -304,8 +321,7 @@ async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
     const build = staffTemplates['staff-order-cancelled'];
     const rendered = build({ ...ctx, ...(data.context as Record<string, unknown>) } as never);
 
-    await sendEmail({
-      to: await opsRecipients('Zewa Feeds Orders'),
+    await sendToEachRecipient(await opsRecipients('Zewa Feeds Orders'), {
       subject: rendered.subject,
       htmlBody: rendered.html,
       reference: `staff-cancelled-${orderNo}`,
@@ -331,12 +347,14 @@ async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
   const build = staffTemplates[data.template];
   const rendered = build(data.context as never);
 
-  await sendEmail({
-    to: recipients.map((r) => ({ email: r.email, name: r.name })),
-    subject: rendered.subject,
-    htmlBody: rendered.html,
-    reference: data.template,
-  });
+  await sendToEachRecipient(
+    recipients.map((r) => ({ email: r.email, name: r.name })),
+    {
+      subject: rendered.subject,
+      htmlBody: rendered.html,
+      reference: data.template,
+    },
+  );
 }
 
 async function handleInvitationEmail(job: Job<EmailJob>): Promise<void> {

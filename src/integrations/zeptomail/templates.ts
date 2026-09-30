@@ -46,6 +46,26 @@ const HAIRLINE = '#232B3D';
 const CANVAS = '#080E1C';
 const CARD = '#0D1321';
 const CARD_INSET = '#151B2A';
+/**
+ * Header strip on the staff panels — one step lighter than CARD_INSET so the
+ * label reads as a heading without needing its own border.
+ *
+ * These panels MUST be declared in dark values. The shell is a dark theme
+ * (INK is near-white on a near-black CARD), so a light panel background here
+ * puts near-white text on near-white and the block becomes unreadable.
+ */
+const PANEL = CARD_INSET;
+const PANEL_HEADER = '#1B2335';
+/**
+ * Status colours, in their DARK-mode weights.
+ *
+ * The light-mode #DC2626 only reaches 3.56:1 on PANEL and fails AA; these are
+ * the lifted variants that clear it (6.2:1 and 10.3:1).
+ */
+const DANGER = '#F87171';
+const WARNING = '#FBBF24';
+/** Inline <code> chip (gateway IDs) — a lift from the panel, not a light box. */
+const CODE_CHIP = '#232B3D';
 const FONT_HEADING = "'Playfair Display', Georgia, 'Times New Roman', serif";
 const FONT_BODY = "'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
@@ -304,7 +324,7 @@ function staffOrderBlock(ctx: OrderEmailContext): string {
 
   return `
   <!-- Customer Details -->
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:${PANEL};overflow:hidden;">
     <tr>
       <td style="padding:12px 16px;background:${BRAND_SOFT};border-bottom:1px solid ${HAIRLINE};">
         <strong style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:${BRAND};">Customer Details</strong>
@@ -323,7 +343,7 @@ function staffOrderBlock(ctx: OrderEmailContext): string {
   <!-- Order & Items Table -->
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;overflow:hidden;border-collapse:collapse;">
     <thead>
-      <tr style="background:#F8FAFC;">
+      <tr style="background:${PANEL_HEADER};">
         <th style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};text-align:left;font-size:11px;text-transform:uppercase;color:${MUTED};">Product</th>
         <th style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};text-align:left;font-size:11px;text-transform:uppercase;color:${MUTED};">SKU</th>
         <th style="padding:10px 8px;border-bottom:1px solid ${HAIRLINE};text-align:left;font-size:11px;text-transform:uppercase;color:${MUTED};">Pack</th>
@@ -341,16 +361,16 @@ function staffOrderBlock(ctx: OrderEmailContext): string {
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;">
     <tr>
       <td width="48%" style="vertical-align:top;padding-right:8px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${HAIRLINE};border-radius:10px;background:${PANEL};">
           <tr>
-            <td style="padding:10px 14px;background:#F8FAFC;border-bottom:1px solid ${HAIRLINE};">
+            <td style="padding:10px 14px;background:${PANEL_HEADER};border-bottom:1px solid ${HAIRLINE};">
               <strong style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${MUTED};">Payment Information</strong>
             </td>
           </tr>
           <tr>
             <td style="padding:12px 14px;font-size:12.5px;line-height:1.6;color:${INK};">
               <strong>Method:</strong> ${esc(ctx.paymentMethod)}<br/>
-              <strong>Status:</strong> <span style="font-weight:700;color:${ctx.paymentStatus === 'PAID' ? BRAND : '#D97706'};">${esc(ctx.paymentStatus ?? 'PAID')}</span><br/>
+              <strong>Status:</strong> <span style="font-weight:700;color:${ctx.paymentStatus === 'PAID' ? BRAND : WARNING};">${esc(ctx.paymentStatus ?? 'PAID')}</span><br/>
               <strong>Razorpay Order:</strong> <span style="font-family:monospace;">${esc(ctx.razorpayOrderId ?? '—')}</span><br/>
               <strong>Razorpay Payment:</strong> <span style="font-family:monospace;">${esc(ctx.razorpayPaymentId ?? '—')}</span>
             </td>
@@ -358,9 +378,9 @@ function staffOrderBlock(ctx: OrderEmailContext): string {
         </table>
       </td>
       <td width="52%" style="vertical-align:top;padding-left:8px;">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border:1px solid ${HAIRLINE};border-radius:10px;background:${PANEL};">
           <tr>
-            <td style="padding:10px 14px;background:#F8FAFC;border-bottom:1px solid ${HAIRLINE};">
+            <td style="padding:10px 14px;background:${PANEL_HEADER};border-bottom:1px solid ${HAIRLINE};">
               <strong style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${MUTED};">Financial Breakdown</strong>
             </td>
           </tr>
@@ -368,7 +388,7 @@ function staffOrderBlock(ctx: OrderEmailContext): string {
             <td style="padding:12px 14px;font-size:12.5px;line-height:1.6;color:${INK};">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr><td style="color:${MUTED};">Subtotal:</td><td style="text-align:right;">${esc(formatInr(ctx.subtotalPaise))}</td></tr>
-                ${ctx.discountPaise > 0 ? `<tr><td style="color:${MUTED};">Discount:</td><td style="text-align:right;color:#DC2626;">− ${esc(formatInr(ctx.discountPaise))}</td></tr>` : ''}
+                ${ctx.discountPaise > 0 ? `<tr><td style="color:${MUTED};">Discount:</td><td style="text-align:right;color:${DANGER};">− ${esc(formatInr(ctx.discountPaise))}</td></tr>` : ''}
                 <tr><td style="color:${MUTED};">Shipping:</td><td style="text-align:right;">${ctx.shippingPaise === 0 ? 'Free' : esc(formatInr(ctx.shippingPaise))}</td></tr>
                 ${ctx.taxPaise !== undefined && ctx.taxPaise > 0 ? `<tr><td style="color:${MUTED};">Tax (GST):</td><td style="text-align:right;">${esc(formatInr(ctx.taxPaise))}</td></tr>` : ''}
                 <tr><td style="padding-top:6px;border-top:1px solid ${HAIRLINE};font-weight:700;font-size:14px;color:${INK};">Total:</td><td style="padding-top:6px;border-top:1px solid ${HAIRLINE};text-align:right;font-weight:700;font-size:15px;color:${BRAND};">${esc(formatInr(ctx.totalPaise))}</td></tr>
@@ -381,9 +401,9 @@ function staffOrderBlock(ctx: OrderEmailContext): string {
   </table>
 
   <!-- Strictly Separated Notes -->
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 10px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 10px;border:1px solid ${HAIRLINE};border-radius:10px;background:${PANEL};overflow:hidden;">
     <tr>
-      <td style="padding:10px 14px;background:#F8FAFC;border-bottom:1px solid ${HAIRLINE};">
+      <td style="padding:10px 14px;background:${PANEL_HEADER};border-bottom:1px solid ${HAIRLINE};">
         <strong style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${MUTED};">CUSTOMER NOTE</strong>
       </td>
     </tr>
@@ -394,9 +414,9 @@ function staffOrderBlock(ctx: OrderEmailContext): string {
     </tr>
   </table>
 
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:${PANEL};overflow:hidden;">
     <tr>
-      <td style="padding:10px 14px;background:#F8FAFC;border-bottom:1px solid ${HAIRLINE};">
+      <td style="padding:10px 14px;background:${PANEL_HEADER};border-bottom:1px solid ${HAIRLINE};">
         <strong style="font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${MUTED};">INTERNAL NOTE</strong>
       </td>
     </tr>
@@ -976,7 +996,7 @@ export const staffTemplates = {
       `A refund of <strong style="color:${BRAND};">${esc(formatInr(ctx.refundPaise))}</strong> has been processed for order <strong style="color:${INK};">${esc(ctx.orderNo)}</strong>.`,
       `
       <!-- Internal Refund Summary -->
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:${PANEL};overflow:hidden;">
         <tr>
           <td style="padding:12px 16px;background:${BRAND_SOFT};border-bottom:1px solid ${HAIRLINE};">
             <strong style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:${BRAND};">Refund Details (Internal Notice)</strong>
@@ -987,8 +1007,8 @@ export const staffTemplates = {
             <strong>Refund Amount:</strong> <strong style="color:${BRAND};">${esc(formatInr(ctx.refundPaise))}</strong><br/>
             <strong>Original Order Total:</strong> ${esc(formatInr(ctx.totalPaise))}<br/>
             <strong>Payment Method:</strong> ${esc(ctx.paymentMethod)} (${esc(ctx.paymentStatus ?? 'PAID')})<br/>
-            <strong>Razorpay Payment ID:</strong> <code style="font-family:monospace;font-size:12px;background:#F1F3F5;padding:2px 4px;border-radius:4px;">${esc(ctx.razorpayPaymentId ?? '—')}</code><br/>
-            <strong>Razorpay Refund ID:</strong> <code style="font-family:monospace;font-size:12px;background:#F1F3F5;padding:2px 4px;border-radius:4px;">${esc(ctx.gatewayRefundId ?? '—')}</code><br/>
+            <strong>Razorpay Payment ID:</strong> <code style="font-family:monospace;font-size:12px;background:${CODE_CHIP};padding:2px 4px;border-radius:4px;">${esc(ctx.razorpayPaymentId ?? '—')}</code><br/>
+            <strong>Razorpay Refund ID:</strong> <code style="font-family:monospace;font-size:12px;background:${CODE_CHIP};padding:2px 4px;border-radius:4px;">${esc(ctx.gatewayRefundId ?? '—')}</code><br/>
             <strong>Refund Reason:</strong> ${esc(ctx.refundReason)}<br/>
             <strong>Processed On:</strong> ${esc(formatDate(ctx.refundDate ?? new Date()))}${ctx.processedByName ? `<br/><strong>Processed By:</strong> ${esc(ctx.processedByName)}` : ''}
           </td>
@@ -996,7 +1016,7 @@ export const staffTemplates = {
       </table>
 
       <!-- Customer Details -->
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:${PANEL};overflow:hidden;">
         <tr>
           <td style="padding:12px 16px;background:${BRAND_SOFT};border-bottom:1px solid ${HAIRLINE};">
             <strong style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:${BRAND};">Customer Information</strong>
@@ -1021,7 +1041,7 @@ export const staffTemplates = {
       `Order Cancelled by Customer — #${esc(ctx.orderNo)}`,
       `Order <strong style="color:${INK};">${esc(ctx.orderNo)}</strong> for <strong style="color:${BRAND};">${esc(formatInr(ctx.totalPaise))}</strong> was cancelled by the customer on ${esc(formatDate(ctx.cancelledAtDate ?? new Date()))}. Stock has been returned automatically.`,
       `
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:${PANEL};overflow:hidden;">
         <tr>
           <td style="padding:12px 16px;background:${BRAND_SOFT};border-bottom:1px solid ${HAIRLINE};">
             <strong style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:${BRAND};">Cancellation Details (Internal Notice)</strong>
@@ -1042,13 +1062,13 @@ export const staffTemplates = {
                     ? 'Partially refunded'
                     : 'No refund due (nothing captured)'
             }<br/>
-            <strong>Razorpay Order ID:</strong> <code style="font-family:monospace;font-size:12px;background:#F1F3F5;padding:2px 4px;border-radius:4px;">${esc(ctx.razorpayOrderId ?? '—')}</code><br/>
-            <strong>Razorpay Payment ID:</strong> <code style="font-family:monospace;font-size:12px;background:#F1F3F5;padding:2px 4px;border-radius:4px;">${esc(ctx.razorpayPaymentId ?? '—')}</code>
+            <strong>Razorpay Order ID:</strong> <code style="font-family:monospace;font-size:12px;background:${CODE_CHIP};padding:2px 4px;border-radius:4px;">${esc(ctx.razorpayOrderId ?? '—')}</code><br/>
+            <strong>Razorpay Payment ID:</strong> <code style="font-family:monospace;font-size:12px;background:${CODE_CHIP};padding:2px 4px;border-radius:4px;">${esc(ctx.razorpayPaymentId ?? '—')}</code>
           </td>
         </tr>
       </table>
 
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:#FBFCFD;overflow:hidden;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 20px;border:1px solid ${HAIRLINE};border-radius:10px;background:${PANEL};overflow:hidden;">
         <tr>
           <td style="padding:12px 16px;background:${BRAND_SOFT};border-bottom:1px solid ${HAIRLINE};">
             <strong style="font-size:12px;letter-spacing:0.08em;text-transform:uppercase;color:${BRAND};">Customer Information</strong>
