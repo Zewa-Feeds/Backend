@@ -106,6 +106,38 @@ export function enumFilter<T extends z.ZodTypeAny>(inner: T) {
   }, inner.optional());
 }
 
+/**
+ * Multi-value enum filter — the list counterpart of `enumFilter`.
+ *
+ * Accepts a single value ("SHIPPED"), a comma-separated list
+ * ("SHIPPED,DELIVERED") or a repeated query param, and always yields an array
+ * or undefined. "All"/"" anywhere in the list means "no filter": selecting
+ * everything is the same as selecting nothing, and the caller should not have
+ * to special-case it.
+ *
+ * Duplicates are collapsed so `status=SHIPPED,SHIPPED` cannot pad an `IN` list.
+ */
+export function enumListFilter<T extends z.ZodTypeAny>(inner: T) {
+  return z.preprocess((v) => {
+    const raw = typeof v === 'string' ? v.split(',') : Array.isArray(v) ? v : v == null ? [] : [v];
+
+    const values: unknown[] = [];
+    for (const item of raw) {
+      if (typeof item !== 'string') {
+        values.push(item);
+        continue;
+      }
+      const norm = item.trim().toUpperCase().replace(/\s+/g, '_');
+      // An explicit "All" cancels the whole filter, not just its own entry.
+      if (norm === 'ALL') return undefined;
+      if (norm === '') continue;
+      if (!values.includes(norm)) values.push(norm);
+    }
+
+    return values.length > 0 ? values : undefined;
+  }, z.array(inner).nonempty().optional());
+}
+
 /** Standard list pagination. */
 export const paginationSchema = z.object({
   page: z.coerce.number().int().positive().default(1),

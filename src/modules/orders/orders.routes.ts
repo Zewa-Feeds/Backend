@@ -13,7 +13,7 @@ import { OrderStatus, PaymentStatus } from '@prisma/client';
 import { z } from 'zod';
 import { asyncHandler } from '@/middleware/asyncHandler';
 import { currentUser, requirePermission } from '@/middleware/auth';
-import { enumFilter, paginationSchema, validate } from '@/middleware/validate';
+import { enumListFilter, paginationSchema, validate } from '@/middleware/validate';
 import { plainText } from '@/lib/sanitize';
 import { auditContext } from '@/modules/audit/audit.service';
 import { formatInvoiceFilename, generateInvoicePdf } from '@/integrations/pdf/invoice';
@@ -34,9 +34,14 @@ const orderNoParam = z.object({
     .regex(/^(?:\d{2}ZFO\d{3,}|ZW-\d{8}-\d{4})$/, 'Not a valid order number.'),
 });
 
+/**
+ * `status` and `paymentStatus` accept a comma-separated list so the CMS filter
+ * bar can offer checkboxes ("Shipped + Delivered"). A single value still works,
+ * which keeps the sidebar's `?status=Pending` links and any saved URL valid.
+ */
 const listQuerySchema = paginationSchema.extend({
-  status: enumFilter(z.nativeEnum(OrderStatus)),
-  paymentStatus: enumFilter(z.nativeEnum(PaymentStatus)),
+  status: enumListFilter(z.nativeEnum(OrderStatus)),
+  paymentStatus: enumListFilter(z.nativeEnum(PaymentStatus)),
   from: z.coerce.date().optional(),
   to: z.coerce.date().optional(),
 });

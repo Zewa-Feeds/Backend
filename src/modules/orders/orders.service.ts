@@ -63,10 +63,25 @@ export interface ListParams {
   page: number;
   limit: number;
   q?: string;
-  status?: OrderStatus;
-  paymentStatus?: PaymentStatus;
+  /** One or more statuses — the CMS filter bar allows multi-select. */
+  status?: OrderStatus | OrderStatus[];
+  paymentStatus?: PaymentStatus | PaymentStatus[];
   from?: Date;
   to?: Date;
+}
+
+/**
+ * A scalar or an array from the query string, as a Prisma filter.
+ *
+ * A one-element `IN` is the same query as an equality check to Postgres, so a
+ * single value does not need its own branch — but an EMPTY array does: Prisma
+ * reads `{ in: [] }` as "match nothing", which would silently return zero rows
+ * where the caller meant "no filter".
+ */
+function anyOf<T>(value: T | T[] | undefined): { in: T[] } | undefined {
+  if (value === undefined || value === null) return undefined;
+  const list = Array.isArray(value) ? value : [value];
+  return list.length > 0 ? { in: list } : undefined;
 }
 
 // ============================================================================
@@ -74,9 +89,12 @@ export interface ListParams {
 // ============================================================================
 
 export async function list(params: ListParams) {
+  const statusFilter = anyOf(params.status);
+  const paymentFilter = anyOf(params.paymentStatus);
+
   const where: Prisma.OrderWhereInput = {
-    ...(params.status ? { status: params.status } : {}),
-    ...(params.paymentStatus ? { paymentStatus: params.paymentStatus } : {}),
+    ...(statusFilter ? { status: statusFilter } : {}),
+    ...(paymentFilter ? { paymentStatus: paymentFilter } : {}),
     ...(params.from || params.to
       ? {
           placedAt: {
