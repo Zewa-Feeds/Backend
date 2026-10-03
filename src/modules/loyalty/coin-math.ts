@@ -164,10 +164,22 @@ export function coinsForBase(preTaxBasePaise: number, rules: CoinRules): number 
  * Coupon discounts are already subtracted, because §4.1 fixes the order of
  * operations: coupon first (step 3), then coins (step 5).
  */
-export function eligibleRedemptionValuePaise(lines: CoinLine[], rules: CoinRules): number {
-  const gross = lines
+/**
+ * Redeemable product value BEFORE the percentage cap, in paise.
+ *
+ * Shared with `maxRedeemableCoins`, which needs the uncapped figure to tell how
+ * much the cap itself already leaves payable. Extracted rather than recomputed
+ * so the two can never drift — if one subtracted coupon discounts and the other
+ * did not, the gateway reserve would be silently wrong.
+ */
+export function redeemableGrossPaise(lines: CoinLine[]): number {
+  return lines
     .filter((l) => l.coinRedeemable)
     .reduce((sum, l) => sum + l.lineTotalPaise - l.couponDiscountPaise, 0);
+}
+
+export function eligibleRedemptionValuePaise(lines: CoinLine[], rules: CoinRules): number {
+  const gross = redeemableGrossPaise(lines);
   if (gross <= 0) return 0;
   // maxRedemptionPct is 100 by default (Decision 4 — no cap), but the lever
   // exists so §2.3 can reintroduce a cap as a config change, not a code change.
@@ -208,11 +220,29 @@ export function maxRedeemableCoins(
   rules: CoinRules,
 ): number {
   const valuePaise = eligibleRedemptionValuePaise(lines, rules);
+
   /*
-   * A cart already worth less than the minimum cannot be part-paid in coins and
-   * still reach it, so nothing is redeemable rather than a negative ceiling.
+   * The gateway floor is a LOWER BOUND on what stays payable, not a second
+   * deduction on top of the percentage cap.
+   *
+   * It used to be subtracted from the already-capped value, so the two stacked:
+   * a ₹100 cart under a 90% cap allows ₹90 of coins and leaves ₹10 payable —
+   * comfortably above the ₹1 minimum — yet the floor removed one more coin
+   * anyway, giving 89 and ₹11. The customer lost a coin to a constraint that
+   * was not binding.
+   *
+   * What the floor actually has to guarantee is that SOMETHING at least
+   * MIN_GATEWAY_PAYABLE_PAISE remains for the gateway. Below ~₹10 of eligible
+   * value the percentage cap cannot promise that on its own (10% of ₹5 is 50
+   * paise, which Razorpay refuses), so the floor still binds there and is what
+   * keeps those carts payable. Above it the cap already leaves more than the
+   * minimum and the floor correctly does nothing.
    */
-  const redeemablePaise = Math.max(0, valuePaise - MIN_GATEWAY_PAYABLE_PAISE);
+  const grossPaise = redeemableGrossPaise(lines);
+  const mustRemainPayable = Math.max(0, grossPaise - valuePaise);
+  const extraReserve = Math.max(0, MIN_GATEWAY_PAYABLE_PAISE - mustRemainPayable);
+
+  const redeemablePaise = Math.max(0, valuePaise - extraReserve);
   const byValue = Math.floor(redeemablePaise / rules.coinValuePaise);
   return Math.max(0, Math.min(availableCoins, byValue));
 }

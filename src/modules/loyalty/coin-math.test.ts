@@ -459,8 +459,9 @@ describe('Redemption limits (§4)', () => {
     // change, not a code change. Same function, different rule version.
     const capped: CoinRules = { ...RULES, maxRedemptionPct: 50 };
     const lines = [line({ id: 'A', lineTotalPaise: 100000 })];
-    // 50% of ₹1,000 is ₹500; the gateway reserve takes the last rupee.
-    expect(maxRedeemableCoins(lines, 99999, capped)).toBe(499);
+    // 50% of ₹1,000 is ₹500, and the cap already leaves ₹500 payable — far
+    // above the gateway minimum, so it takes nothing further off.
+    expect(maxRedeemableCoins(lines, 99999, capped)).toBe(500);
   });
 
   it('returns zero when nothing in the cart is redeemable', () => {

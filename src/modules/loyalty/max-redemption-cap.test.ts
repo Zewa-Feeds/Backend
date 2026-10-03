@@ -40,14 +40,19 @@ describe('maxRedemptionPct = 90', () => {
     expect(eligibleRedemptionValuePaise([line(100000)], rules(90))).toBe(90000);
   });
 
-  it('leaves the remaining 10% payable, less the gateway floor', () => {
+  it('leaves exactly the remaining 10% payable', () => {
     /*
-     * BOTH constraints stack, in this order: the 90% cap narrows the eligible
-     * value, then the ₹1 gateway reserve comes off what is left. ₹1000 -> ₹900
-     * -> ₹899 redeemable, so ₹101 of the order stays payable in cash.
+     * ₹1000 eligible -> ₹900 in coins, ₹100 payable. The gateway floor does NOT
+     * come off on top: it is a lower bound on what stays payable, and the cap
+     * already leaves ₹100, far above the ₹1 minimum. Stacking them cost the
+     * customer a coin (899) for a constraint that was not binding.
      */
-    const cap = maxRedeemableCoins([line(100000)], 100000, rules(90));
-    expect(cap).toBe(899);
+    expect(maxRedeemableCoins([line(100000)], 100000, rules(90))).toBe(900);
+  });
+
+  it('gives the whole 90% on an everyday cart', () => {
+    // The reported case: ₹100 of product -> 90 coins, ₹10 out of pocket.
+    expect(maxRedeemableCoins([line(10000)], 100000, rules(90))).toBe(90);
   });
 
   it('subtracts coupon discounts before applying the cap', () => {
@@ -55,16 +60,26 @@ describe('maxRedemptionPct = 90', () => {
     expect(eligibleRedemptionValuePaise([line(100000, 20000)], rules(90))).toBe(72000);
   });
 
-  it('still reserves the ₹1 gateway floor when that binds harder', () => {
+  it('still reserves the gateway floor on a cart too small for 10% to cover it', () => {
     /*
-     * On a small order the 90% cap can leave less than the gateway minimum, so
-     * BOTH constraints have to hold. ₹2 eligible -> 90% = ₹1.80 -> less the ₹1
-     * floor = 80 paise redeemable.
+     * Below about ₹10 the percentage cap cannot keep the order payable on its
+     * own: 10% of ₹2 is 20 paise and Razorpay refuses anything under ₹1. The
+     * floor binds here and is what stops an unpayable order being priced.
      */
-    const cap = maxRedeemableCoins([line(200)], 1000, rules(90));
-    const ninety = Math.floor((200 * 90) / 100);
-    expect(cap).toBe(Math.floor((ninety - MIN_GATEWAY_PAYABLE_PAISE) / 100));
-    expect(cap).toBeLessThanOrEqual(1);
+    expect(maxRedeemableCoins([line(200)], 1000, rules(90))).toBe(1);
+  });
+
+  it('leaves at least the gateway minimum payable at every cart size', () => {
+    /*
+     * The property that actually matters, swept rather than sampled: whatever
+     * the two constraints do between them, a cart that can redeem at all must
+     * still be chargeable.
+     */
+    for (let paise = 100; paise <= 200000; paise += 97) {
+      const coins = maxRedeemableCoins([line(paise)], 10_000_000, rules(90));
+      if (coins === 0) continue;
+      expect(paise - coins * 100).toBeGreaterThanOrEqual(MIN_GATEWAY_PAYABLE_PAISE);
+    }
   });
 
   it('never exceeds the customer balance', () => {
@@ -81,8 +96,8 @@ describe('maxRedemptionPct = 90', () => {
   it('is a real change from the uncapped default', () => {
     const uncapped = maxRedeemableCoins([line(100000)], 100000, rules(100));
     const capped = maxRedeemableCoins([line(100000)], 100000, rules(90));
-    expect(uncapped).toBe(999); // ₹1000 less the ₹1 floor
-    expect(capped).toBe(899);   // 90% of ₹1000, less the ₹1 floor
+    expect(uncapped).toBe(999); // uncapped: ₹1000 less the ₹1 the gateway needs
+    expect(capped).toBe(900);   // capped: 90% of ₹1000, floor not binding
     expect(capped).toBeLessThan(uncapped);
   });
 });
