@@ -152,7 +152,7 @@ describe('The ONE coins-earned email', () => {
      * "two rewards" confusion in numeric form.
      */
     expect(msgs[0]!.context.availableCoins).toBe(40);
-    expect(String(msgs[0]!.context.coinsUrl)).toMatch(/\/account\/coins$/);
+    expect(String(msgs[0]!.context.coinsUrl)).toMatch(/\/account\/seeds$/);
   });
 
   it('uses the ORDINARY 7-day window on a normal order', async () => {
@@ -239,7 +239,7 @@ describe('The ONE coins-earned email', () => {
       msgs[0]!.context as Parameters<typeof accountTemplates['coins-earned']>[0],
     );
     expect(rendered.html.toLowerCase()).not.toContain('wallet');
-    expect(rendered.html).toContain('Zewa Coins balance');
+    expect(rendered.html).toContain('Zewa Seeds balance');
   });
 
   it('there is NO separate unlocked email', () => {

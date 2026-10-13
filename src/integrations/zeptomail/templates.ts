@@ -801,10 +801,12 @@ export const accountTemplates = {
   }),
 
   // ==========================================================================
-  // ZEWA COINS (ZSOP004 §10.4)
+  // ZEWA SEEDS (ZSOP004 §10.4) — the programme was renamed from Zewa Coins in
+  // October 2026. Internal identifiers (template keys, ctx fields, tables) keep
+  // the old "coin" names; everything a customer reads says Seeds.
   //
   // §10.3 fixes the vocabulary and it is load-bearing, not stylistic: always
-  // "Zewa Coins"; never "cashback" (implies cash convertibility and invites
+  // "Zewa Seeds"; never "cashback" (implies cash convertibility and invites
   // refund disputes), never "wallet" (implies stored value the customer owns
   // and could withdraw — a distinction that matters legally, §12.2), never
   // "points", "rewards" or "credits". Say UNLOCK, not mature or vest.
@@ -815,7 +817,7 @@ export const accountTemplates = {
   /**
    * Coins unlocked and ready to spend (§10.4).
    *
-   * "30 Zewa Coins are ready to use — ₹30 off your next order"
+   * "30 Zewa Seeds are ready to use — ₹30 off your next order"
    */
   /**
    * Coins earned on an order — the ONE customer-facing earning email.
@@ -845,21 +847,21 @@ export const accountTemplates = {
     orderNo: string;
     coinsUrl: string;
   }) => ({
-    subject: `You earned ${ctx.coins} Zewa Coins on order ${ctx.orderNo}`,
+    subject: `You earned ${ctx.coins} Zewa Seeds on order ${ctx.orderNo}`,
     html: shell(
-      `You earned ${ctx.coins} Zewa Coins`,
-      `Hi ${esc(ctx.firstName)}, your order ${esc(ctx.orderNo)} has been delivered — here are the Zewa Coins you earned on it.`,
+      `You earned ${ctx.coins} Zewa Seeds`,
+      `Hi ${esc(ctx.firstName)}, your order ${esc(ctx.orderNo)} has been delivered — here are the Zewa Seeds you earned on it.`,
       coinBalanceBlock(ctx.coins, `Earned on order ${esc(ctx.orderNo)}`) +
         factsBlock([
-          ['Earned on this order', `${ctx.coins} coins`],
-          ['Available to spend now', `${ctx.availableCoins} coins`],
-          ['New coins added on', `${esc(ctx.unlockOn)}`],
+          ['Earned on this order', `${ctx.coins} seeds`],
+          ['Available to spend now', `${ctx.availableCoins} seeds`],
+          ['New seeds added on', `${esc(ctx.unlockOn)}`],
         ]) +
         note(
-          `Your coins will be added to your Zewa Coins balance after ${esc(ctx.unlockDays)} days, once the return window on this order closes. 1 coin = ₹1 off a future order.`,
+          `Your seeds will be added to your Zewa Seeds balance after ${esc(ctx.unlockDays)} days, once the return window on this order closes. 1 seed = ₹1 off a future order.`,
         ) +
-        ctaButton(ctx.coinsUrl, 'View your coins'),
-      `You earned ${ctx.coins} Zewa Coins on order ${ctx.orderNo}`,
+        ctaButton(ctx.coinsUrl, 'View your seeds'),
+      `You earned ${ctx.coins} Zewa Seeds on order ${ctx.orderNo}`,
     ),
   }),
 
@@ -876,16 +878,16 @@ export const accountTemplates = {
     expiresOn: string;
     coinsUrl: string;
   }) => ({
-    subject: `${ctx.coins} Zewa Coins expire on ${ctx.expiresOn}`,
+    subject: `${ctx.coins} Zewa Seeds expire on ${ctx.expiresOn}`,
     html: shell(
-      'Your coins expire soon',
-      `Hi ${esc(ctx.firstName)}, a few of your Zewa Coins are about to expire.`,
+      'Your seeds expire soon',
+      `Hi ${esc(ctx.firstName)}, a few of your Zewa Seeds are about to expire.`,
       coinBalanceBlock(ctx.coins, `Expiring on ${esc(ctx.expiresOn)}`) +
         ctaButton(ctx.coinsUrl, 'Spend them now') +
         note(
-          `Coins expire 12 months after you earn them. Once they expire they cannot be reinstated.`,
+          `Seeds expire 12 months after you earn them. Once they expire they cannot be reinstated.`,
         ),
-      `${ctx.coins} Zewa Coins expire on ${ctx.expiresOn}`,
+      `${ctx.coins} Zewa Seeds expire on ${ctx.expiresOn}`,
     ),
   }),
 
@@ -906,26 +908,26 @@ export const accountTemplates = {
     clawedBack: number;
     coinsUrl: string;
   }) => ({
-    subject: `Your Zewa Coins after order ${ctx.orderNo}`,
+    subject: `Your Zewa Seeds after order ${ctx.orderNo}`,
     html: shell(
-      'Your coins have been updated',
-      `Hi ${esc(ctx.firstName)}, we've updated your Zewa Coins following the return on order ${esc(ctx.orderNo)}.`,
+      'Your seeds have been updated',
+      `Hi ${esc(ctx.firstName)}, we've updated your Zewa Seeds following the return on order ${esc(ctx.orderNo)}.`,
       factsBlock(
         [
           ctx.restored > 0
-            ? (['Returned to your account', `${ctx.restored} coins`] as [string, string])
+            ? (['Returned to your account', `${ctx.restored} seeds`] as [string, string])
             : null,
           ctx.clawedBack > 0
-            ? (['Adjusted for the returned items', `${ctx.clawedBack} coins`] as [string, string])
+            ? (['Adjusted for the returned items', `${ctx.clawedBack} seeds`] as [string, string])
             : null,
           ['Order', ctx.orderNo] as [string, string],
         ].filter(Boolean) as [string, string][],
       ) +
-        ctaButton(ctx.coinsUrl, 'View your coins') +
+        ctaButton(ctx.coinsUrl, 'View your seeds') +
         note(
-          `Coins you spent on returned items come back as coins. Coins are never refunded as cash — the money you paid is refunded separately.`,
+          `Seeds you spent on returned items come back as seeds. Seeds are never refunded as cash — the money you paid is refunded separately.`,
         ),
-      `Your Zewa Coins have been updated following your return`,
+      `Your Zewa Seeds have been updated following your return`,
     ),
   }),
 } as const;
@@ -935,7 +937,7 @@ function coinBalanceBlock(coins: number, caption: string): string {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 24px;">
      <tr>
        <td align="center" style="padding:24px;background:${BRAND_SOFT};border:1px solid ${BRAND_BORDER};border-radius:12px;">
-         <div style="font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:${BRAND};margin-bottom:8px;">Zewa Coins</div>
+         <div style="font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:${BRAND};margin-bottom:8px;">Zewa Seeds</div>
          <div style="font-size:38px;font-weight:700;color:${INK};line-height:1;">${esc(coins)}</div>
          <div style="font-size:13px;color:${MUTED};margin-top:10px;">${esc(caption)}</div>
        </td>
