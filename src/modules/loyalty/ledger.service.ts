@@ -126,7 +126,7 @@ export async function post(
     throw new AppError(
       409,
       ErrorCode.CONFLICT,
-      'Your coin balance changed while this was being processed. Please try again.',
+      'Your seed balance changed while this was being processed. Please try again.',
     );
   }
 

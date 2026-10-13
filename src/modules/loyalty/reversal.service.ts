@@ -99,7 +99,7 @@ export async function restoreToLots(
         idempotencyKey: `restore-void:${input.sourceEventId}:${step.lotId}`,
         lotId: lot.id,
         orderId: input.orderId,
-        note: 'Coins not restored: the lot they came from belongs to a reversed order.',
+        note: 'Seeds not restored: the lot they came from belongs to a reversed order.',
       });
       left -= give;
       continue;
@@ -135,7 +135,7 @@ export async function restoreToLots(
           idempotencyKey: `restore:${input.sourceEventId}:${step.lotId}`,
           lotId: grace.id,
           orderId: input.orderId,
-          note: `Returned coins restored to a 30-day grace lot — the original expired on ${lot.expiresAt.toISOString().slice(0, 10)}.`,
+          note: `Returned seeds restored to a 30-day grace lot — the original expired on ${lot.expiresAt.toISOString().slice(0, 10)}.`,
         },
         { coinValuePaise: rv.coinValuePaise },
       );
@@ -305,7 +305,7 @@ export async function reverseOrder(input: {
       throw new AppError(
         409,
         ErrorCode.CONFLICT,
-        'This return would restore more coins than were used on the order.',
+        'This return would restore more seeds than were used on the order.',
       );
     }
 

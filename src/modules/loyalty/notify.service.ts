@@ -29,7 +29,7 @@ const log = logger.child({ module: 'loyalty.notify' });
 
 /** Deep-link target. §10.4: "never the home page". */
 function coinsUrl(): string {
-  return `${env.STOREFRONT_ORIGIN.replace(/\/$/, '')}/account/coins`;
+  return `${env.STOREFRONT_ORIGIN.replace(/\/$/, '')}/account/seeds`;
 }
 
 /**
@@ -160,7 +160,7 @@ export async function notifyEarned(input: {
   const claimed = await claim(
     input.accountId,
     `notify-earned:${input.orderId}`,
-    `${input.coins} coins earned on ${input.orderNo}`,
+    `${input.coins} seeds earned on ${input.orderNo}`,
     input.orderId,
   );
   if (!claimed) return;
@@ -198,7 +198,7 @@ export async function notifyExpiring(
   const to = await recipient(accountId);
   if (!to) return;
 
-  if (!(await claim(accountId, `notify-expiring:${lotId}`, `${coins} coins expiring`))) return;
+  if (!(await claim(accountId, `notify-expiring:${lotId}`, `${coins} seeds expiring`))) return;
 
   sendAccountEmail(to.email, 'coins-expiring', {
     firstName: to.firstName,

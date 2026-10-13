@@ -130,7 +130,7 @@ export async function assessRedemptionRisk(input: {
 
   const requiresStepUp = input.coins >= rv.otpThresholdCoins;
   if (requiresStepUp) {
-    signals.push(`Large redemption: ${input.coins} coins (threshold ${rv.otpThresholdCoins})`);
+    signals.push(`Large redemption: ${input.coins} seeds (threshold ${rv.otpThresholdCoins})`);
   }
 
   /*

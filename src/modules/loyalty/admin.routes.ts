@@ -293,7 +293,7 @@ loyaltyAdminRouter.post(
 
     await writeAudit(auditContext(req), {
       module: AuditModule.CUSTOMERS,
-      action: `Z-Coin adjustment ${coins > 0 ? '+' : ''}${coins} — ${note}`,
+      action: `Zewa Seeds adjustment ${coins > 0 ? '+' : ''}${coins} — ${note}`,
       recordId: req.params.customerId!,
     });
 
@@ -322,7 +322,7 @@ loyaltyAdminRouter.post(
     await prisma.$transaction((tx) => accountService.freeze(tx, account.id, reason));
     await writeAudit(auditContext(req), {
       module: AuditModule.CUSTOMERS,
-      action: `Z-Coin account frozen — ${reason}`,
+      action: `Zewa Seeds account frozen — ${reason}`,
       recordId: req.params.customerId!,
     });
 
@@ -467,7 +467,7 @@ loyaltyAdminRouter.get(
     ].map(escape).join(',');
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="zewa-coins.csv"');
+    res.setHeader('Content-Disposition', 'attachment; filename="zewa-seeds.csv"');
     res.send([header.join(','), ...rows, totals].join('\n'));
   }),
 );
@@ -553,7 +553,7 @@ loyaltyAdminRouter.post(
     await writeAudit(auditContext(req), {
       module: AuditModule.CUSTOMERS,
       action:
-        `Z-Coin monthly earning cap set to ${monthlyCapCoins}` +
+        `Zewa Seeds monthly earning cap set to ${monthlyCapCoins}` +
         (expiresAt ? ` until ${expiresAt.toISOString().slice(0, 10)}` : '') +
         ` — ${reason}`,
       recordId: customerId,
@@ -577,7 +577,7 @@ loyaltyAdminRouter.delete(
     if (count > 0) {
       await writeAudit(auditContext(req), {
         module: AuditModule.CUSTOMERS,
-        action: 'Z-Coin monthly earning cap override removed — back to the default',
+        action: 'Zewa Seeds monthly earning cap override removed — back to the default',
         recordId: customerId,
       });
     }
@@ -684,7 +684,7 @@ loyaltyAdminRouter.put(
 
     await writeAudit(auditContext(req), {
       module: AuditModule.SETTINGS,
-      action: `Z-Coin rules updated — new version ${created.label}`,
+      action: `Zewa Seeds rules updated — new version ${created.label}`,
       recordId: created.id,
     });
 

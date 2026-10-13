@@ -200,7 +200,7 @@ export function planConsumption(
     throw new AppError(
       409,
       ErrorCode.CONFLICT,
-      'Your coin balance has changed. Please refresh and try again.',
+      'Your seed balance has changed. Please refresh and try again.',
     );
   }
 

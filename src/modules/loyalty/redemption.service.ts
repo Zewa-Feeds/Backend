@@ -273,7 +273,7 @@ export async function confirmForOrder(tx: Tx, orderId: string): Promise<number> 
       throw new AppError(
         409,
         ErrorCode.CONFLICT,
-        'Your coins could not be applied to this order. Our team has been notified.',
+        'Your seeds could not be applied to this order. Our team has been notified.',
       );
     }
   }

@@ -149,7 +149,7 @@ loyaltyRouter.get(
  */
 const REASON_COPY: Record<string, string> = {
   EARN: 'Earned on your order',
-  UNLOCK: 'Coins unlocked and ready to use',
+  UNLOCK: 'Seeds unlocked and ready to use',
   REDEEM: 'Used on your order',
   RELEASE: 'Returned to your balance — payment was not completed',
   EXPIRE: 'Expired',
