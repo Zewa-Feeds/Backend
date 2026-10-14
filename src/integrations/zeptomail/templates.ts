@@ -860,6 +860,9 @@ export const accountTemplates = {
         note(
           `Your seeds will be added to your Zewa Seeds balance after ${esc(ctx.unlockDays)} days, once the return window on this order closes. 1 seed = ₹1 off a future order.`,
         ) +
+        // note() has no bottom margin and ctaButton() no top one; without this
+        // spacer the button sat flush against the line above it.
+        '<div style="height:20px;line-height:20px;font-size:0;">&nbsp;</div>' +
         ctaButton(ctx.coinsUrl, 'View your seeds'),
       `You earned ${ctx.coins} Zewa Seeds on order ${ctx.orderNo}`,
     ),
@@ -933,10 +936,17 @@ export const accountTemplates = {
 } as const;
 
 /** A single prominent coin figure, used by the coin templates above. */
+/**
+ * The Zewa Seed mark for email. A hosted PNG, not the site's SVG: Gmail and
+ * Outlook do not render SVG images.
+ */
+const SEED_ICON_URL = 'https://res.cloudinary.com/lzydbena/image/upload/w_112,c_limit,f_png/email/zewa-seed.png';
+
 function coinBalanceBlock(coins: number, caption: string): string {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 24px;">
      <tr>
        <td align="center" style="padding:24px;background:${BRAND_SOFT};border:1px solid ${BRAND_BORDER};border-radius:12px;">
+         <img src="${SEED_ICON_URL}" width="56" height="56" alt="" style="display:block;margin:0 auto 10px;border:0;" />
          <div style="font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:${BRAND};margin-bottom:8px;">Zewa Seeds</div>
          <div style="font-size:38px;font-weight:700;color:${INK};line-height:1;">${esc(coins)}</div>
          <div style="font-size:13px;color:${MUTED};margin-top:10px;">${esc(caption)}</div>
