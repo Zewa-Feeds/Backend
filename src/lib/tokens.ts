@@ -55,7 +55,7 @@ export interface ChallengeClaims extends BaseClaims {
 export interface PreviewClaims extends BaseClaims {
   typ: 'preview';
   /** Resource kind + slug this token is scoped to. */
-  kind: 'product' | 'article' | 'homepage';
+  kind: 'product' | 'article' | 'homepage' | 'site';
   slug: string;
 }
 

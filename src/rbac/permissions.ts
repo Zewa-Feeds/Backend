@@ -42,6 +42,18 @@ export const CAN = {
   'banners.edit': [EDITOR, ADMIN],
   'homepage.edit': [EDITOR, ADMIN],
 
+  /*
+   * Website content and the media library.
+   *
+   * Same split as articles: a Content Editor builds the next version of the
+   * site and fills the library, but releasing a version to customers — and
+   * rolling one back — is an Admin decision. `site.publish` is the single key to
+   * widen if editors are ever trusted to ship.
+   */
+  'media.manage': [EDITOR, ADMIN],
+  'site.edit': [EDITOR, ADMIN],
+  'site.publish': [ADMIN],
+
   // Listings (Editor gets read-only view; Ops & Admin get full management)
   'products.view': [EDITOR, OPS, ADMIN],
   'products.edit': [OPS, ADMIN],

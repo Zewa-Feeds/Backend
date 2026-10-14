@@ -11,39 +11,54 @@ import { z } from 'zod';
 import { ContentStatus } from '@prisma/client';
 import { compactText, plainText, richText } from '@/lib/sanitize';
 import { enumFilter, paginationSchema, slugSchema } from '@/middleware/validate';
+import { articleExtrasSchema, blocksSchema, text } from '@/modules/site/site.schemas';
 
 /** Article tags, matching the CMS's Select options. */
 export const ARTICLE_TAGS = ['Science', 'Betta', 'Cichlid', 'Hatchery', 'Guppy', 'Guides'] as const;
 
-export const articleBodySchema = z.object({
-  title: z.string().trim().min(3, 'Title is required.').max(180).transform(plainText),
-  slug: slugSchema.optional(),
-  tag: z.string().trim().min(1, 'Pick a tag.').max(40).transform(plainText),
-  readMinutes: z.coerce.number().int().min(1).max(120).default(5),
+/*
+ * Titles, tags and SEO strings are rendered by React as text, so they are
+ * cleaned with `text()` rather than `plainText()` — the latter HTML-escapes and
+ * the storefront would print "&amp;" literally.
+ */
+export const articleBodySchema = z
+  .object({
+    title: text(180).pipe(z.string().min(3, 'Title is required.')),
+    slug: slugSchema.optional(),
+    tag: text(40).pipe(z.string().min(1, 'Pick a category.')),
+    readMinutes: z.coerce.number().int().min(1).max(120).default(5),
 
-  // §8.1 — compact rich text, 180-char limit in the CMS editor. Checked on the
-  // sanitised output so markup cannot be used to smuggle length past the limit.
-  excerpt: z
-    .string()
-    .trim()
-    .min(1, 'An excerpt is required.')
-    .max(2000)
-    .transform(compactText)
-    .refine((v) => v.replace(/<[^>]*>/g, '').length <= 300, 'Excerpt is too long.'),
+    // Checked on the sanitised output so markup cannot smuggle length past the limit.
+    excerpt: z
+      .string()
+      .trim()
+      .min(1, 'An excerpt is required.')
+      .max(2000)
+      .transform(compactText)
+      .refine((v) => v.replace(/<[^>]*>/g, '').length <= 300, 'Excerpt is too long.'),
 
-  bodyHtml: z.string().max(200_000).default('').transform(richText),
+    /** Legacy rich-text body. New articles use contentBlocks. */
+    bodyHtml: z.string().max(200_000).default('').transform(richText),
 
-  /** The storefront's structured block array, passed through unchanged. */
-  contentBlocks: z.array(z.record(z.string(), z.unknown())).optional().nullable(),
+    /** The storefront's structured block array — validated block by block. */
+    contentBlocks: blocksSchema.optional().nullable(),
 
-  coverImageUrl: z.string().url().max(1000).optional().nullable(),
-  coverImageId: z.string().max(200).optional().nullable(),
+    coverImageUrl: z.string().url().max(1000).optional().nullable(),
+    coverImageId: z.string().max(200).optional().nullable(),
 
-  // Meta tags must be plain.
-  seoTitle: z.string().trim().max(70).transform(plainText).optional().nullable(),
-  seoDesc: z.string().trim().max(180).transform(plainText).optional().nullable(),
+    seoTitle: text(70).optional().nullable(),
+    seoDesc: text(180).optional().nullable(),
 
-  authorName: z.string().trim().max(120).transform(plainText).optional(),
+    authorName: text(120).optional(),
+  })
+  .merge(articleExtrasSchema.omit({ blocks: true }));
+
+export const scheduleArticleSchema = z.object({
+  /** ISO time in the future, or null to cancel. */
+  scheduledAt: z.coerce
+    .date()
+    .nullable()
+    .refine((d) => d === null || d.getTime() > Date.now() + 30_000, 'Pick a time in the future.'),
 });
 
 export type ArticleBody = z.infer<typeof articleBodySchema>;
@@ -67,7 +82,13 @@ export const spotlightBodySchema = z.object({
   tagline: z.string().trim().min(1, 'A tagline is required.').max(120).transform(plainText),
   subText: z.string().trim().max(160).transform(plainText).default(''),
   badge: z.string().trim().max(30).transform(plainText).optional().nullable(),
-  imageUrl: z.string().url().max(1000).optional().nullable(),
+  // https, or a site path for library files served from the storefront itself.
+  imageUrl: z
+    .string()
+    .max(1000)
+    .refine((v) => /^https:\/\/\S+$/.test(v) || (v.startsWith('/') && !v.startsWith('//')), 'Use an https:// URL or a site path.')
+    .optional()
+    .nullable(),
   isActive: z.boolean().default(true),
 });
 

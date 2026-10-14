@@ -41,6 +41,7 @@ import { loyaltyAdminRouter } from '@/modules/loyalty/admin.routes';
 import { emailsAdminRouter } from '@/modules/emails/admin.routes';
 import { zeptomailWebhookRouter } from '@/modules/emails/webhook.routes';
 import { uploadsRouter } from '@/modules/uploads/uploads.routes';
+import { liveSiteRouter, mediaRouter, sitePreviewRouter, siteRouter } from '@/modules/site/site.routes';
 import { catalogRouter } from '@/modules/catalog/catalog.routes';
 import { previewRouter } from '@/modules/catalog/preview.routes';
 import { checkoutRouter, trackingRouter } from '@/modules/checkout/checkout.routes';
@@ -62,6 +63,10 @@ publicRouter.use('/webhooks/cloudinary', cloudinaryWebhookRouter);
 /* Open-tracking notifications. Signature-verified inside; see webhook.routes.ts. */
 publicRouter.use('/webhooks/zeptomail', zeptomailWebhookRouter);
 publicRouter.use('/', catalogRouter);
+// Published website content — read by the storefront build, not by browsers.
+publicRouter.use('/site/live', liveSiteRouter);
+// Mounted before /preview so its narrower paths are matched first.
+publicRouter.use('/preview/site', sitePreviewRouter);
 // Draft preview — signed short-lived token, scoped to one resource.
 publicRouter.use('/preview', previewRouter);
 // Checkout and payment confirmation.
@@ -98,6 +103,8 @@ adminRouter.use('/coupons', couponsRouter); // coupons.edit → delete
 adminRouter.use('/influencers', influencersRouter); // coupons.edit — affiliates
 adminRouter.use('/content', contentRouter); // articles.* / banners.edit / homepage.edit
 adminRouter.use('/uploads', uploadsRouter); // articles.create
+adminRouter.use('/media', mediaRouter); // media.manage
+adminRouter.use('/site', siteRouter); // site.edit → site.publish
 adminRouter.use('/audit-log', auditRouter); // audit.own (row-filtered) / audit.all
 adminRouter.use('/settings', settingsRouter); // settings.manage
 adminRouter.use('/analytics', analyticsRouter); // orders.view

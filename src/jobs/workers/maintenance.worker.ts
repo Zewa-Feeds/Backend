@@ -22,6 +22,7 @@ import * as loyaltyLifecycle from '@/modules/loyalty/lifecycle.service';
 import * as loyaltyRedemption from '@/modules/loyalty/redemption.service';
 import * as loyaltyReconcile from '@/modules/loyalty/reconcile.service';
 import * as loyaltyNotify from '@/modules/loyalty/notify.service';
+import { publishDueArticles } from '@/modules/site/scheduler';
 
 const log = logger.child({ module: 'worker.maintenance' });
 
@@ -140,6 +141,11 @@ export function startMaintenanceWorker(): Worker<MaintenanceJob> {
     QUEUE_NAMES.maintenance,
     async (job) => {
       if (job.data.kind === 'reconcile-media') return handleReconcile(job);
+      if (job.data.kind === 'publish-scheduled-articles') {
+        const outcome = await withLockNamed('zewa:maintenance:publish-scheduled:lock', publishDueArticles);
+        if (outcome !== 'skipped' && outcome.published > 0) log.info(outcome, 'scheduled articles published');
+        return;
+      }
       if (job.data.kind.startsWith('loyalty-')) return handleLoyalty(job.data.kind);
       log.warn({ kind: (job.data as { kind?: string }).kind }, 'unknown maintenance job');
     },

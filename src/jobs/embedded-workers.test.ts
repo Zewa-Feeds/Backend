@@ -87,8 +87,9 @@ describe('starting workers inside the API', () => {
   it('registers the maintenance schedule', async () => {
     const workers = await startEmbeddedWorkers();
     try {
-      // The media sweep plus the four Z-Coin sweeps (ZSOP004 §3.5, §4.3,
-      // §8.1 #2, §9.2), each on its own cadence.
+      // The media sweep, the four Z-Coin sweeps (ZSOP004 §3.5, §4.3,
+      // §8.1 #2, §9.2) and the scheduled-article publisher, each on its own
+      // cadence.
       const repeatables = await maintenanceQueue.getRepeatableJobs();
       expect(repeatables.map((r) => r.name).sort()).toEqual(
         [
@@ -96,6 +97,7 @@ describe('starting workers inside the API', () => {
           'loyalty-reconcile',
           'loyalty-reservations',
           'loyalty-unlock',
+          'publish-scheduled-articles',
           'reconcile-media',
         ].sort(),
       );
@@ -115,8 +117,8 @@ describe('starting workers inside the API', () => {
     const second = await startEmbeddedWorkers();
     try {
       const repeatables = await maintenanceQueue.getRepeatableJobs();
-      expect(repeatables).toHaveLength(5);
-      expect(new Set(repeatables.map((r) => r.name)).size).toBe(5);
+      expect(repeatables).toHaveLength(6);
+      expect(new Set(repeatables.map((r) => r.name)).size).toBe(6);
     } finally {
       await Promise.allSettled(second.map((w) => w.close()));
     }

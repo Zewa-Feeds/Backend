@@ -1017,6 +1017,7 @@ model CmsUser {
   /// Upload signatures this operator requested. See UploadTicket.
   uploadTickets            UploadTicket[]
   customerEarnCapOverrides CustomerEarnCapOverride[]
+  mediaAssets              MediaAsset[]  @relation("MediaCreatedBy")
 
   @@index([status])
   @@index([deletedAt])
@@ -1500,6 +1501,40 @@ model Article {
 
   authorName String
 
+  // ---- Storefront presentation (mirrors the shape Frontend/lib/articles.js had) ----
+  /// Short label for breadcrumbs and the related-article module.
+  shortTitle String?
+  /// Category accent, hex. The badge background is derived from it.
+  tagColor   String?
+  /// Further topical tags beyond the primary `tag` (category).
+  tags       String[] @default([])
+  /// Headline figure shown on the cards, e.g. "88%" + "pepsin digestibility".
+  stat       String?
+  statLabel  String?
+
+  /// Library assets for the cover. `coverImageUrl` is kept in sync with the
+  /// desktop asset so older readers of that column keep working.
+  coverAssetId       String?
+  coverAsset         MediaAsset? @relation("ArticleCover", fields: [coverAssetId], references: [id], onDelete: SetNull)
+  /// Optional crop composed for the fixed-height mobile hero (spec §05).
+  coverMobileAssetId String?
+  coverMobileAsset   MediaAsset? @relation("ArticleCoverMobile", fields: [coverMobileAssetId], references: [id], onDelete: SetNull)
+  coverAlt           String?
+
+  focusKeyword  String?
+  seoKeywords   String[] @default([])
+  ogTitle       String?
+  ogDescription String?
+
+  /// Hand-picked related articles, in order. Empty means "newest others".
+  relatedSlugs String[] @default([])
+
+  /// When set and in the future, the scheduler publishes the article then.
+  scheduledAt DateTime?
+  /// When published content last changed (JSON-LD dateModified). Unlike
+  /// updatedAt, a draft save does not move it.
+  revisedAt   DateTime?
+
   /// Draft overlay, same pattern as products (§8.1).
   draftPayload Json?
 
@@ -1513,6 +1548,7 @@ model Article {
 
   @@index([status, publishedAt])
   @@index([tag])
+  @@index([scheduledAt])
 }
 
 /// Rotating spotlight on the products listing page — up to 3 active (§8.2).
@@ -1549,6 +1585,141 @@ model HomepageContent {
   updatedAt   DateTime  @updatedAt
 
   updatedById String?
+}
+
+// ============================================================================
+// WEBSITE CONTENT & STATIC PUBLISHING
+//
+// Three tables, three jobs:
+//
+//   MediaAsset         the library. One row per file, wherever it lives.
+//   SiteContentDraft   the editing workspace for every placement on the site
+//                      that is not a product. One row.
+//   SitePublication    immutable, numbered snapshots of what the public site
+//                      serves. The storefront reads ONLY the current one, and
+//                      only while building or regenerating a page — never on an
+//                      ordinary page view.
+// ============================================================================
+
+/// Where an asset's bytes live.
+enum MediaStorage {
+  /// Uploaded through the CMS; destroyable through the API.
+  CLOUDINARY
+  /// A file in Frontend/public, registered so the library can reference it
+  /// without re-uploading (and duplicating) it. Served by the storefront itself.
+  STATIC
+  /// A third-party URL that predates the library (e.g. Unsplash covers).
+  EXTERNAL
+}
+
+model MediaAsset {
+  id      String       @id @default(uuid())
+  storage MediaStorage
+  type    MediaType
+
+  /// Cloudinary public_id. Null for STATIC and EXTERNAL.
+  publicId String? @unique
+  url      String  @unique
+
+  format   String?
+  mimeType String?
+  width    Int?
+  height   Int?
+  bytes    Int?
+  durationSec Float?
+  /// Video only: the frame shown before playback.
+  posterUrl   String?
+
+  title   String
+  altText String   @default("")
+  tags    String[] @default([])
+
+  /// Bumped every time the file is replaced in place. Content references the
+  /// asset id, so a replacement reaches every placement on the next publish.
+  revision    Int  @default(1)
+  /// Files this asset used to point at. Never destroyed automatically: a
+  /// retained publication may still serve them, and rollback must keep working.
+  previousUrls Json @default("[]")
+  /// The Cloudinary ids among those, queryable, so the orphan sweep keeps them.
+  previousPublicIds String[] @default([])
+
+  archivedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  createdById String?
+  createdBy   CmsUser? @relation("MediaCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  articleCovers       Article[] @relation("ArticleCover")
+  articleMobileCovers Article[] @relation("ArticleCoverMobile")
+
+  @@index([archivedAt, createdAt])
+  @@index([type])
+}
+
+/// The website-content workspace. Exactly one row, key "site".
+///
+/// `revision` is optimistic concurrency: a save must name the revision it was
+/// based on, so two editors cannot silently overwrite each other.
+model SiteContentDraft {
+  key      String @id @default("site")
+  sections Json
+  revision Int    @default(1)
+
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+}
+
+enum PublicationStatus {
+  /// Snapshot written; waiting for the publish worker.
+  QUEUED
+  /// The worker is telling the storefront to regenerate and waiting for proof.
+  DEPLOYING
+  /// The storefront was observed serving this version.
+  LIVE
+  /// Regeneration could not be confirmed. The site keeps serving the previous
+  /// pages — a failed regeneration never replaces a good one.
+  FAILED
+  /// A newer publication arrived before this one finished; nothing to do.
+  SUPERSEDED
+}
+
+model SitePublication {
+  id      String @id @default(uuid())
+  /// Monotonic, human-facing: "v14".
+  version Int    @unique @default(autoincrement())
+
+  /// Fully resolved: every asset reference carries its URL, dimensions and
+  /// alt text, so this row alone can rebuild the public site.
+  snapshot    Json
+  contentHash String
+
+  /// What changed relative to the previous version, e.g. ["home", "article:x"].
+  /// Drives which pages are regenerated.
+  scopes String[] @default([])
+  note   String?
+
+  /// True on exactly one row: the version the storefront must serve.
+  isCurrent Boolean @default(false)
+  /// Set when this version restores an earlier one.
+  rolledBackFrom Int?
+
+  status   PublicationStatus @default(QUEUED)
+  /// revalidate | deploy-hook
+  method   String?
+  attempts Int               @default(0)
+  lastError String?
+  /// Pages confirmed serving this version.
+  verifiedPaths String[] @default([])
+
+  createdAt DateTime  @default(now())
+  liveAt    DateTime?
+
+  publishedById   String?
+  publishedByName String
+
+  @@index([status, createdAt])
+  @@index([isCurrent])
 }
 
 // ============================================================================

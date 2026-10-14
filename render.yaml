@@ -177,6 +177,16 @@ services:
       # hour. Fail-closed on the storefront side, so a mismatch is silent.
       - key: REVALIDATE_SECRET
         sync: false
+      # Website publications are confirmed by reading the storefront's pages
+      # back, and REVALIDATE_SECRET is now REQUIRED for them: without it every
+      # CMS website publish ends FAILED (the site keeps the previous version).
+      #
+      # Optional build hook (Netlify "Build hooks" / Vercel "Deploy Hooks").
+      # Used for CMS → Publishing → Full rebuild, and automatically when
+      # targeted regeneration fails four times. Both hosts deploy atomically,
+      # so a failed build never replaces the live site.
+      - key: STOREFRONT_DEPLOY_HOOK_URL
+        sync: false
 
       # Production refuses to boot with this true — it would confirm payments
       # without charging. Stated explicitly rather than relying on the default.

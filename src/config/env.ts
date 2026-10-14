@@ -76,6 +76,15 @@ const schema = z.object({
    * a publish visible to customers immediately.
    */
   REVALIDATE_SECRET: optionalStr,
+  /**
+   * Optional build hook (Netlify "Build hook" / Vercel "Deploy Hook" URL).
+   *
+   * Website publishes normally regenerate only the affected pages through
+   * /api/revalidate. This is the fallback when that fails, and what the CMS
+   * "Full rebuild" action calls. Both hosts build atomically: a failed build
+   * never replaces the deploy that is serving, so triggering one is safe.
+   */
+  STOREFRONT_DEPLOY_HOOK_URL: optionalUrl,
   CMS_ORIGIN: z.string().url(),
   /** Extra allowed origins (local dev ports, preview deploys). Optional. */
   EXTRA_CORS_ORIGINS: csv.optional().default(''),

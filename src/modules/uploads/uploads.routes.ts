@@ -33,7 +33,7 @@ export const uploadsRouter = Router();
 uploadsRouter.use(requirePermission('articles.create'));
 
 /** Folders a signature may target. An allowlist, so a client cannot pick its own. */
-const FOLDERS = ['products', 'articles', 'spotlights'] as const;
+const FOLDERS = ['products', 'articles', 'spotlights', 'site'] as const;
 
 /**
  * Cloudinary resource types we mint signatures for.

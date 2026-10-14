@@ -19,6 +19,9 @@ import { AppError, ErrorCode, conflict, notFound } from '@/lib/errors';
 import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
 import { listMeta, toSkipTake } from '@/middleware/validate';
 import { slugify } from '@/modules/products/products.service';
+import { publishArticleChange } from '@/modules/site/site.service';
+import { type ArticleSource, articleAssetIds, loadAssets, validateArticle } from '@/modules/site/resolve';
+import { revalidateStorefront } from '@/integrations/storefront/revalidate';
 import type { z } from 'zod';
 import type {
   ArticleBody,
@@ -52,6 +55,21 @@ const ARTICLE_SELECT = {
   publishedAt: true,
   updatedAt: true,
   updatedBy: { select: { name: true } },
+  shortTitle: true,
+  tagColor: true,
+  tags: true,
+  stat: true,
+  statLabel: true,
+  coverAssetId: true,
+  coverMobileAssetId: true,
+  coverAlt: true,
+  focusKeyword: true,
+  seoKeywords: true,
+  ogTitle: true,
+  ogDescription: true,
+  relatedSlugs: true,
+  scheduledAt: true,
+  revisedAt: true,
 } satisfies Prisma.ArticleSelect;
 
 type ArticleRow = Prisma.ArticleGetPayload<{ select: typeof ARTICLE_SELECT }>;
@@ -79,6 +97,21 @@ function serializeArticle(a: ArticleRow) {
     draftPayload: a.draftPayload,
     publishedAt: a.publishedAt,
     updatedAt: a.updatedAt,
+    shortTitle: a.shortTitle,
+    tagColor: a.tagColor,
+    tags: a.tags,
+    stat: a.stat,
+    statLabel: a.statLabel,
+    coverAssetId: a.coverAssetId,
+    coverMobileAssetId: a.coverMobileAssetId,
+    coverAlt: a.coverAlt,
+    focusKeyword: a.focusKeyword,
+    seoKeywords: a.seoKeywords,
+    ogTitle: a.ogTitle,
+    ogDescription: a.ogDescription,
+    relatedSlugs: a.relatedSlugs,
+    scheduledAt: a.scheduledAt,
+    revisedAt: a.revisedAt,
   };
 }
 
@@ -126,7 +159,7 @@ export async function articleBySlug(slug: string) {
   return serializeArticle(article);
 }
 
-function articleData(body: ArticleBody) {
+function articleData(body: ArticleBody, coverUrl?: string | null) {
   return {
     title: body.title,
     tag: body.tag,
@@ -134,11 +167,38 @@ function articleData(body: ArticleBody) {
     excerpt: body.excerpt,
     bodyHtml: body.bodyHtml,
     contentBlocks: (body.contentBlocks ?? undefined) as Prisma.InputJsonValue | undefined,
-    coverImageUrl: body.coverImageUrl ?? null,
+    // A library cover wins; its URL is mirrored into the legacy column so the
+    // older /content/articles endpoints keep returning a cover.
+    coverImageUrl: coverUrl ?? body.coverImageUrl ?? null,
     coverImageId: body.coverImageId ?? null,
     seoTitle: body.seoTitle ?? null,
     seoDesc: body.seoDesc ?? null,
+    shortTitle: body.shortTitle ?? null,
+    tagColor: body.tagColor ?? null,
+    tags: body.tags ?? [],
+    stat: body.stat ?? null,
+    statLabel: body.statLabel ?? null,
+    coverAssetId: body.coverAssetId ?? null,
+    coverMobileAssetId: body.coverMobileAssetId ?? null,
+    coverAlt: body.coverAlt ?? null,
+    focusKeyword: body.focusKeyword ?? null,
+    seoKeywords: body.seoKeywords ?? [],
+    ogTitle: body.ogTitle ?? null,
+    ogDescription: body.ogDescription ?? null,
+    relatedSlugs: body.relatedSlugs ?? [],
   };
+}
+
+/** The library URL of the chosen cover, if any. Refuses an unknown asset id. */
+async function coverUrlFor(body: Pick<ArticleBody, 'coverAssetId'>): Promise<string | null> {
+  if (!body.coverAssetId) return null;
+  const asset = await prisma.mediaAsset.findUnique({ where: { id: body.coverAssetId }, select: { url: true } });
+  if (!asset) {
+    throw new AppError(422, ErrorCode.VALIDATION_FAILED, 'The cover image is not in the media library.', {
+      fields: { coverAssetId: 'Pick a cover from the library.' },
+    });
+  }
+  return asset.url;
 }
 
 /** Create an article. Always DRAFT — publishing is a separate, permissioned step. */
@@ -157,10 +217,12 @@ export async function createArticle(
     });
   }
 
+  const coverUrl = await coverUrlFor(body);
+
   const created = await prisma.$transaction(async (tx) => {
     const row = await tx.article.create({
       data: {
-        ...articleData(body),
+        ...articleData(body, coverUrl),
         slug,
         status: ContentStatus.DRAFT,
         authorName: body.authorName ?? authorName,
@@ -208,6 +270,7 @@ export async function saveArticle(
   }
 
   const isLive = existing.status === ContentStatus.PUBLISHED;
+  const coverUrl = await coverUrlFor(body);
 
   const updated = await prisma.$transaction(async (tx) => {
     if (isLive) {
@@ -230,7 +293,7 @@ export async function saveArticle(
     } else {
       await tx.article.update({
         where: { id: existing.id },
-        data: { ...articleData(body), updatedById: actorId },
+        data: { ...articleData(body, coverUrl), updatedById: actorId },
       });
       await writeAudit(
         ctx,
@@ -245,31 +308,114 @@ export async function saveArticle(
   return serializeArticle(updated);
 }
 
-/** Publish (§2.1: `articles.publish` is Ops+ — an Editor can write but not ship). */
-export async function publishArticle(slug: string, actorId: string, ctx: AuditContext) {
+/**
+ * Validate what WOULD go live: the stored columns with any pending overlay
+ * applied. Errors block the publish; warnings are returned to the editor.
+ */
+async function checkPublishable(
+  row: ArticleSource & { draftPayload: unknown },
+  slug: string,
+) {
+  const overlay = row.draftPayload as Partial<ArticleBody> | null;
+  const effective = { ...row, ...(overlay ?? {}) } as ArticleSource;
+  const assets = await loadAssets(articleAssetIds(effective));
+  const issues = validateArticle(effective, assets);
+  const errors = issues.filter((i) => i.level === 'error');
+  if (errors.length > 0) {
+    throw new AppError(422, ErrorCode.VALIDATION_FAILED, errors.map((e) => e.message).join(' '), {
+      details: { issues },
+    });
+  }
+  // A related article that is not published would render as a hole.
+  if (effective.relatedSlugs.length) {
+    const found = await prisma.article.count({
+      where: { slug: { in: effective.relatedSlugs, not: slug }, status: ContentStatus.PUBLISHED, deletedAt: null },
+    });
+    if (found < effective.relatedSlugs.filter((s) => s !== slug).length) {
+      issues.push({ level: 'warning', path: 'article.relatedSlugs', message: 'Some related articles are not published; the newest others fill their place.' });
+    }
+  }
+  return issues;
+}
+
+const PUBLISH_CHECK_SELECT = {
+  id: true,
+  title: true,
+  status: true,
+  publishedAt: true,
+  draftPayload: true,
+  scheduledAt: true,
+  slug: true,
+  shortTitle: true,
+  tag: true,
+  tagColor: true,
+  tags: true,
+  readMinutes: true,
+  excerpt: true,
+  bodyHtml: true,
+  contentBlocks: true,
+  coverAssetId: true,
+  coverMobileAssetId: true,
+  coverImageUrl: true,
+  coverAlt: true,
+  stat: true,
+  statLabel: true,
+  seoTitle: true,
+  seoDesc: true,
+  focusKeyword: true,
+  seoKeywords: true,
+  ogTitle: true,
+  ogDescription: true,
+  relatedSlugs: true,
+  authorName: true,
+  revisedAt: true,
+} satisfies Prisma.ArticleSelect;
+
+/**
+ * Publish (§2.1: `articles.publish` is Admin — an Editor can write but not ship).
+ *
+ * Followed by a site publication carrying the live website sections forward,
+ * which is what actually puts the article on the static storefront.
+ */
+export async function publishArticle(
+  slug: string,
+  actorId: string | null,
+  ctx: AuditContext,
+  opts: { scheduled?: boolean } = {},
+) {
   const existing = await prisma.article.findFirst({
     where: { slug, deletedAt: null },
-    select: { id: true, title: true, status: true, publishedAt: true, draftPayload: true },
+    select: PUBLISH_CHECK_SELECT,
   });
   if (!existing) throw notFound('Article');
 
   if (existing.status === ContentStatus.PUBLISHED && !existing.draftPayload) {
+    if (opts.scheduled && existing.scheduledAt) {
+      await prisma.article.update({ where: { id: existing.id }, data: { scheduledAt: null } });
+    }
     throw new AppError(400, ErrorCode.NOTHING_TO_PUBLISH, 'There are no pending changes to publish.');
   }
 
+  const warnings = await checkPublishable(existing, slug);
+
   const published = await prisma.$transaction(async (tx) => {
     const overlay = existing.draftPayload as unknown as ArticleBody | null;
+    const coverUrl = overlay ? await coverUrlFor(overlay) : null;
+    const now = new Date();
 
     await tx.article.update({
       where: { id: existing.id },
       data: {
-        ...(overlay ? articleData(overlay) : {}),
+        ...(overlay ? articleData(overlay, coverUrl) : {}),
         status: ContentStatus.PUBLISHED,
-        publishedAt: existing.publishedAt ?? new Date(),
+        publishedAt: existing.publishedAt ?? now,
+        // Only a change to already-published content is a revision.
+        revisedAt: existing.publishedAt && overlay ? now : existing.revisedAt,
+        scheduledAt: null,
         // Prisma needs an explicit sentinel to write SQL NULL into a nullable
         // Json column — plain `null` would mean "JSON null" and is rejected.
         draftPayload: Prisma.DbNull,
-        updatedById: actorId,
+        ...(actorId ? { updatedById: actorId } : {}),
       },
     });
 
@@ -277,9 +423,7 @@ export async function publishArticle(slug: string, actorId: string, ctx: AuditCo
       ctx,
       {
         module: AuditModule.CONTENT,
-        action: overlay
-          ? `Published pending changes to article "${existing.title}"`
-          : `Published article "${existing.title}"`,
+        action: `${overlay ? `Published pending changes to article "${existing.title}"` : `Published article "${existing.title}"`}${opts.scheduled ? ' (scheduled)' : ''}`,
         recordId: slug,
       },
       tx,
@@ -288,7 +432,39 @@ export async function publishArticle(slug: string, actorId: string, ctx: AuditCo
     return tx.article.findUniqueOrThrow({ where: { id: existing.id }, select: ARTICLE_SELECT });
   });
 
-  return serializeArticle(published);
+  const publication = await publishArticleChange(`Published article "${existing.title}"`, { id: actorId, name: ctx.actorName }, ctx);
+  return { ...serializeArticle(published), warnings, siteVersion: publication?.version ?? null };
+}
+
+/**
+ * Schedule (or cancel) a future publish. Needs articles.publish, because a
+ * schedule IS a release decision taken in advance.
+ */
+export async function scheduleArticle(slug: string, scheduledAt: Date | null, ctx: AuditContext) {
+  const existing = await prisma.article.findFirst({ where: { slug, deletedAt: null }, select: PUBLISH_CHECK_SELECT });
+  if (!existing) throw notFound('Article');
+  if (scheduledAt && existing.status === ContentStatus.PUBLISHED && !existing.draftPayload) {
+    throw new AppError(400, ErrorCode.NOTHING_TO_PUBLISH, 'This article is live with no pending changes — there is nothing to schedule.');
+  }
+  // Refuse a schedule that would fail when it fires.
+  if (scheduledAt) await checkPublishable(existing, slug);
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.article.update({ where: { id: existing.id }, data: { scheduledAt }, select: ARTICLE_SELECT });
+    await writeAudit(
+      ctx,
+      {
+        module: AuditModule.CONTENT,
+        action: scheduledAt
+          ? `Scheduled article "${existing.title}" for ${scheduledAt.toISOString()}`
+          : `Cancelled the schedule for article "${existing.title}"`,
+        recordId: slug,
+      },
+      tx,
+    );
+    return row;
+  });
+  return serializeArticle(updated);
 }
 
 /** Unpublish — reversible, per §17.1's non-destructive-defaults principle. */
@@ -300,9 +476,10 @@ export async function setArticleStatus(
 ) {
   const existing = await prisma.article.findFirst({
     where: { slug, deletedAt: null },
-    select: { id: true, title: true, status: true, publishedAt: true },
+    select: PUBLISH_CHECK_SELECT,
   });
   if (!existing) throw notFound('Article');
+  if (status === ContentStatus.PUBLISHED) await checkPublishable({ ...existing, draftPayload: null }, slug);
 
   const updated = await prisma.$transaction(async (tx) => {
     const row = await tx.article.update({
@@ -313,6 +490,9 @@ export async function setArticleStatus(
           ? { publishedAt: new Date() }
           : {}),
         updatedById: actorId,
+        // Unpublishing cancels any pending schedule — it would otherwise put
+        // the article straight back.
+        ...(status === ContentStatus.DRAFT ? { scheduledAt: null } : {}),
       },
       select: ARTICLE_SELECT,
     });
@@ -331,6 +511,13 @@ export async function setArticleStatus(
     return row;
   });
 
+  if (existing.status !== status) {
+    await publishArticleChange(
+      status === ContentStatus.PUBLISHED ? `Published article "${existing.title}"` : `Unpublished article "${existing.title}"`,
+      { id: actorId, name: ctx.actorName },
+      ctx,
+    );
+  }
   return serializeArticle(updated);
 }
 
@@ -365,14 +552,14 @@ export async function discardArticleDraft(slug: string, ctx: AuditContext): Prom
 export async function deleteArticle(slug: string, ctx: AuditContext): Promise<void> {
   const existing = await prisma.article.findFirst({
     where: { slug, deletedAt: null },
-    select: { id: true, title: true },
+    select: { id: true, title: true, status: true },
   });
   if (!existing) throw notFound('Article');
 
   await prisma.$transaction(async (tx) => {
     await tx.article.update({
       where: { id: existing.id },
-      data: { deletedAt: new Date(), status: ContentStatus.DRAFT },
+      data: { deletedAt: new Date(), status: ContentStatus.DRAFT, scheduledAt: null },
     });
     await writeAudit(
       ctx,
@@ -380,6 +567,10 @@ export async function deleteArticle(slug: string, ctx: AuditContext): Promise<vo
       tx,
     );
   });
+
+  if (existing.status === ContentStatus.PUBLISHED) {
+    await publishArticleChange(`Removed article "${existing.title}" from the site`, { id: ctx.actorId, name: ctx.actorName }, ctx);
+  }
 }
 
 // ============================================================================
@@ -470,6 +661,7 @@ export async function createSpotlight(
     return row;
   });
 
+  void revalidateStorefront();
   return serializeSpotlight(created);
 }
 
@@ -509,6 +701,7 @@ export async function updateSpotlight(
     return row;
   });
 
+  void revalidateStorefront();
   return serializeSpotlight(updated);
 }
 
@@ -548,6 +741,7 @@ export async function toggleSpotlight(id: string, ctx: AuditContext) {
     return row;
   });
 
+  void revalidateStorefront();
   return serializeSpotlight(updated);
 }
 
@@ -584,6 +778,7 @@ export async function reorderSpotlights(order: string[], ctx: AuditContext) {
     );
   });
 
+  void revalidateStorefront();
   return listSpotlights();
 }
 
@@ -606,6 +801,7 @@ export async function deleteSpotlight(id: string, ctx: AuditContext): Promise<vo
       tx,
     );
   });
+  void revalidateStorefront();
 }
 
 // ============================================================================

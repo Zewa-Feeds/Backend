@@ -20,6 +20,7 @@ import { checkRedis, disconnectRedis } from '@/lib/redis';
 import { startEmailWorker } from '@/jobs/workers/email.worker';
 import { startPaymentWorker } from '@/jobs/workers/payment.worker';
 import { startMaintenanceWorker } from '@/jobs/workers/maintenance.worker';
+import { startPublishWorker } from '@/jobs/workers/publish.worker';
 import { closeQueues, scheduleMaintenance } from '@/jobs/queues';
 
 /**
@@ -58,6 +59,8 @@ async function startEmbeddedWorkers(): Promise<EmbeddedWorkers> {
     startEmailWorker(),
     startPaymentWorker(),
     startMaintenanceWorker(),
+    // Website publications: regenerate the storefront and confirm it.
+    startPublishWorker(),
   ];
 
   try {

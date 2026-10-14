@@ -40,6 +40,7 @@ const EXPECTED_SWEEPS = [
   'loyalty-unlock',
   'loyalty-expiry',
   'loyalty-reconcile',
+  'publish-scheduled-articles',
 ] as const;
 
 describe('the recurring schedule', () => {
@@ -55,6 +56,12 @@ describe('the recurring schedule', () => {
     const jobs = await maintenanceQueue.getRepeatableJobs();
     const media = jobs.find((j) => j.name === 'reconcile-media');
     expect(media!.every).toBe(String(60 * 60 * 1000));
+  });
+
+  it('publishes due articles every minute — the precision the schedule picker promises', async () => {
+    await scheduleMaintenance();
+    const jobs = await maintenanceQueue.getRepeatableJobs();
+    expect(jobs.find((j) => j.name === 'publish-scheduled-articles')!.every).toBe(String(60 * 1000));
   });
 
   it('sweeps dead reservations every 5 minutes against a 30-minute TTL (§8.1 #2)', async () => {
