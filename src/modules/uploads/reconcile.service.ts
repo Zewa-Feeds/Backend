@@ -21,7 +21,7 @@ import { MediaStatus, MediaType, UploadTicketStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { logger } from '@/lib/logger';
 import { probeAsset } from '@/integrations/cloudinary/cloudinary.service';
-import { applyNotification, destroySafely } from './lifecycle.service';
+import { applyNotification, destroySafely, referencedOutsideProducts } from './lifecycle.service';
 
 const log = logger.child({ module: 'media-reconcile' });
 
@@ -155,6 +155,13 @@ export async function sweepOrphans(now = Date.now()): Promise<Partial<ReconcileR
     select: { publicId: true },
   });
   const held = new Set(referenced.map((r) => r.publicId));
+  // Library assets, spotlights and article covers hold uploads too.
+  for (const id of await referencedOutsideProducts(
+    prisma,
+    candidates.map((c) => c.publicId),
+  )) {
+    held.add(id);
+  }
 
   const orphans = candidates.filter((c) => !held.has(c.publicId));
   let destroyed = 0;

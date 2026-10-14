@@ -46,3 +46,7 @@ scripts/video-web/
 # Test environment: points at the local docker services, no secrets of value.
 # Committed deliberately so a fresh clone can run the suite — see README.
 !.env.test
+
+# Dukaan customer/order export, parsed for import-dukaan.ts. Holds real
+# customers' phone numbers and home addresses — never commit.
+scripts/dukaan/

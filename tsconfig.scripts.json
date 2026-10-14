@@ -7,5 +7,7 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["prisma/**/*.ts", "scripts/**/*.ts", "prisma.config.ts"]
+  // src/types carries the Express `req.user` augmentation, which scripts that
+  // import route-adjacent services (e.g. the audit writer) need too.
+  "include": ["prisma/**/*.ts", "scripts/**/*.ts", "prisma.config.ts", "src/types/**/*.d.ts"]
 }

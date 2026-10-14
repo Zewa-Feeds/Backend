@@ -12,6 +12,7 @@
 import { startEmailWorker } from './workers/email.worker';
 import { startPaymentWorker } from './workers/payment.worker';
 import { startMaintenanceWorker } from './workers/maintenance.worker';
+import { startPublishWorker } from './workers/publish.worker';
 import { checkDatabase, disconnectPrisma } from '@/lib/prisma';
 import { checkRedis, disconnectRedis } from '@/lib/redis';
 import { closeQueues, scheduleMaintenance } from './queues';
@@ -29,7 +30,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const workers = [startEmailWorker(), startPaymentWorker(), startMaintenanceWorker()];
+  const workers = [
+    startEmailWorker(),
+    startPaymentWorker(),
+    startMaintenanceWorker(),
+    startPublishWorker(),
+  ];
 
   /*
    * Register the recurring sweeps.

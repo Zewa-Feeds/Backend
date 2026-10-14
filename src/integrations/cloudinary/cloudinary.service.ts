@@ -172,7 +172,16 @@ export function hoverVideoUrl(url: string | null | undefined): string | null {
 export async function probeAsset(
   publicId: string,
   resourceType: ResourceType,
-): Promise<{ exists: boolean; ready: boolean; width?: number; height?: number; durationSec?: number } | null> {
+): Promise<{
+  exists: boolean;
+  ready: boolean;
+  width?: number;
+  height?: number;
+  durationSec?: number;
+  format?: string;
+  bytes?: number;
+  secureUrl?: string;
+} | null> {
   if (!isConfigured()) return null;
 
   const authHeader = `Basic ${Buffer.from(`${env.CLOUDINARY_API_KEY}:${env.CLOUDINARY_API_SECRET}`).toString('base64')}`;
@@ -193,6 +202,7 @@ export async function probeAsset(
 
     const asset = (await response.json()) as {
       width?: number; height?: number; duration?: number;
+      format?: string; bytes?: number; secure_url?: string;
       eager?: { status?: string }[];
     };
 
@@ -210,6 +220,9 @@ export async function probeAsset(
       width: asset.width,
       height: asset.height,
       durationSec: asset.duration,
+      format: asset.format,
+      bytes: asset.bytes,
+      secureUrl: asset.secure_url,
     };
   } catch (err) {
     logger.warn({ err, publicId }, 'cloudinary asset probe failed');

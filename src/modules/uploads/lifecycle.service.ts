@@ -202,7 +202,52 @@ export async function destroyable(tx: Tx, publicIds: string[]): Promise<string[]
   });
 
   const held = new Set(stillReferenced.map((m) => m.publicId));
+  for (const id of await referencedOutsideProducts(tx, unique)) held.add(id);
   return unique.filter((id) => !held.has(id));
+}
+
+/**
+ * publicIds that something OTHER than a product gallery still points at.
+ *
+ * Product media was once the only consumer of uploads, so it was the only
+ * thing the orphan sweep and `destroyable` consulted. Article covers and
+ * spotlight images are uploaded the same way but never mark their ticket
+ * ATTACHED — so once past the grace period the sweep saw them as abandoned and
+ * destroyed files that were live on the site.
+ *
+ * Three holders, checked by value rather than by ticket state, so an asset
+ * uploaded before this existed is protected too:
+ *   - the media library (current file, and any file it was replaced from,
+ *     because a retained publication may still serve it)
+ *   - a spotlight's imageUrl
+ *   - an article's legacy coverImageUrl
+ */
+export async function referencedOutsideProducts(tx: Tx, publicIds: string[]): Promise<string[]> {
+  if (publicIds.length === 0) return [];
+  const held = new Set<string>();
+
+  const library = await tx.mediaAsset.findMany({
+    where: { publicId: { in: publicIds } },
+    select: { publicId: true },
+  });
+  for (const m of library) if (m.publicId) held.add(m.publicId);
+
+  for (const publicId of publicIds) {
+    if (held.has(publicId)) continue;
+    // A Cloudinary delivery URL embeds the public_id, so `contains` is exact
+    // enough: ids are server-generated UUID paths and cannot collide.
+    const [replaced, spotlight, article] = await Promise.all([
+      tx.mediaAsset.findFirst({
+        where: { previousPublicIds: { has: publicId } },
+        select: { id: true },
+      }),
+      tx.spotlight.findFirst({ where: { imageUrl: { contains: publicId } }, select: { id: true } }),
+      tx.article.findFirst({ where: { coverImageUrl: { contains: publicId } }, select: { id: true } }),
+    ]);
+    if (replaced || spotlight || article) held.add(publicId);
+  }
+
+  return [...held];
 }
 
 /**

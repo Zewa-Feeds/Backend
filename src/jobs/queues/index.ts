@@ -20,6 +20,7 @@ export const QUEUE_NAMES = {
   email: 'zewa-email',
   payment: 'zewa-payment',
   maintenance: 'zewa-maintenance',
+  publish: 'zewa-site-publish',
 } as const;
 
 /**
@@ -110,7 +111,24 @@ export interface LoyaltySweepJob {
   kind: 'loyalty-reservations' | 'loyalty-unlock' | 'loyalty-expiry' | 'loyalty-reconcile';
 }
 
-export type MaintenanceJob = ReconcileMediaJob | LoyaltySweepJob;
+export interface PublishScheduledJob {
+  /** Publish articles whose scheduledAt has passed. */
+  kind: 'publish-scheduled-articles';
+}
+
+export type MaintenanceJob = ReconcileMediaJob | LoyaltySweepJob | PublishScheduledJob;
+
+/**
+ * Make the storefront serve a website publication, and prove it.
+ *
+ * Its own queue rather than `maintenance`: verification waits on the
+ * storefront for up to minutes (twenty with a full rebuild), and the loyalty
+ * reservation sweep on the maintenance queue must run every five.
+ */
+export interface SitePublishJob {
+  publicationId: string;
+  mode: 'revalidate' | 'deploy-hook';
+}
 
 // ---- Queues ----------------------------------------------------------------
 
@@ -142,6 +160,17 @@ export const maintenanceQueue = new Queue<MaintenanceJob>(QUEUE_NAMES.maintenanc
      */
     attempts: 2,
     backoff: { type: 'fixed', delay: 60_000 },
+  },
+});
+
+export const publishQueue = new Queue<SitePublishJob>(QUEUE_NAMES.publish, {
+  connection: queueRedis,
+  defaultJobOptions: {
+    ...defaultJobOptions,
+    // Four tries over ~2 minutes covers a storefront cold start or a deploy in
+    // progress; past that a human should look, and the CMS shows Retry.
+    attempts: 4,
+    backoff: { type: 'exponential', delay: 10_000 },
   },
 });
 
@@ -196,6 +225,21 @@ export async function scheduleMaintenance(): Promise<void> {
     );
   }
 
+  /*
+   * Scheduled article publishing. A minute is the promise an editor can read
+   * off the schedule picker; the sweep is one indexed query when nothing is due.
+   */
+  await maintenanceQueue.add(
+    'publish-scheduled-articles',
+    { kind: 'publish-scheduled-articles' },
+    {
+      repeat: { every: 60 * 1000 },
+      jobId: 'publish-scheduled-articles',
+      removeOnComplete: { count: 24 },
+      removeOnFail: { count: 24 },
+    },
+  );
+
   await maintenanceQueue.add(
     'reconcile-media',
     { kind: 'reconcile-media' },
@@ -215,5 +259,10 @@ export async function scheduleMaintenance(): Promise<void> {
 
 /** Close producers on shutdown so Redis connections drain cleanly. */
 export async function closeQueues(): Promise<void> {
-  await Promise.allSettled([emailQueue.close(), paymentQueue.close(), maintenanceQueue.close()]);
+  await Promise.allSettled([
+    emailQueue.close(),
+    paymentQueue.close(),
+    maintenanceQueue.close(),
+    publishQueue.close(),
+  ]);
 }

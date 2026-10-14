@@ -27,6 +27,7 @@ import {
   slugParamSchema,
   spotlightBodySchema,
   spotlightReorderSchema,
+  scheduleArticleSchema,
 } from './content.schemas';
 import * as contentService from './content.service';
 
@@ -96,6 +97,21 @@ articlesRouter.post(
     const article = await contentService.publishArticle(
       req.params.slug as string,
       user.id,
+      auditContext(req),
+    );
+    res.json({ data: article });
+  }),
+);
+
+/** Schedule or cancel a future publish — a release decision, so articles.publish. */
+articlesRouter.put(
+  '/:slug/schedule',
+  requirePermission('articles.publish'),
+  validate({ params: slugParamSchema, body: scheduleArticleSchema }),
+  asyncHandler(async (req, res) => {
+    const article = await contentService.scheduleArticle(
+      req.params.slug as string,
+      req.body.scheduledAt,
       auditContext(req),
     );
     res.json({ data: article });
