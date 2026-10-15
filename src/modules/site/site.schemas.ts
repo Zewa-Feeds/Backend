@@ -75,6 +75,8 @@ export const blockSchema = z.discriminatedUnion('type', [
       .optional(),
   }),
   z.object({ type: z.literal('takeaways'), title: text(200).optional(), items: z.array(requiredText(1000)).min(1).max(12) }),
+  /** A plain bulleted or numbered list inside the prose (no box, unlike takeaways). */
+  z.object({ type: z.literal('list'), ordered: z.boolean().optional(), items: z.array(requiredText(1000)).min(1).max(40) }),
   z.object({
     type: z.literal('table'),
     caption: text(300).optional(),

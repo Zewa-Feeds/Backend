@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { PLACEMENTS, validateAsset } from './placements';
+import { blocksSchema } from './site.schemas';
 
 const img = (format: string, width: number, height: number) => ({ type: 'IMAGE' as const, format, width, height });
 
@@ -52,5 +53,13 @@ describe('validateAsset', () => {
 
   it('tolerates a rounding pixel (2000×1124 is still 16:9)', () => {
     expect(validateAsset('article.cover', img('jpg', 2000, 1124), 'p')).toEqual([]);
+  });
+});
+
+describe('article blocks', () => {
+  it('accepts a plain bulleted or numbered list, and refuses an empty one', () => {
+    expect(blocksSchema.safeParse([{ type: 'list', items: ['Less waste', 'Clearer water'] }]).success).toBe(true);
+    expect(blocksSchema.safeParse([{ type: 'list', ordered: true, items: ['One'] }]).success).toBe(true);
+    expect(blocksSchema.safeParse([{ type: 'list', items: [] }]).success).toBe(false);
   });
 });
