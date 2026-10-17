@@ -24,6 +24,7 @@ import { prisma } from '@/lib/prisma';
 import { env } from '@/config/env';
 import { logger } from '@/lib/logger';
 import { sendAccountEmail } from '@/modules/customers/account.mailer';
+import { reviewLinksForOrder } from '@/modules/reviews/reviews.service';
 
 const log = logger.child({ module: 'loyalty.notify' });
 
@@ -104,6 +105,19 @@ async function recipient(accountId: string) {
 }
 
 /**
+ * Star links for each product on the order. Never fatal: if building them fails
+ * the email still goes out, just without the rating block.
+ */
+async function rateProducts(orderId: string) {
+  try {
+    return await reviewLinksForOrder(orderId);
+  } catch (err) {
+    log.error({ err, orderId }, 'could not build review links for the earned email');
+    return [];
+  }
+}
+
+/**
  * "You earned N Zewa Coins" — the ONE earning email.
  *
  * Sent when DELIVERY IS CONFIRMED, not when the coins later unlock. There is
@@ -177,6 +191,7 @@ export async function notifyEarned(input: {
     }),
     orderNo: input.orderNo,
     coinsUrl: coinsUrl(),
+    rateProducts: await rateProducts(input.orderId),
   }, to.id);
 }
 

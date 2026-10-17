@@ -846,6 +846,8 @@ export const accountTemplates = {
     unlockOn: string;
     orderNo: string;
     coinsUrl: string;
+    /** Products on the order, each with five star links. Empty = no rating block. */
+    rateProducts?: { name: string; starUrls: string[] }[];
   }) => ({
     subject: `Thank you for your recent purchase (order ${ctx.orderNo}) — you've earned ${ctx.coins} Zewa Seeds`,
     html: shell(
@@ -863,7 +865,8 @@ export const accountTemplates = {
         // note() has no bottom margin and ctaButton() no top one; without this
         // spacer the button sat flush against the line above it.
         '<div style="height:20px;line-height:20px;font-size:0;">&nbsp;</div>' +
-        ctaButton(ctx.coinsUrl, 'View your seeds'),
+        ctaButton(ctx.coinsUrl, 'View your seeds') +
+        ratingBlock(ctx.rateProducts ?? []),
       `You earned ${ctx.coins} Zewa Seeds on order ${ctx.orderNo}`,
     ),
   }),
@@ -941,6 +944,51 @@ export const accountTemplates = {
  * Outlook do not render SVG images.
  */
 const SEED_ICON_URL = 'https://res.cloudinary.com/lzydbena/image/upload/w_112,c_limit,f_png/email/zewa-seed.png';
+
+/**
+ * "How are your fish enjoying it?" — five star links per product.
+ *
+ * Each star is a plain link to the storefront's /review page, which records the
+ * rating and offers a box for a note. Plain links, not a form: email clients
+ * strip forms and scripts, and every client renders an anchor. The stars are a
+ * text glyph in table cells so they stay large, tappable and correctly spaced
+ * without images that many clients block by default.
+ */
+function ratingBlock(products: { name: string; starUrls: string[] }[]): string {
+  if (products.length === 0) return '';
+  const rows = products
+    .map((p) => {
+      const stars = p.starUrls
+        .map(
+          (url, i) => `
+            <td style="padding:0 2px;">
+              <a href="${esc(url)}" title="${i + 1} star${i ? 's' : ''}" style="display:block;width:40px;height:40px;line-height:40px;text-align:center;font-size:30px;color:#f5b942;text-decoration:none;">&#9733;</a>
+            </td>`,
+        )
+        .join('');
+      return `
+      <tr>
+        <td style="padding:12px 0 4px;font-size:14px;font-weight:700;color:${INK};">${esc(p.name)}</td>
+      </tr>
+      <tr>
+        <td style="padding:0 0 8px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>${stars}</tr></table>
+        </td>
+      </tr>`;
+    })
+    .join('');
+
+  return `
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top:1px solid ${HAIRLINE};margin:28px 0 0;padding-top:20px;">
+    <tr>
+      <td style="padding:20px 0 0;">
+        <div style="font-size:17px;font-weight:700;color:${INK};margin-bottom:6px;">How are your fish enjoying it?</div>
+        <div style="font-size:13px;color:${MUTED};line-height:1.5;">Tap a star to rate${products.length > 1 ? ' each product' : ''} — that's all it takes. You can add a note on the next page if you'd like to tell us more.</div>
+      </td>
+    </tr>
+    ${rows}
+  </table>`;
+}
 
 function coinBalanceBlock(coins: number, caption: string): string {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 24px;">
@@ -1108,11 +1156,22 @@ export const staffTemplates = {
     ),
   }),
 
-  'staff-new-review': (ctx: { productName: string; rating: number; excerpt: string }) => ({
+  'staff-new-review': (ctx: {
+    productName: string;
+    rating: number;
+    excerpt: string;
+    /** 'email' = the star links in the Seeds email; 'form' = the product page. */
+    source?: 'form' | 'email';
+    orderNo?: string | null;
+  }) => ({
     subject: `New ${ctx.rating}★ review on ${ctx.productName}`,
     html: shell(
       'Review awaiting moderation',
-      `${esc(ctx.rating)}★ on <strong>${esc(ctx.productName)}</strong>: “${esc(ctx.excerpt)}”`,
+      `${esc(ctx.rating)}★ on <strong>${esc(ctx.productName)}</strong>` +
+        (ctx.source === 'email'
+          ? ` — rated from the order email${ctx.orderNo ? ` (order ${esc(ctx.orderNo)})` : ''}, verified purchase.`
+          : '.') +
+        (ctx.excerpt ? `<br><br>“${esc(ctx.excerpt)}”` : '<br><br>No written note (yet).'),
       button('Moderate reviews', `${env.CMS_ORIGIN}/reviews`),
     ),
   }),

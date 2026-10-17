@@ -7,6 +7,7 @@
  *   challenge 5m    issued after password, before 2FA — carries no authority
  *   preview   15m   scoped to one draft resource, for storefront Preview
  *   customer  —     storefront account sessions
+ *   review    90d   one product on one delivered order, from the email star links
  *
  * Both defences matter. Separate secrets mean a preview token cannot be verified
  * as an access token even if the algorithm matches. The `typ` claim catches the
@@ -23,7 +24,7 @@ import { AppError, ErrorCode } from '@/lib/errors';
 
 const ISSUER = 'zewa-api';
 
-type TokenType = 'access' | 'challenge' | 'preview' | 'customer';
+type TokenType = 'access' | 'challenge' | 'preview' | 'customer' | 'review';
 
 interface BaseClaims {
   typ: TokenType;
@@ -64,6 +65,12 @@ export interface CustomerClaims extends BaseClaims {
   email: string;
 }
 
+/** `sub` is the order id; `fam` the product family being rated. */
+export interface ReviewClaims extends BaseClaims {
+  typ: 'review';
+  fam: string;
+}
+
 const SECRETS: Record<TokenType, string> = {
   access: env.JWT_ACCESS_SECRET,
   // The challenge token is mid-login and grants nothing but the right to submit a
@@ -71,6 +78,9 @@ const SECRETS: Record<TokenType, string> = {
   challenge: env.JWT_ACCESS_SECRET,
   preview: env.JWT_PREVIEW_SECRET,
   customer: env.JWT_REFRESH_SECRET,
+  // Grants one thing — rating one product on one order — so it rides the
+  // preview secret, which also signs narrowly-scoped, non-session tokens.
+  review: env.JWT_PREVIEW_SECRET,
 };
 
 const TTLS: Record<TokenType, string> = {
@@ -78,6 +88,9 @@ const TTLS: Record<TokenType, string> = {
   challenge: '5m',
   preview: env.PREVIEW_TOKEN_TTL,
   customer: env.REFRESH_TOKEN_TTL,
+  // Long enough to answer an email a few weeks late, short enough that an old
+  // inbox is not a permanent key.
+  review: '90d',
 };
 
 function sign(claims: BaseClaims & Record<string, unknown>, ttl?: string): string {
@@ -162,6 +175,14 @@ export const signCustomerToken = (
 
 export const verifyCustomerToken = (token: string): CustomerClaims =>
   verify<CustomerClaims>(token, 'customer');
+
+// ---- Review (email star links) ----------------------------------------------
+
+export const signReviewToken = (c: Omit<ReviewClaims, 'typ'>): string =>
+  sign({ ...c, typ: 'review' });
+
+export const verifyReviewToken = (token: string): ReviewClaims =>
+  verify<ReviewClaims>(token, 'review');
 
 /** Seconds until a JWT expires — used to set cookie maxAge coherently. */
 export function ttlSeconds(token: string): number {

@@ -45,6 +45,8 @@ type AccountContext = {
     unlockOn: string;
     orderNo: string;
     coinsUrl: string;
+    /** Star links per product — see reviews.service reviewLinksForOrder(). */
+    rateProducts?: { name: string; starUrls: string[] }[];
   };
   'coins-expiring': { firstName: string; coins: number; expiresOn: string; coinsUrl: string };
   'coins-adjusted': {

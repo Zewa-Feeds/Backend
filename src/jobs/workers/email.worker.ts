@@ -329,7 +329,22 @@ async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
     return;
   }
 
-  // Other staff alerts (staff-stock-zero, staff-new-review)
+  /*
+   * New reviews go to the same people as order alerts — info@ plus active Ops
+   * Managers and Admins — and carry a per-review reference, because every
+   * review alert used to share the reference "staff-new-review".
+   */
+  if (data.template === 'staff-new-review') {
+    const rendered = staffTemplates['staff-new-review'](data.context as never);
+    await sendToEachRecipient(await opsRecipients('Zewa Feeds Reviews'), {
+      subject: rendered.subject,
+      htmlBody: rendered.html,
+      reference: `staff-review-${String(data.context.reviewId)}-${String(data.context.version)}`,
+    });
+    return;
+  }
+
+  // Other staff alerts (staff-stock-zero)
   const recipients = await prisma.cmsUser.findMany({
     where: {
       status: 'ACTIVE',

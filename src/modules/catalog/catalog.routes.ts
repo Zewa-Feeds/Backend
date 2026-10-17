@@ -13,7 +13,7 @@ import { ContentStatus, ContentVersion, ProductStatus, ReviewState } from '@pris
 import { z } from 'zod';
 import { asyncHandler } from '@/middleware/asyncHandler';
 import { validate, emailSchema, slugSchema } from '@/middleware/validate';
-import { cartCouponLimiter, couponLimiter, reviewLimiter } from '@/middleware/rateLimit';
+import { cartCouponLimiter, couponLimiter, emailReviewLimiter, reviewLimiter } from '@/middleware/rateLimit';
 import { prisma } from '@/lib/prisma';
 import { AppError, ErrorCode, notFound } from '@/lib/errors';
 import { plainText } from '@/lib/sanitize';
@@ -627,6 +627,40 @@ catalogRouter.post(
 // ============================================================================
 // PUBLIC REVIEW SUBMISSION (§9)
 // ============================================================================
+
+// Rating from the star links in the Seeds-earned email. The token names one
+// product on one delivered order; see reviews.service rateFromEmail().
+const reviewTokenSchema = z.string().trim().min(20).max(2000);
+
+catalogRouter.get(
+  '/reviews/email-link',
+  emailReviewLimiter,
+  validate({ query: z.object({ t: reviewTokenSchema }) }),
+  asyncHandler(async (req, res) => {
+    res.json({ data: await reviewsService.getEmailReview(req.query.t as string) });
+  }),
+);
+
+catalogRouter.post(
+  '/reviews/email-link',
+  emailReviewLimiter,
+  validate({
+    body: z.object({
+      t: reviewTokenSchema,
+      rating: z.coerce.number().int().min(1).max(5),
+      // Optional: the star alone is a complete rating. Sanitised — PDP text.
+      body: z.string().trim().max(2000).transform(plainText).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const data = await reviewsService.rateFromEmail({
+      token: req.body.t,
+      rating: req.body.rating,
+      body: req.body.body,
+    });
+    res.json({ data });
+  }),
+);
 
 catalogRouter.post(
   '/reviews',

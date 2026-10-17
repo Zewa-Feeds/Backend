@@ -145,6 +145,17 @@ export const reviewLimiter = base('review', {
   message: 'You have submitted several reviews recently. Please try again later.',
 });
 
+/**
+ * Email star links. Looser than `reviewLimiter`: one visit to /review makes a
+ * GET and a POST, changing the star or adding a note makes more, and an order
+ * can carry several products. The token already limits what can be written.
+ */
+export const emailReviewLimiter = base('email-review', {
+  windowMs: 60 * 60 * 1000,
+  limit: 60,
+  message: 'Too many rating requests. Please try again later.',
+});
+
 /** Coupon validation — stops brute-force discovery of unpublished codes. */
 export const couponLimiter = base('coupon', {
   windowMs: 60 * 1000,
