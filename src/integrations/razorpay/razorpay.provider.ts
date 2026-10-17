@@ -12,7 +12,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import Razorpay from 'razorpay';
 import { env } from '@/config/env';
 import { logger } from '@/lib/logger';
-import { notConfigured, upstreamFailed } from '@/lib/errors';
+import { AppError, ErrorCode, notConfigured, upstreamFailed } from '@/lib/errors';
 import type {
   GatewayOrder,
   PaymentProvider,
@@ -188,6 +188,19 @@ export class RazorpayProvider implements PaymentProvider {
       };
     } catch (err) {
       log.error({ err, paymentId: input.gatewayPaymentId }, 'razorpay refund failed');
+      /*
+       * A 4xx is Razorpay REFUSING the refund, not Razorpay being down, and
+       * retrying will not help. This used to surface as "Razorpay is
+       * unavailable. Please try again." for every refusal, so an admin retried
+       * a refund that could never succeed — insufficient account balance, a
+       * payment that was authorised but never captured, an amount above what
+       * is left — with no way to see which. Razorpay's own description says,
+       * and it is written for the merchant, so it is passed through as is.
+       */
+      const refusal = gatewayRefusal(err);
+      if (refusal) {
+        throw new AppError(422, ErrorCode.REFUND_NOT_ALLOWED, `Razorpay refused the refund: ${refusal}`);
+      }
       throw upstreamFailed('Razorpay');
     }
   }
@@ -212,4 +225,18 @@ export class RazorpayProvider implements PaymentProvider {
       return [];
     }
   }
+}
+
+/**
+ * Razorpay's description when the error is a 4xx refusal, otherwise null.
+ *
+ * The SDK rejects with `{ statusCode, error: { code, description } }`; a network
+ * failure or a 5xx has no 4xx status and stays an "unavailable" error.
+ */
+export function gatewayRefusal(err: unknown): string | null {
+  const e = err as { statusCode?: unknown; error?: { description?: unknown } } | null;
+  const status = typeof e?.statusCode === 'number' ? e.statusCode : null;
+  const description = e?.error?.description;
+  if (status === null || status < 400 || status >= 500) return null;
+  return typeof description === 'string' && description.trim() ? description.trim() : null;
 }
