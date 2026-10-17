@@ -20,7 +20,20 @@
 # `npm run worker:prod`. src/jobs/worker.ts already starts exactly the same
 # three workers and registers the same schedule, so nothing else moves.
 #
-# Deploy with: Render Dashboard -> New -> Blueprint -> point at this repo.
+# ALREADY DEPLOYED. DO NOT create another Blueprint from this file.
+#
+# This file is synced by ONE existing Blueprint; pushing to main is all it ever
+# needs. "New -> Blueprint" a second time does not update anything: Render sees
+# the names already taken and creates a full second copy with a random suffix.
+# That is exactly how Oct 2026 ended up with zewa-api-sg AND zewa-api-sg-ql1b,
+# zewa-keyvalue-sg AND zewa-keyvalue-sg-ql1b — two of everything, billed twice,
+# with the live domain on the suffixed copy. To change infrastructure, edit
+# this file and push; to change a secret, use the service's Environment tab.
+#
+# Nothing here can create a Key Value store any more (see REDIS_URL below), so
+# even an accidental re-apply only costs one web service, which fails its first
+# build for want of secrets rather than quietly running.
+#
 # This repo's root IS the backend (package.json sits beside this file), so no
 # rootDir is set.
 
@@ -34,9 +47,11 @@ services:
     # one. A different name is what makes Render create it instead of trying to
     # reconcile the existing entry.
     #
-    # The Oregon `zewa-api` service is NOT renamed or deleted in the dashboard.
-    # It keeps serving until Singapore is verified, and is the rollback: point
-    # NEXT_PUBLIC_API_URL back at it and redeploy the frontends.
+    # In the dashboard this service is `zewa-api-sg-ql1b` — the suffix is from
+    # the duplicate Blueprint described at the top, and api.zewafeeds.com is
+    # attached to it. Leave this name as it is: the Blueprint already links it
+    # to that service, and editing it would make Render create a new one.
+    # The Oregon `zewa-api` service was suspended on 17 Oct 2026.
     name: zewa-api-sg
     runtime: node
     # Supabase is in ap-south-1. Singapore is ~50ms away; Oregon was ~250ms, and
@@ -70,8 +85,7 @@ services:
       #                   transactions and `migrate deploy`'s advisory lock).
       #                   Copied verbatim from Oregon — same database, no
       #                   migration, no new instance.
-      #   REDIS_URL    -> wired below from the Singapore Key Value resource, not
-      #                   set by hand.
+      #   REDIS_URL    -> set by hand, see below.
       - key: DATABASE_URL
         sync: false
       # The SAME Supabase database, for migrations only.
@@ -85,17 +99,26 @@ services:
       - key: DIRECT_URL
         sync: false
 
-      # Wired to the Singapore Key Value resource below rather than pasted in.
+      # The INTERNAL connection string of a Key Value store created by hand in
+      # the dashboard (Singapore, Starter, maxmemory `noeviction`, persistence
+      # `journal-snapshot`) — e.g. redis://red-xxxxxxxx:6379.
       #
-      # Redis is read on EVERY request — rate limiting is Redis-backed — so it
-      # has to sit in the same region as this service. The Oregon instance
-      # (`oregon-keyvalue.render.com`) stays exactly where it is, serving the
-      # Oregon service; nothing here points at it.
+      # Deliberately NOT declared in this Blueprint any more. A store declared
+      # here is one Render creates on every accidental re-apply, and one it
+      # re-creates on the next push if it is deleted by hand — both happened.
+      # Requirements for the store, and why:
+      #   - Same region as this service: rate limiting reads Redis on every
+      #     request, so a cross-region store adds a round trip to every call.
+      #   - A paid plan: the free one has no persistence, and a restart would
+      #     drop pending payment confirmations and order emails.
+      #   - noeviction: a full store must fail loudly, not silently discard the
+      #     oldest payment confirmation.
+      #   - journal-snapshot: a redeploy must not lose delayed jobs, including
+      #     the release-unpaid sweeps that free coupon and coin holds.
+      # NOT optional: payments, emails, site publishing and maintenance all run
+      # on its queues. /health/ready reports `redis: down` when it is missing.
       - key: REDIS_URL
-        fromService:
-          name: zewa-keyvalue-sg
-          type: keyvalue
-          property: connectionString
+        sync: false
 
       # ⚠️ OVERWRITE ALL THREE WITH OREGON'S VALUES ON FIRST DEPLOY.
       #
@@ -211,36 +234,3 @@ services:
       # its entire job.
       - key: RUN_WORKERS_IN_API
         value: "true"
-
-  # ---- Queue + rate-limit store --------------------------------------------
-  #
-  # Co-located with the API on purpose. Redis is read on EVERY request, because
-  # rate limiting is Redis-backed, so a cross-region instance would add a round
-  # trip to every call — which is the mistake this whole migration exists to
-  # undo. Putting the store in Oregon while the service runs in Singapore would
-  # trade one latency problem for another.
-  #
-  # SEPARATE FROM THE OREGON INSTANCE, and deliberately so. The two services run
-  # isolated queues during the overlap: no shared-consumer races, but also no
-  # handover, so anything still queued in Oregon is drained by Oregon. That is
-  # another reason to leave it running rather than stopping it at cutover.
-  - type: keyvalue
-    name: zewa-keyvalue-sg
-    region: singapore
-    # Smallest paid tier. The free one has no persistence, which a job queue
-    # cannot tolerate — a restart would drop pending payment confirmations and
-    # order emails. Sized against what actually lives here: short-TTL rate
-    # counters, three low-volume queues (email, payment, maintenance) and a
-    # handful of lock keys.
-    plan: starter
-    # Private network only. Nothing outside Render needs to reach this, and the
-    # API talks to it over the internal address.
-    ipAllowList: []
-    # A queue must not silently discard jobs when memory fills. `noeviction`
-    # makes a full store fail loudly instead of quietly dropping the oldest
-    # payment confirmation.
-    maxmemoryPolicy: noeviction
-    # Survive a restart. Without persistence, a redeploy loses every delayed job
-    # in flight — including the release-unpaid sweeps that free coupon and coin
-    # holds.
-    persistenceMode: journal-snapshot
