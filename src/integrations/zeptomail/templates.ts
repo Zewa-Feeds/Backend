@@ -847,7 +847,7 @@ export const accountTemplates = {
     orderNo: string;
     coinsUrl: string;
   }) => ({
-    subject: `You earned ${ctx.coins} Zewa Seeds on order ${ctx.orderNo}`,
+    subject: `Thank you for your recent purchase (order ${ctx.orderNo}) — you've earned ${ctx.coins} Zewa Seeds`,
     html: shell(
       `You earned ${ctx.coins} Zewa Seeds`,
       `Hi ${esc(ctx.firstName)}, your order ${esc(ctx.orderNo)} has been delivered — here are the Zewa Seeds you earned on it.`,
