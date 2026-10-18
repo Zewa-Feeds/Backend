@@ -15,6 +15,7 @@ import { logger } from '@/lib/logger';
 import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
 import { listMeta, toSkipTake } from '@/middleware/validate';
 import { toRupees } from '@/modules/products/products.serializer';
+import { SPEND_ORDER_SELECT, totalSpendPaise } from './spend';
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS } from '@/modules/orders/orders.serializer';
 import { sendEmail } from '@/integrations/zeptomail/zeptomail.client';
 import { buildCustomEmail, type CustomEmailInput } from '@/integrations/zeptomail/templates';
@@ -62,16 +63,12 @@ export async function list(params: ListParams) {
       status: true,
       registeredAt: true,
       emailVerifiedAt: true,
-      orders: {
-        select: { totalPaise: true, paymentStatus: true },
-      },
+      orders: { select: SPEND_ORDER_SELECT },
     },
   });
 
   const data = rows.map((c) => {
-    const spentPaise = c.orders
-      .filter((o) => o.paymentStatus === PaymentStatus.PAID)
-      .reduce((sum, o) => sum + o.totalPaise, 0);
+    const spentPaise = totalSpendPaise(c.orders);
 
     return {
       id: c.id,
@@ -148,11 +145,9 @@ export async function byId(id: string) {
       },
       orders: {
         select: {
+          ...SPEND_ORDER_SELECT,
           orderNo: true,
           placedAt: true,
-          totalPaise: true,
-          status: true,
-          paymentStatus: true,
           items: { select: { qty: true } },
         },
         orderBy: { placedAt: 'desc' },
@@ -172,9 +167,7 @@ export async function byId(id: string) {
   });
   if (!customer) throw notFound('Customer');
 
-  const spentPaise = customer.orders
-    .filter((o) => o.paymentStatus === PaymentStatus.PAID)
-    .reduce((sum, o) => sum + o.totalPaise, 0);
+  const spentPaise = totalSpendPaise(customer.orders);
 
   return {
     id: customer.id,

@@ -23,6 +23,7 @@ import * as accountService from './account.service';
 import * as rulesService from './rules.service';
 import * as reconcile from './reconcile.service';
 import * as fraudService from './fraud.service';
+import { spendByCustomer } from '@/modules/customers/spend';
 
 export const loyaltyAdminRouter = Router();
 
@@ -98,7 +99,15 @@ loyaltyAdminRouter.get(
       prisma.loyaltyAccount.count({ where }),
     ]);
 
-    res.json({ data: { rows, total } });
+    // Total spent on the website, so a balance can be read against what the
+    // customer has actually bought.
+    const spend = await spendByCustomer(rows.map((r) => r.customer.id));
+    res.json({
+      data: {
+        rows: rows.map((r) => ({ ...r, customer: { ...r.customer, spentPaise: spend.get(r.customer.id) ?? 0 } })),
+        total,
+      },
+    });
   }),
 );
 
@@ -161,10 +170,12 @@ loyaltyAdminRouter.get(
         })
       : [];
     const orderNoById = new Map(orders.map((o) => [o.id, o.orderNo]));
+    const spend = await spendByCustomer([account.customer.id]);
 
     res.json({
       data: {
         ...account,
+        customer: { ...account.customer, spentPaise: spend.get(account.customer.id) ?? 0 },
         ledger: entries.map((e) => ({
           ...e,
           id: e.id.toString(),

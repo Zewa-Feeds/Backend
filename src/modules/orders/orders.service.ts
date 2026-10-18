@@ -16,6 +16,7 @@ import {
   PaymentStatus,
   type Prisma,
 } from '@prisma/client';
+import { SPEND_ORDER_SELECT, spendByCustomer, totalSpendPaise } from '@/modules/customers/spend';
 import { prisma } from '@/lib/prisma';
 import { AppError, ErrorCode, notFound } from '@/lib/errors';
 import { endOfDay } from '@/lib/date';
@@ -135,7 +136,19 @@ export async function list(params: ListParams) {
 export async function byOrderNo(orderNo: string) {
   const order = await prisma.order.findUnique({ where: { orderNo }, select: ORDER_SELECT });
   if (!order) throw notFound('Order');
-  return serializeOrder(order);
+  /*
+   * The customer's total spent on the website, for the order page's Customer
+   * card. A guest has no account, so their orders are matched on email.
+   */
+  const customerSpentPaise = order.customerId
+    ? ((await spendByCustomer([order.customerId])).get(order.customerId) ?? 0)
+    : totalSpendPaise(
+        await prisma.order.findMany({
+          where: { email: order.email, customerId: null },
+          select: SPEND_ORDER_SELECT,
+        }),
+      );
+  return { ...serializeOrder(order), customerSpentPaise };
 }
 
 /** Raw row for internal use (invoice generation, emails). */

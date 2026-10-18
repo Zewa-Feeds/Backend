@@ -24,7 +24,7 @@ const MOCK_CUSTOMERS = [
     registeredAt: new Date('2026-01-01T10:00:00.000Z'),
     emailVerifiedAt: new Date('2026-01-01T11:00:00.000Z'),
     orders: [
-      { totalPaise: 10000, paymentStatus: PaymentStatus.PAID },
+      { totalPaise: 10000, paymentStatus: PaymentStatus.PAID, status: 'DELIVERED', paymentMethod: 'RAZORPAY', refunds: [] },
     ],
   },
   {
@@ -37,9 +37,9 @@ const MOCK_CUSTOMERS = [
     registeredAt: new Date('2026-03-01T10:00:00.000Z'),
     emailVerifiedAt: null,
     orders: [
-      { totalPaise: 30000, paymentStatus: PaymentStatus.PAID },
-      { totalPaise: 20000, paymentStatus: PaymentStatus.PAID },
-      { totalPaise: 15000, paymentStatus: PaymentStatus.UNPAID }, // unpaid doesn't count towards spend
+      { totalPaise: 30000, paymentStatus: PaymentStatus.PAID, status: 'DELIVERED', paymentMethod: 'RAZORPAY', refunds: [] },
+      { totalPaise: 20000, paymentStatus: PaymentStatus.PAID, status: 'DELIVERED', paymentMethod: 'RAZORPAY', refunds: [] },
+      { totalPaise: 15000, paymentStatus: PaymentStatus.UNPAID, status: 'PENDING', paymentMethod: 'RAZORPAY', refunds: [] }, // unpaid doesn't count towards spend
     ],
   },
   {
