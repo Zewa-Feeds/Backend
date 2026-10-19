@@ -446,10 +446,11 @@ export function resolveArticle(a: ArticleSource, assets: AssetMap) {
     title: a.title,
     shortTitle: a.shortTitle || a.title,
     tag: a.tag,
-    // From the category, not the article: one category, one colour. The stored
-    // per-article colour is ignored — see categoryColor.ts.
-    tagColor: categoryColor(a.tag),
-    tagBg: tintOf(categoryColor(a.tag)),
+    // From the category unless the article sets a custom colour: one category,
+    // one colour, with a deliberate override when an editor needs one. A null
+    // tagColor means automatic — see categoryColor.ts.
+    tagColor: a.tagColor || categoryColor(a.tag),
+    tagBg: tintOf(a.tagColor || categoryColor(a.tag)),
     tags: a.tags,
     readMinutes: a.readMinutes,
     excerpt,

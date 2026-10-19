@@ -53,6 +53,7 @@ type AccountContext = {
     firstName: string;
     balanceBefore: number;
     balanceAfter: number;
+    pendingAfter?: number;
     orders: { orderNo: string; paid: string; seeds: number }[];
     coinsUrl: string;
   };

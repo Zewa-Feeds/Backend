@@ -52,7 +52,7 @@ async function main() {
   for (const g of grants) {
     const account = await prisma.loyaltyAccount.findUniqueOrThrow({
       where: { id: g.accountId },
-      select: { availableCoins: true, customerId: true, customer: { select: { firstName: true, email: true } } },
+      select: { availableCoins: true, pendingCoins: true, customerId: true, customer: { select: { firstName: true, email: true } } },
     });
     if (only && account.customer.email.toLowerCase() !== only) continue;
 
@@ -91,11 +91,12 @@ async function main() {
       firstName: account.customer.firstName || 'there',
       balanceBefore: account.availableCoins - adj.coinsDelta,
       balanceAfter: account.availableCoins,
+      pendingAfter: account.pendingCoins,
       orders: breakdown,
       coinsUrl,
     };
     const { subject, html } = accountTemplates['seeds-welcome-corrected'](ctx);
-    console.log(`${send ? 'SEND' : 'DRY '} ${account.customer.email}: ${ctx.balanceBefore} → ${ctx.balanceAfter}; ${breakdown.map((b) => `${b.orderNo}=${b.seeds}`).join(', ') || 'no past orders'}`);
+    console.log(`${send ? 'SEND' : 'DRY '} ${account.customer.email}: ${ctx.balanceBefore} → ${ctx.balanceAfter} (+${ctx.pendingAfter} pending); ${breakdown.map((b) => `${b.orderNo}=${b.seeds}`).join(', ') || 'no past orders'}`);
 
     if (send) {
       const r = await logAndSend({
