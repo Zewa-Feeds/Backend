@@ -954,19 +954,24 @@ export const accountTemplates = {
     coinsUrl: string;
     /** Where "Shop now" goes. Defaults to the storefront's product list. */
     shopUrl?: string;
-  }) => ({
+  }) => {
+    const shopUrl = ctx.shopUrl ?? `${env.STOREFRONT_ORIGIN.replace(/\/$/, '')}/products`;
+    return {
     subject: 'An update to your Zewa Seeds balance',
     html: shell(
       'Your Zewa Seeds balance',
       `Hi ${esc(ctx.firstName)}, please note that there was a technical error in the Zewa Seeds calculation on your old purchases. This has been updated and your current Zewa Seeds balance is <strong>${ctx.balanceAfter} Seeds</strong>.`,
       coinBalanceBlock(ctx.balanceAfter, 'Your current balance') +
-        note('Shop now to use them before they expire. 1 Seed = ₹1 off your order.') +
+        note(
+          `<a href="${esc(shopUrl)}" style="color:${BRAND};font-weight:700;text-decoration:underline;">Shop now</a> to use them before they expire. 1 Seed = ₹1 off your order.`,
+        ) +
         '<div style="height:20px;line-height:20px;font-size:0;">&nbsp;</div>' +
-        ctaButton(ctx.shopUrl ?? `${env.STOREFRONT_ORIGIN.replace(/\/$/, '')}/products`, 'Shop now') +
+        ctaButton(shopUrl, 'Shop now') +
         `<div style="font-size:14px;color:${MUTED};line-height:1.6;margin:28px 0 0;">Best regards,<br/>The Zewa team</div>`,
       `Your Zewa Seeds balance is ${ctx.balanceAfter} — shop now to use them`,
     ),
-  }),
+    };
+  },
 } as const;
 
 /** A single prominent coin figure, used by the coin templates above. */
