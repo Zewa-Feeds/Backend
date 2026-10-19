@@ -9,7 +9,7 @@
  *
  * Dry run by default — prints what each customer would be told.
  *
- *   npx tsx scripts/send-welcome-correction.ts                       # dry run, everyone
+ *   REDIS_URL=redis://127.0.0.1:1 npx tsx scripts/send-welcome-correction.ts   # dry run, everyone
  *   npx tsx scripts/send-welcome-correction.ts --only a@b.com --send # one customer
  *   npx tsx scripts/send-welcome-correction.ts --send                # everyone
  *
@@ -35,8 +35,17 @@ const inr = (paise: number) => `₹${(paise / 100).toLocaleString('en-IN', { max
 async function main() {
   const rules = rulesService.toCoinRules(await rulesService.active());
   const coinsUrl = `${env.STOREFRONT_ORIGIN.replace(/\/$/, '')}/account/seeds`;
+  // --only narrows the query itself; each round trip to the database is slow
+  // from a laptop, so filtering 64 accounts after loading them took minutes.
+  const onlyAccount = only
+    ? await prisma.loyaltyAccount.findFirst({
+        where: { customer: { email: { equals: only, mode: 'insensitive' } } },
+        select: { id: true },
+      })
+    : null;
+  if (only && !onlyAccount) throw new Error(`No Seeds account for ${only}`);
   const grants = await prisma.coinLedger.findMany({
-    where: { reason: CoinReason.GOODWILL, note: WELCOME_NOTE },
+    where: { reason: CoinReason.GOODWILL, note: WELCOME_NOTE, ...(onlyAccount ? { accountId: onlyAccount.id } : {}) },
     select: { accountId: true, createdAt: true },
   });
 
@@ -103,8 +112,14 @@ async function main() {
   await prisma.$disconnect();
 }
 
-main().catch(async (err) => {
-  console.error(err);
-  await prisma.$disconnect();
-  process.exit(1);
-});
+// Exit explicitly: importing the email stack opens a Redis client (settings
+// cache) whose reconnect loop would otherwise keep the process alive. Run it
+// with REDIS_URL=redis://127.0.0.1:1 from a laptop, so that cache fails fast
+// and the settings fall back to the database.
+main()
+  .then(() => process.exit(0))
+  .catch(async (err) => {
+    console.error(err);
+    await prisma.$disconnect();
+    process.exit(1);
+  });
