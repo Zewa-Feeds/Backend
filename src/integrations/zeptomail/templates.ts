@@ -940,71 +940,33 @@ export const accountTemplates = {
   /**
    * The correction to the 14 Oct 2026 welcome credit (scripts/rebase-welcome-seeds.ts).
    *
-   * Written to be read by someone whose balance just went DOWN: it says so in
-   * the first line, owns the mistake, shows the before/after and the arithmetic
-   * per order, and is explicit that nothing they earned on an order was touched.
-   * No apology gift is promised here — that is a business decision, not copy.
+   * Parth's wording (19 Oct 2026), kept short on purpose: what happened, the
+   * balance now, and a reason to come back. `balanceAfter` is the AVAILABLE
+   * balance — what they can spend today. The other fields stay in the context
+   * (the send script still fills them) but are no longer shown.
    */
   'seeds-welcome-corrected': (ctx: {
     firstName: string;
-    /** Balance before and after the correction (available Seeds). */
     balanceBefore: number;
     balanceAfter: number;
-    /** Seeds earned but still in the return window — not in balanceAfter. */
     pendingAfter?: number;
-    /** The past orders the corrected welcome credit is now worked out from. */
     orders: { orderNo: string; paid: string; seeds: number }[];
     coinsUrl: string;
-  }) => {
-    const welcome = ctx.orders.reduce((s, o) => s + o.seeds, 0);
-    const orderRows = ctx.orders.length
-      ? ctx.orders
-          .map(
-            (o) => `
-        <tr>
-          <td style="padding:9px 0;border-bottom:1px solid ${HAIRLINE};font-size:13.5px;color:${INK};">Order ${esc(o.orderNo)} <span style="color:${MUTED};">· ${esc(o.paid)}</span></td>
-          <td style="padding:9px 0;border-bottom:1px solid ${HAIRLINE};font-size:13.5px;color:${INK};text-align:right;white-space:nowrap;font-weight:700;">${o.seeds} seed${o.seeds === 1 ? '' : 's'}</td>
-        </tr>`,
-          )
-          .join('')
-      : '';
-    return {
-      subject: 'A correction to your Zewa Seeds balance',
-      html: shell(
-        'A correction to your Zewa Seeds',
-        ctx.orders.length
-          ? `Hi ${esc(ctx.firstName)}, we owe you a quick explanation. When we welcomed you to Zewa Seeds on 14 October, we made a mistake working out your thank-you Seeds for your earlier orders — it came out higher than our Seeds rule allows. We've corrected it, and we're sorry for the confusion.`
-          : `Hi ${esc(ctx.firstName)}, we owe you a quick explanation. When we welcomed you to Zewa Seeds on 14 October, we added welcome Seeds to your account by mistake — they were only meant for orders placed before Zewa Seeds began. We've corrected your balance, and we're sorry for the confusion.`,
-        factsBlock([
-          ['Your balance was', `${ctx.balanceBefore} seeds`],
-          ['Your balance now', `${ctx.balanceAfter} seeds`],
-          // Shown so "balance now" is never mistaken for everything they have.
-          ...(ctx.pendingAfter
-            ? ([['On the way', `${ctx.pendingAfter} seeds`]] as [string, string][])
-            : []),
-        ]) +
-          (orderRows
-            ? `
-        <div style="font-size:14px;font-weight:700;color:${INK};margin:0 0 4px;">How your welcome Seeds are worked out</div>
-        <div style="font-size:13px;color:${MUTED};line-height:1.55;margin:0 0 6px;">Every customer gets the same: 1 Seed for every ₹50 spent (before tax) on orders placed before Zewa Seeds began.</div>
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 6px;">${orderRows}
-          <tr>
-            <td style="padding:10px 0 0;font-size:13.5px;color:${INK};font-weight:700;">Welcome Seeds</td>
-            <td style="padding:10px 0 0;font-size:13.5px;color:${INK};text-align:right;font-weight:700;">${welcome} seeds</td>
-          </tr>
-        </table>`
-            : `
-        <div style="font-size:14px;font-weight:700;color:${INK};margin:0 0 4px;">Where your Seeds come from</div>
-        <div style="font-size:13px;color:${MUTED};line-height:1.55;margin:0 0 18px;">Your orders were placed after Zewa Seeds started, so they earn Seeds directly — 1 Seed for every ₹50 spent (before tax). Every Seed you earned on them is still yours; only the welcome Seeds added by mistake have been removed.</div>`) +
-          note(
-            `Seeds you earn on new orders aren't affected — every order still earns 1 Seed per ₹50, and 1 Seed is ₹1 off a future order. Questions? Just reply to this email and a real person will get back to you.`,
-          ) +
-          '<div style="height:20px;line-height:20px;font-size:0;">&nbsp;</div>' +
-          ctaButton(ctx.coinsUrl, 'View your seeds'),
-        `We've corrected your welcome Seeds — here's your updated balance`,
-      ),
-    };
-  },
+    /** Where "Shop now" goes. Defaults to the storefront's product list. */
+    shopUrl?: string;
+  }) => ({
+    subject: 'An update to your Zewa Seeds balance',
+    html: shell(
+      'Your Zewa Seeds balance',
+      `Hi ${esc(ctx.firstName)}, please note that there was a technical error in the Zewa Seeds calculation on your old purchases. This has been updated and your current Zewa Seeds balance is <strong>${ctx.balanceAfter} Seeds</strong>.`,
+      coinBalanceBlock(ctx.balanceAfter, 'Your current balance') +
+        note('Shop now to use them before they expire. 1 Seed = ₹1 off your order.') +
+        '<div style="height:20px;line-height:20px;font-size:0;">&nbsp;</div>' +
+        ctaButton(ctx.shopUrl ?? `${env.STOREFRONT_ORIGIN.replace(/\/$/, '')}/products`, 'Shop now') +
+        `<div style="font-size:14px;color:${MUTED};line-height:1.6;margin:28px 0 0;">Best regards,<br/>The Zewa team</div>`,
+      `Your Zewa Seeds balance is ${ctx.balanceAfter} — shop now to use them`,
+    ),
+  }),
 } as const;
 
 /** A single prominent coin figure, used by the coin templates above. */

@@ -33,6 +33,12 @@ const only = args.includes('--only') ? args[args.indexOf('--only') + 1]!.toLower
 const inr = (paise: number) => `₹${(paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 
 async function main() {
+  // Links are built from STOREFRONT_ORIGIN. Run from a laptop it is usually
+  // http://localhost:3000 — which is how the first correction email went out
+  // with a dead "View your seeds" button. Refuse anything but the real site.
+  if (!/^https:\/\/(www\.)?zewafeeds\.com\/?$/.test(env.STOREFRONT_ORIGIN)) {
+    throw new Error(`STOREFRONT_ORIGIN is ${env.STOREFRONT_ORIGIN}; run with STOREFRONT_ORIGIN=https://zewafeeds.com`);
+  }
   const rules = rulesService.toCoinRules(await rulesService.active());
   const coinsUrl = `${env.STOREFRONT_ORIGIN.replace(/\/$/, '')}/account/seeds`;
   // --only narrows the query itself; each round trip to the database is slow
