@@ -9,6 +9,7 @@
  * So publishing RESOLVES every reference into a frozen description of the file,
  * and VALIDATES each one against the placement it sits in.
  */
+import { categoryColor } from './categoryColor';
 import { MediaType, type Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { type Issue, validateAsset } from './placements';
@@ -445,8 +446,10 @@ export function resolveArticle(a: ArticleSource, assets: AssetMap) {
     title: a.title,
     shortTitle: a.shortTitle || a.title,
     tag: a.tag,
-    tagColor: a.tagColor ?? '#44e5c2',
-    tagBg: tintOf(a.tagColor ?? '#44e5c2'),
+    // From the category, not the article: one category, one colour. The stored
+    // per-article colour is ignored — see categoryColor.ts.
+    tagColor: categoryColor(a.tag),
+    tagBg: tintOf(categoryColor(a.tag)),
     tags: a.tags,
     readMinutes: a.readMinutes,
     excerpt,
