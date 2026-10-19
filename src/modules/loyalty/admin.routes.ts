@@ -101,10 +101,17 @@ loyaltyAdminRouter.get(
 
     // Total spent on the website, so a balance can be read against what the
     // customer has actually bought.
-    const spend = await spendByCustomer(rows.map((r) => r.customer.id));
+    const [spend, credited] = await Promise.all([
+      spendByCustomer(rows.map((r) => r.customer.id)),
+      lifetimeCredited(rows.map((r) => r.id)),
+    ]);
     res.json({
       data: {
-        rows: rows.map((r) => ({ ...r, customer: { ...r.customer, spentPaise: spend.get(r.customer.id) ?? 0 } })),
+        rows: rows.map((r) => ({
+          ...r,
+          lifetimeCredited: credited.get(r.id) ?? 0,
+          customer: { ...r.customer, spentPaise: spend.get(r.customer.id) ?? 0 },
+        })),
         total,
       },
     });
@@ -170,11 +177,15 @@ loyaltyAdminRouter.get(
         })
       : [];
     const orderNoById = new Map(orders.map((o) => [o.id, o.orderNo]));
-    const spend = await spendByCustomer([account.customer.id]);
+    const [spend, credited] = await Promise.all([
+      spendByCustomer([account.customer.id]),
+      lifetimeCredited([account.id]),
+    ]);
 
     res.json({
       data: {
         ...account,
+        lifetimeCredited: credited.get(account.id) ?? 0,
         customer: { ...account.customer, spentPaise: spend.get(account.customer.id) ?? 0 },
         ledger: entries.map((e) => ({
           ...e,
@@ -717,3 +728,36 @@ loyaltyAdminRouter.post(
     res.json({ data: report });
   }),
 );
+
+/**
+ * Every Seed ever credited to an account, net of corrections — what the CMS
+ * shows as "Lifetime earned".
+ *
+ * The stored `lifetimeEarned` counter only moves on EARN, so a customer whose
+ * Seeds came from the welcome credit for past orders (GOODWILL) showed more
+ * Available than Lifetime earned, which reads as an error. This sums the
+ * crediting reasons from the ledger instead: order earnings (less VOID and
+ * CLAWBACK), guest claims, backfill, goodwill and manual adjustments (both
+ * signs), and merges. Movements of Seeds the customer already had — UNLOCK,
+ * REDEEM, RELEASE, RESTORE, EXPIRE, RECONCILE — are not credits.
+ */
+const CREDIT_REASONS: CoinReason[] = [
+  CoinReason.EARN,
+  CoinReason.VOID,
+  CoinReason.CLAWBACK,
+  CoinReason.GUEST_CLAIM,
+  CoinReason.LAUNCH_BACKFILL,
+  CoinReason.GOODWILL,
+  CoinReason.ADJUSTMENT,
+  CoinReason.MERGE,
+];
+
+async function lifetimeCredited(accountIds: string[]): Promise<Map<string, number>> {
+  if (accountIds.length === 0) return new Map();
+  const sums = await prisma.coinLedger.groupBy({
+    by: ['accountId'],
+    where: { accountId: { in: accountIds }, reason: { in: CREDIT_REASONS } },
+    _sum: { coinsDelta: true },
+  });
+  return new Map(sums.map((s) => [s.accountId, s._sum.coinsDelta ?? 0]));
+}

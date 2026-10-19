@@ -49,6 +49,13 @@ type AccountContext = {
     rateProducts?: { name: string; starUrls: string[] }[];
   };
   'coins-expiring': { firstName: string; coins: number; expiresOn: string; coinsUrl: string };
+  'seeds-welcome-corrected': {
+    firstName: string;
+    balanceBefore: number;
+    balanceAfter: number;
+    orders: { orderNo: string; paid: string; seeds: number }[];
+    coinsUrl: string;
+  };
   'coins-adjusted': {
     firstName: string;
     orderNo: string;
