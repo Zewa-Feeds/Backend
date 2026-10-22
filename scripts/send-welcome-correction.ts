@@ -70,6 +70,23 @@ async function main() {
       console.log(`SKIP ${account.customer.email}: correction not applied`);
       continue;
     }
+    // Never twice: anyone this email already reached is skipped, so a re-run
+    // (or a rollout after a one-off send) cannot duplicate it.
+    const already = await prisma.emailLog.findFirst({
+      where: { customerId: account.customerId, template: 'seeds-welcome-corrected', status: 'SENT' },
+      select: { id: true },
+    });
+    if (already) {
+      console.log(`SKIP ${account.customer.email}: already sent (email log ${already.id})`);
+      continue;
+    }
+    // The email says "your current balance is N — use them before they expire".
+    // With nothing available to spend (everything still pending) that reads as
+    // "your balance is 0", so those customers are held for a separate decision.
+    if (account.availableCoins <= 0) {
+      console.log(`SKIP ${account.customer.email}: 0 available (+${account.pendingCoins} pending) — held, needs different wording`);
+      continue;
+    }
 
     const earned = new Set(
       (
