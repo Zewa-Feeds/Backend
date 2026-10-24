@@ -30,7 +30,8 @@
     "docker:nuke": "docker compose -f docker/docker-compose.yml down -v",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:setup": "npm run docker:up && node scripts/test-setup.mjs"
+    "test:setup": "npm run docker:up && node scripts/test-setup.mjs",
+    "reset-link": "tsx scripts/generate-reset-link.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.2.1",

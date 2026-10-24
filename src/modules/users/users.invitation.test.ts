@@ -343,6 +343,28 @@ describe('CMS User Management & Invitation Lifecycle', () => {
       const dbInv = (prisma as any)._invitations.get(created.user.id);
       expect(dbInv.revokedAt).toBeDefined();
     });
+
+    it('forces a password reset by issuing a fresh setup token and reset URL', async () => {
+      const created = await usersService.create(
+        {
+          name: 'Active Staff',
+          email: 'active-staff@zewafeeds.com',
+          role: Role.CONTENT_EDITOR,
+          sendInvite: false,
+        },
+        mockAuditCtx,
+      );
+
+      const reset = await usersService.resetPassword(created.user.id, mockAuditCtx);
+      expect(reset.ok).toBe(true);
+      expect(reset.setupToken).toBeDefined();
+      expect(reset.resetUrl).toContain(reset.setupToken);
+
+      const dbInv = (prisma as any)._invitations.get(created.user.id);
+      expect(dbInv.tokenHash).toBe(hashToken(reset.setupToken));
+      expect(dbInv.usedAt).toBeNull();
+      expect(dbInv.revokedAt).toBeNull();
+    });
   });
 
   describe('Invitation Acceptance & Account Activation', () => {

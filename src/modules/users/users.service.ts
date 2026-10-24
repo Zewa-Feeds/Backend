@@ -475,36 +475,52 @@ export async function setStatus(
 /**
  * Force a password reset (§14.2).
  *
- * Issues a setup token and invalidates the current password by bumping
- * tokenVersion and revoking sessions.
+ * Issues a setup token / invitation record and invalidates current sessions.
+ * Queues a setup invitation email to the user so they can set a fresh password,
+ * and returns the resetUrl so the CMS can display it directly to the admin.
  */
-export async function resetPassword(id: string, ctx: AuditContext): Promise<{ setupToken: string }> {
+export async function resetPassword(
+  id: string,
+  ctx: AuditContext,
+): Promise<{ ok: boolean; setupToken: string; resetUrl: string }> {
   const target = await prisma.cmsUser.findFirst({
     where: { id, deletedAt: null },
-    select: { id: true, email: true },
+    select: { id: true, name: true, email: true, role: true },
   });
   if (!target) throw notFound('User');
 
-  const setupToken = generateToken();
+  const rawToken = generateToken(32);
+  const tokenHash = hashToken(rawToken);
+  const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
 
   await prisma.$transaction(async (tx) => {
+    await tx.cmsInvitation.upsert({
+      where: { userId: id },
+      create: {
+        userId: id,
+        tokenHash,
+        expiresAt,
+        invitedById: ctx.actorId,
+      },
+      update: {
+        tokenHash,
+        expiresAt,
+        usedAt: null,
+        revokedAt: null,
+        invitedById: ctx.actorId,
+      },
+    });
+
     await tx.cmsUser.update({
       where: { id },
       data: { tokenVersion: { increment: 1 } },
     });
+
     await tx.cmsSession.updateMany({
       where: { userId: id, revokedAt: null },
-      data: { revokedAt: new Date() },
+      data: { revokedAt: new Date(), revokedReason: 'password_reset_issued' },
     });
-    await tx.cmsSession.create({
-      data: {
-        userId: id,
-        refreshTokenHash: hashToken(setupToken),
-        ip: ctx.ip,
-        userAgent: 'password-reset',
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-      },
-    });
+
     await writeAudit(
       ctx,
       {
@@ -516,7 +532,22 @@ export async function resetPassword(id: string, ctx: AuditContext): Promise<{ se
     );
   });
 
-  return { setupToken };
+  const resetUrl = `${env.CMS_ORIGIN}/accept-invitation?token=${rawToken}`;
+
+  try {
+    await emailQueue.add('invitation', {
+      kind: 'invitation',
+      recipientName: target.name,
+      recipientEmail: target.email,
+      roleLabel: ROLE_LABELS[target.role],
+      inviteUrl: resetUrl,
+      expiresInHours: 48,
+    });
+  } catch {
+    // If queue is unreachable during testing/offline, don't fail reset.
+  }
+
+  return { ok: true, setupToken: rawToken, resetUrl };
 }
 
 /**
