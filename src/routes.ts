@@ -45,6 +45,7 @@ import { zeptomailWebhookRouter } from '@/modules/emails/webhook.routes';
 import { uploadsRouter } from '@/modules/uploads/uploads.routes';
 import { liveSiteRouter, mediaRouter, sitePreviewRouter, siteRouter } from '@/modules/site/site.routes';
 import { catalogRouter } from '@/modules/catalog/catalog.routes';
+import { loyaltyPublicRouter } from '@/modules/loyalty/loyalty.routes';
 import { previewRouter } from '@/modules/catalog/preview.routes';
 import { checkoutRouter, trackingRouter } from '@/modules/checkout/checkout.routes';
 import { webhookRouter } from '@/modules/checkout/webhook.routes';
@@ -68,6 +69,7 @@ publicRouter.use(publicLimiter);
 publicRouter.use('/webhooks/cloudinary', cloudinaryWebhookRouter);
 /* Open-tracking notifications. Signature-verified inside; see webhook.routes.ts. */
 publicRouter.use('/webhooks/zeptomail', zeptomailWebhookRouter);
+publicRouter.use('/coins', loyaltyPublicRouter); // earn preview for the checkout total
 publicRouter.use('/', catalogRouter);
 // Published website content — read by the storefront build, not by browsers.
 publicRouter.use('/site/live', liveSiteRouter);

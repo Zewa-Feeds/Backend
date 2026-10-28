@@ -25,7 +25,7 @@ import * as accountService from './account.service';
 import * as redemption from './redemption.service';
 import * as rulesService from './rules.service';
 import * as guestClaim from './guest-claim.service';
-import { withCouponDiscount, type CoinLine } from './coin-math';
+import { computeEarn, withCouponDiscount, type CoinLine } from './coin-math';
 import { priceCart } from '@/modules/checkout/pricing.service';
 import { logger } from '@/lib/logger';
 
@@ -110,6 +110,49 @@ async function resolveCoinLines(
   return withCouponDiscount(resolved, discountPaise);
 }
 
+
+/**
+ * Public loyalty surface — no customer session. Mounted at /api/v1/coins.
+ */
+export const loyaltyPublicRouter = Router();
+
+/**
+ * POST /coins/earn-preview — "You'll earn 24 Zewa Seeds with this order."
+ *
+ * The same earn maths the order will use (§3.5): coupon discount and any seeds
+ * applied are deducted first, so seeds never earn seeds. It is an estimate, not
+ * a promise — the monthly earn cap and the order actually being paid still
+ * apply at grant time. Public, because a guest sees it as the reason to sign in.
+ */
+loyaltyPublicRouter.post(
+  '/earn-preview',
+  validate({
+    body: z.object({
+      lines: z
+        .array(z.object({ sku: z.string().trim().min(1), qty: z.number().int().min(1) }))
+        .min(1)
+        .max(50),
+      couponCodes: z.array(z.string().trim().max(30)).max(10).optional(),
+      /** Seeds applied to this cart; they are not earned on. */
+      coinsApplied: z.number().int().min(0).max(1_000_000).optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { lines, couponCodes, coinsApplied } = req.body as {
+      lines: { sku: string; qty: number }[];
+      couponCodes?: string[];
+      coinsApplied?: number;
+    };
+    const rv = await rulesService.active();
+    if (!rv.earningEnabled) {
+      res.json({ data: { coins: 0 } });
+      return;
+    }
+    const coinLines = await resolveCoinLines(lines, couponCodes);
+    const { coins } = computeEarn(coinLines, coinsApplied ?? 0, rulesService.toCoinRules(rv));
+    res.json({ data: { coins } });
+  }),
+);
 
 /**
  * GET /account/coins — the balance widget and account page (§10.2).
