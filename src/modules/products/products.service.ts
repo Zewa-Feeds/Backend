@@ -44,6 +44,7 @@ import {
 import type { ProductBody } from './products.schemas';
 import type { productListQuerySchema } from './products.schemas';
 import type { z } from 'zod';
+import { canonicalNutrition } from './nutrition';
 
 type ListQuery = z.infer<typeof productListQuerySchema>;
 
@@ -126,7 +127,10 @@ export async function bySlug(slug: string, role: Role) {
 
   return {
     ...serializeFamily({ ...live, draft: draft ? { id: draft.id, updatedAt: draft.updatedAt } : null }, role),
-    draftPayload: draft?.payload ?? null,
+    // Drafts saved before nutrition keys were unified may still mix spellings.
+    draftPayload: draft?.payload
+      ? { ...(draft.payload as Record<string, unknown>), nutrition: canonicalNutrition((draft.payload as Record<string, unknown>).nutrition) }
+      : null,
   };
 }
 
@@ -154,7 +158,7 @@ function familyData(body: ProductBody) {
     feedFreq: body.feedFreq ?? null,
     feedPortion: body.feedPortion ?? null,
     feedNotesHtml: body.feedNotes ?? null,
-    nutrition: body.nutrition as Prisma.InputJsonValue,
+    nutrition: canonicalNutrition(body.nutrition),
     ...(body.presentation ? { presentation: body.presentation as Prisma.InputJsonValue } : {}),
     seoTitle: body.seoTitle ?? null,
     seoDesc: body.seoDesc ?? null,

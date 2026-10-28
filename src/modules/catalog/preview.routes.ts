@@ -21,6 +21,7 @@ import { verifyPreviewToken } from '@/lib/tokens';
 import { forbidden, notFound } from '@/lib/errors';
 import { prisma } from '@/lib/prisma';
 import { FAMILY_SELECT, serializePublic } from '@/modules/products/products.serializer';
+import { canonicalNutrition } from '@/modules/products/nutrition';
 
 export const previewRouter = Router();
 
@@ -87,7 +88,7 @@ previewRouter.get(
         fullDescHtml: payload.fullDesc ?? base.fullDescHtml,
         proteinPct: payload.protein ?? base.proteinPct,
         benefits: payload.benefits ?? base.benefits,
-        nutrition: payload.nutrition ?? base.nutrition,
+        nutrition: canonicalNutrition(payload.nutrition ?? base.nutrition),
         packs:
           payload.variants?.map((v) => ({
             sku: v.sku,

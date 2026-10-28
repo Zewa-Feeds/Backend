@@ -11,6 +11,7 @@ import { Badge, MediaType, ProductStatus } from '@prisma/client';
 import { parseCategory } from '@/modules/categories/categories.registry';
 import { plainText, richText } from '@/lib/sanitize';
 import { paginationSchema, slugSchema } from '@/middleware/validate';
+import { canonicalNutrition } from './nutrition';
 
 /**
  * Enums accept either the enum value or the CMS's display label
@@ -129,7 +130,8 @@ export const variantSchema = z
 /** Nutrition is free-form: fields vary per product (§5.2 tab 4). */
 const nutritionSchema = z
   .record(z.string().max(40), z.string().max(60).transform(plainText))
-  .default({});
+  .default({})
+  .transform(canonicalNutrition);
 
 /**
  * Only our own Cloudinary account, and only over https.

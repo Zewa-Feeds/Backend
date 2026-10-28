@@ -27,6 +27,7 @@ import { presentDetail, presentListing } from '@/modules/products/media.presenta
 import { hoverVideoUrl } from '@/integrations/cloudinary/cloudinary.service';
 import type { Role } from '@prisma/client';
 import { categoryLabel } from '@/modules/categories/categories.registry';
+import { canonicalNutrition } from '@/modules/products/nutrition';
 
 // ---- Enum ↔ display string -------------------------------------------------
 
@@ -229,7 +230,7 @@ export function serializeFamily(family: FamilyRow, role?: Role) {
     feedFreq: family.feedFreq,
     feedPortion: family.feedPortion,
     feedNotes: family.feedNotesHtml,
-    nutrition: family.nutrition,
+    nutrition: canonicalNutrition(family.nutrition),
     presentation: family.presentation,
     seoTitle: family.seoTitle,
     seoDesc: family.seoDesc,
@@ -382,7 +383,7 @@ export function serializePublic(family: FamilyRow) {
       portion: family.feedPortion,
       notesHtml: family.feedNotesHtml,
     },
-    nutrition: family.nutrition,
+    nutrition: canonicalNutrition(family.nutrition),
     presentation: family.presentation,
     seo: { title: family.seoTitle, description: family.seoDesc },
     /*
