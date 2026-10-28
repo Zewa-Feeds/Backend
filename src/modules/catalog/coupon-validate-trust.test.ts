@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
-import { Category, DiscountType, PrismaClient, ProductStatus } from '@prisma/client';
+import { DiscountType, PrismaClient, ProductStatus } from '@prisma/client';
 import { ns, sweepFixtures } from '@/test/fixtures';
 import { catalogRouter } from './catalog.routes';
 import { errorHandler } from '@/middleware/errorHandler';
@@ -81,7 +81,7 @@ beforeAll(async () => {
     data: {
       slug,
       name: `ZZ Validate ${slug}`,
-      category: Category.SLOW_SINKING_PELLETS,
+      category: 'SLOW_SINKING_PELLETS',
       status: ProductStatus.ACTIVE,
       shortDesc: 'fixture',
       variants: {

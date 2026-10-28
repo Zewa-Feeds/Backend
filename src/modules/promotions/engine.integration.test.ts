@@ -24,7 +24,6 @@ vi.mock('@/jobs/queues', () => ({
 }));
 
 import {
-  Category,
   CouponStacking,
   CouponTargetRole,
   CouponTrigger,
@@ -64,7 +63,7 @@ let skuB = '';
 const couponIds: string[] = [];
 const emails: string[] = [];
 
-async function makeFamily(label: string, price: number, category: Category) {
+async function makeFamily(label: string, price: number, category: string) {
   const slug = ns(label);
   const family = await prisma.productFamily.create({
     data: {
@@ -176,8 +175,8 @@ async function acceptOrder(orderNo: string) {
 beforeAll(async () => {
   await sweepFixtures(prisma);
   actorId = await testActor(prisma);
-  const a = await makeFamily('pa', UNIT_A, Category.SLOW_SINKING_PELLETS);
-  const b = await makeFamily('pb', UNIT_B, Category.BOTTOM_DWELLERS);
+  const a = await makeFamily('pa', UNIT_A, 'SLOW_SINKING_PELLETS');
+  const b = await makeFamily('pb', UNIT_B, 'BOTTOM_DWELLERS');
   famA = a.familyId;
   skuA = a.sku;
   famB = b.familyId;

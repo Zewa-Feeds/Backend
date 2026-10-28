@@ -17,9 +17,10 @@ import { cartCouponLimiter, couponLimiter, emailReviewLimiter, reviewLimiter } f
 import { prisma } from '@/lib/prisma';
 import { AppError, ErrorCode, notFound } from '@/lib/errors';
 import { plainText } from '@/lib/sanitize';
+import { activeCategories } from '@/modules/categories/categories.registry';
 import {
-  CATEGORY_LABELS,
-  ACTIVE_CATEGORIES,
+  categoryLabel,
+  parseCategory,
   serializePublic,
   FAMILY_SELECT,
   toRupees,
@@ -60,9 +61,7 @@ catalogRouter.get(
         status: { in: [ProductStatus.ACTIVE, ProductStatus.COMING_SOON] },
         ...(query.category
           ? {
-              category: (Object.entries(CATEGORY_LABELS).find(
-                ([k, label]) => k === query.category || label === query.category,
-              )?.[0] ?? undefined) as never,
+              category: parseCategory(query.category),
             }
           : {}),
         ...(query.q ? { name: { contains: query.q, mode: 'insensitive' } } : {}),
@@ -213,18 +212,19 @@ catalogRouter.get(
  * public endpoint (correctly) does not return them, and their categories
  * vanished with them.
  *
- * The category list is a fixed taxonomy, not a function of what is published
- * today. Serving it from ACTIVE_CATEGORIES keeps the shop's chips stable as
- * products are published, and keeps one source of truth shared with the CMS.
+ * The category list is the CMS-managed taxonomy (ProductCategory, visible rows
+ * in their set order), not a function of what is published today. That keeps
+ * the shop's chips stable as products are published, and keeps one source of
+ * truth shared with the CMS.
  */
 catalogRouter.get(
   '/catalog/categories',
   asyncHandler(async (_req, res) => {
     res.setHeader('Cache-Control', CACHE_60S);
     res.json({
-      data: ACTIVE_CATEGORIES.map((value) => ({
-        value,
-        label: CATEGORY_LABELS[value],
+      data: activeCategories().map((c) => ({
+        value: c.code,
+        label: c.label,
       })),
     });
   }),
@@ -262,7 +262,7 @@ catalogRouter.get(
       data: spotlights.map((s) => ({
         name: s.family.name,
         slug: s.family.slug,
-        category: CATEGORY_LABELS[s.family.category],
+        category: categoryLabel(s.family.category),
         tagline: s.tagline,
         subText: s.subText,
         badge: s.badge,

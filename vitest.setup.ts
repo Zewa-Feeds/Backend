@@ -16,9 +16,20 @@
  * most tooling gets here, and without it the hosted URLs would win.
  */
 import { config } from 'dotenv';
-import { afterAll } from 'vitest';
+import { afterAll, beforeAll } from 'vitest';
 
 config({ path: '.env.test', override: true });
+
+/*
+ * Product categories live in the database and are held in process
+ * (categories.registry). In the API, middleware loads them before a handler
+ * runs; tests that parse a product payload or serialize directly skip that, so
+ * load them here. Best effort: pure unit files may run with no database.
+ */
+beforeAll(async () => {
+  const { reloadCategories } = await import('@/modules/categories/categories.registry');
+  await reloadCategories().catch(() => undefined);
+});
 
 process.on('unhandledRejection', (reason: unknown) => {
   if (reason instanceof Error && reason.message.includes('Connection is closed')) {

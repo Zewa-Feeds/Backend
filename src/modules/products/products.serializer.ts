@@ -15,7 +15,6 @@
  */
 import {
   Badge,
-  Category,
   MediaStatus,
   MediaType,
   ProductStatus,
@@ -27,32 +26,15 @@ import { toResolvable } from '@/modules/products/media.integrity';
 import { presentDetail, presentListing } from '@/modules/products/media.presentation';
 import { hoverVideoUrl } from '@/integrations/cloudinary/cloudinary.service';
 import type { Role } from '@prisma/client';
+import { categoryLabel } from '@/modules/categories/categories.registry';
 
 // ---- Enum ↔ display string -------------------------------------------------
 
-export const CATEGORY_LABELS: Record<Category, string> = {
-  // Product type — how the catalogue is browsed.
-  [Category.DRIED_BSF_LARVAE]: 'Dried BSF Larvae',
-  [Category.FLOATING_PELLETS]: 'Floating Pellets',
-  [Category.SLOW_SINKING_PELLETS]: 'Slow-Sinking Granules',
-  [Category.BOTTOM_DWELLERS]: 'Bottom Dwellers',
-  [Category.HATCHERY_FEEDS]: 'Hatchery Feeds',
-  // Legacy species values — kept so old rows still render. Not offered for new
-  // products; species now lives in ProductFamily.tags.
-  [Category.BETTA]: 'Betta',
-  [Category.CICHLID]: 'Cichlid',
-  [Category.HATCHERY]: 'Hatchery',
-  [Category.GUPPY]: 'Guppy',
-};
-
-/** Only these are offered when creating or editing a product. */
-export const ACTIVE_CATEGORIES: Category[] = [
-  Category.DRIED_BSF_LARVAE,
-  Category.SLOW_SINKING_PELLETS,
-  Category.BOTTOM_DWELLERS,
-  Category.FLOATING_PELLETS,
-  Category.HATCHERY_FEEDS,
-];
+/**
+ * Category labels now come from the ProductCategory table (managed in the CMS),
+ * held in process by categories.registry. Re-exported so callers keep one import.
+ */
+export { categoryLabel, parseCategory } from '@/modules/categories/categories.registry';
 
 export const STATUS_LABELS: Record<ProductStatus, string> = {
   [ProductStatus.DRAFT]: 'Draft',
@@ -66,22 +48,6 @@ export const BADGE_LABELS: Record<Badge, string> = {
   [Badge.BESTSELLER]: 'BESTSELLER',
   [Badge.NEW]: 'NEW',
   [Badge.PRO]: 'PRO',
-};
-
-/** Accept either the enum or the CMS's display string. */
-export const parseCategory = (v: string): Category | undefined => {
-  if (
-    v === 'Slow-Sinking Pellets' ||
-    v === 'Slow Sinking Pellets' ||
-    v === 'Slow-Sinking Granules' ||
-    v === 'Slow Sinking Granules'
-  ) {
-    return Category.SLOW_SINKING_PELLETS;
-  }
-  return (
-    (Object.entries(CATEGORY_LABELS).find(([k, label]) => k === v || label === v)?.[0] as Category) ??
-    undefined
-  );
 };
 
 export const parseStatus = (v: string): ProductStatus | undefined =>
@@ -251,7 +217,7 @@ export function serializeFamily(family: FamilyRow, role?: Role) {
     slug: family.slug,
     name: family.name,
     category: family.category,
-    cat: CATEGORY_LABELS[family.category],
+    cat: categoryLabel(family.category),
     status: family.status,
     statusLabel: STATUS_LABELS[family.status],
     badge: family.badge ? BADGE_LABELS[family.badge] : 'None',
@@ -396,7 +362,7 @@ export function serializePublic(family: FamilyRow) {
   return {
     slug: family.slug,
     name: family.name,
-    category: CATEGORY_LABELS[family.category],
+    category: categoryLabel(family.category),
     badge: family.badge ? BADGE_LABELS[family.badge] : null,
     /*
      * Status reaches the storefront so a COMING_SOON product can say so.

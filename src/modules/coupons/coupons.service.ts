@@ -14,7 +14,6 @@
  */
 import {
   AuditModule,
-  type Category,
   CouponScope,
   CouponStacking,
   CouponTargetRole,
@@ -424,8 +423,8 @@ export interface CouponInput {
   variantIds?: string[];
   qualifyingVariantIds?: string[];
   /** Category-level targets. */
-  categories?: Category[];
-  qualifyingCategories?: Category[];
+  categories?: string[];
+  qualifyingCategories?: string[];
   /** Emails for SPECIFIC_CUSTOMERS eligibility. */
   customerEmails?: string[];
   /** Buy X Get Y configuration, when discountType is BUY_X_GET_Y. */
@@ -442,7 +441,7 @@ export interface CouponInput {
 interface TargetingRows {
   products: { familyId: string; role: CouponTargetRole }[];
   variants: { variantId: string; role: CouponTargetRole }[];
-  categories: { category: Category; role: CouponTargetRole }[];
+  categories: { category: string; role: CouponTargetRole }[];
   customers: { email: string }[];
 }
 

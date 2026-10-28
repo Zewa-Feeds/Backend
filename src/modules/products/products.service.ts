@@ -34,7 +34,7 @@ import { destroySafely, markAttached } from '@/modules/uploads/lifecycle.service
 import { revalidateStorefront } from '@/integrations/storefront/revalidate';
 import type { Role } from '@prisma/client';
 import {
-  CATEGORY_LABELS,
+  categoryLabel,
   FAMILY_SELECT,
   LOW_STOCK_THRESHOLD,
   serializeFamily,
@@ -1381,7 +1381,7 @@ export async function listDisplayOrder(): Promise<DisplayOrderRow[]> {
   return rows.map((r, i) => ({
     slug: r.slug,
     name: r.name,
-    category: CATEGORY_LABELS[r.category],
+    category: categoryLabel(r.category),
     status: r.status,
     position: i,
   }));
@@ -1486,7 +1486,7 @@ export async function reorder(slugs: string[], ctx: AuditContext): Promise<Displ
   return updated.map((r, i) => ({
     slug: r.slug,
     name: r.name,
-    category: CATEGORY_LABELS[r.category],
+    category: categoryLabel(r.category),
     status: r.status,
     position: i,
   }));

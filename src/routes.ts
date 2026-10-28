@@ -24,6 +24,8 @@ import { authRouter } from '@/modules/auth/auth.routes';
 import { cloudinaryWebhookRouter } from '@/modules/uploads/webhook.routes';
 import { usersRouter } from '@/modules/users/users.routes';
 import { productsRouter } from '@/modules/products/products.routes';
+import { categoriesRouter } from '@/modules/categories/categories.routes';
+import { categoriesFresh } from '@/modules/categories/categories.registry';
 import { ordersRouter } from '@/modules/orders/orders.routes';
 import { settingsRouter } from '@/modules/settings/settings.routes';
 import { contentRouter } from '@/modules/content/content.routes';
@@ -49,6 +51,10 @@ import { webhookRouter } from '@/modules/checkout/webhook.routes';
 import { accountRouter, customerAuthRouter } from '@/modules/customers/account.routes';
 
 export const apiRouter = Router();
+
+// Category labels are read synchronously by serializers; keep the in-process
+// copy current before any handler runs. See categories.registry.ts.
+apiRouter.use(categoriesFresh);
 
 // ============================================================================
 // PUBLIC — storefront
@@ -96,6 +102,7 @@ adminRouter.use('/dashboard', dashboardRouter); // all roles; contents filtered 
 adminRouter.use('/search', searchRouter); // all roles; sections filtered by permission
 adminRouter.use('/users', usersRouter); // users.manage
 adminRouter.use('/products', productsRouter); // products.view → edit / sku
+adminRouter.use('/categories', categoriesRouter); // products.view → products.edit
 adminRouter.use('/orders', ordersRouter); // orders.view → status / invoice / refund / export
 adminRouter.use('/customers', customersRouter); // customers.view → ban
 adminRouter.use('/reviews', reviewsRouter); // reviews.moderate

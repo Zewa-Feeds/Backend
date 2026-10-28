@@ -6,7 +6,6 @@
  */
 import { Router } from 'express';
 import {
-  Category,
   CouponScope,
   CouponStacking,
   CouponTargetRole,
@@ -18,6 +17,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/prisma';
 import { asyncHandler } from '@/middleware/asyncHandler';
 import { requirePermission } from '@/middleware/auth';
+import { parseCategory } from '@/modules/categories/categories.registry';
 import { paginationSchema, validate } from '@/middleware/validate';
 import { auditContext } from '@/modules/audit/audit.service';
 import { priceCart } from '@/modules/checkout/pricing.service';
@@ -26,6 +26,16 @@ import { resolveTargeting } from '@/modules/promotions/targeting';
 import { promotionStatus } from '@/modules/promotions/eligibility';
 import * as couponsService from './coupons.service';
 
+
+/** A product category code (or label), checked against the CMS-managed list. */
+const categoryCode = z.string().transform((v, ctx) => {
+  const code = parseCategory(v.trim());
+  if (!code) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Unknown category: ${v}` });
+    return z.NEVER;
+  }
+  return code;
+});
 export const couponsRouter = Router();
 
 couponsRouter.use(requirePermission('coupons.edit'));
@@ -91,8 +101,8 @@ const couponObject = z
     excludedProductIds: z.array(z.string().uuid()).max(200).default([]),
     variantIds: z.array(z.string().uuid()).max(200).default([]),
     qualifyingVariantIds: z.array(z.string().uuid()).max(200).default([]),
-    categories: z.array(z.nativeEnum(Category)).max(20).default([]),
-    qualifyingCategories: z.array(z.nativeEnum(Category)).max(20).default([]),
+    categories: z.array(categoryCode).max(20).default([]),
+    qualifyingCategories: z.array(categoryCode).max(20).default([]),
     customerEmails: z.array(z.string().trim().toLowerCase().email()).max(500).default([]),
 
     bxgy: z

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  Category,
   CouponScope,
   CouponStacking,
   CouponTargetRole,
@@ -22,7 +21,7 @@ import type { PromoLine, PromotionRow } from '@/modules/promotions/types';
 
 const line = (over: Partial<PromoLine> & { familyId: string; sku: string }): PromoLine => ({
   variantId: `v-${over.sku}`,
-  category: Category.SLOW_SINKING_PELLETS,
+  category: 'SLOW_SINKING_PELLETS',
   productName: `Product ${over.familyId}`,
   qty: 1,
   unitPricePaise: 50_000,

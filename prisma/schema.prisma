@@ -30,33 +30,6 @@ datasource db {
 // ENUMS
 // ============================================================================
 
-/// PRODUCT TYPE — how the feed behaves, which is how the catalogue is browsed.
-///
-/// Deliberately NOT species. A feed suits many species (F2 covers six tetra
-/// varieties) and a species eats many feeds, so species is a MANY-valued
-/// attribute and lives in `ProductFamily.tags`. Forcing it into this enum would
-/// have thrown that detail away.
-///
-/// Pack size is likewise absent: 11 of 13 products ship both a 45g and a 1kg
-/// SKU, so "1kg" is a variant filter (`ProductVariant.pack`), not a category —
-/// otherwise one product would need to be in two categories at once.
-enum Category {
-  DRIED_BSF_LARVAE
-  FLOATING_PELLETS
-  SLOW_SINKING_PELLETS
-  BOTTOM_DWELLERS
-  HATCHERY_FEEDS
-
-  // ---- Legacy species values -------------------------------------------
-  // Kept so existing rows and any stored filter/URL remain valid. Postgres
-  // cannot drop an enum value that data or a default might still reference.
-  // Do not assign these to new products.
-  BETTA
-  CICHLID
-  HATCHERY
-  GUPPY
-}
-
 enum ProductStatus {
   DRAFT
   ACTIVE
@@ -226,6 +199,43 @@ enum EmailStatus {
 }
 
 // ============================================================================
+// PRODUCT CATEGORIES
+// ============================================================================
+
+/// PRODUCT TYPE — how the feed behaves, which is how the catalogue is browsed.
+/// Managed in the CMS (Products → Categories), so a new product line needs no
+/// deploy.
+///
+/// Deliberately NOT species. A feed suits many species (F2 covers six tetra
+/// varieties) and a species eats many feeds, so species is a MANY-valued
+/// attribute and lives in `ProductFamily.tags`.
+///
+/// Pack size is likewise absent: 11 of 13 products ship both a 45g and a 1kg
+/// SKU, so "1kg" is a variant filter (`ProductVariant.pack`), not a category —
+/// otherwise one product would need to be in two categories at once.
+///
+/// `code` is the key products and coupons store. It never changes after
+/// creation — `label` is what renames — so stored filters and coupon targets
+/// stay valid. The legacy species rows (BETTA, CICHLID, HATCHERY, GUPPY) are
+/// inactive: still valid on old products, never offered for new ones.
+model ProductCategory {
+  code      String   @id
+  label     String   @unique
+  /// Storefront chip and CMS dropdown order, ascending.
+  position  Int      @default(0)
+  /// Inactive categories are hidden from the shop and the product form but
+  /// still valid on rows that already use them.
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  families         ProductFamily[]
+  couponCategories CouponCategory[]
+
+  @@index([isActive, position])
+}
+
+// ============================================================================
 // PRODUCTS (§5)
 //
 // Two levels: ProductFamily ("Betta Bites F3") and ProductVariant ("45 g").
@@ -237,7 +247,9 @@ model ProductFamily {
   /// Immutable after first publish (§5.2).
   slug     String        @unique
   name     String
-  category Category
+  /// ProductCategory.code. A plain string column, so serializers and coupon
+  /// targeting keep handling the code they always did.
+  category String
   status   ProductStatus @default(DRAFT)
   badge    Badge?
 
@@ -337,15 +349,16 @@ model ProductFamily {
   /// [5★, 4★, 3★, 2★, 1★] counts. Empty when there is no baseline.
   externalRatingCounts Int[]   @default([])
 
-  variants      ProductVariant[]
-  draft         ProductDraft?
-  reviews       Review[]
-  spotlights    Spotlight[]
+  variants       ProductVariant[]
+  draft          ProductDraft?
+  reviews        Review[]
+  spotlights     Spotlight[]
   /// Ordered gallery — photos AND video interleaved. See ProductMedia.
-  media         ProductMedia[]
-  coupons       CouponProduct[]
+  media          ProductMedia[]
+  coupons        CouponProduct[]
   /// Upload signatures minted while editing this product. See UploadTicket.
-  uploadTickets UploadTicket[]
+  uploadTickets  UploadTicket[]
+  categoryRecord ProductCategory  @relation(fields: [category], references: [code], onUpdate: Cascade)
 
   @@index([status, category])
   @@index([deletedAt])
@@ -1403,14 +1416,14 @@ model CouponVariant {
   @@index([variantId])
 }
 
-/// Category targeting. Category is an enum on ProductFamily, so this stores the
-/// value rather than joining a table.
+/// Category targeting, by ProductCategory.code.
 model CouponCategory {
   couponId String
-  category Category
+  category String
   role     CouponTargetRole @default(DISCOUNT)
 
-  coupon Coupon @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  coupon         Coupon          @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  categoryRecord ProductCategory @relation(fields: [category], references: [code], onUpdate: Cascade)
 
   @@id([couponId, category, role])
 }

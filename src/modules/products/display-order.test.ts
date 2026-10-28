@@ -10,7 +10,7 @@
  * it survives a reload. A mock would only prove the mock was called.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { Category, PrismaClient, ProductStatus } from '@prisma/client';
+import { PrismaClient, ProductStatus } from '@prisma/client';
 import { ns, sweepFixtures, testActor, testCtx } from '@/test/fixtures';
 import { listDisplayOrder, reorder } from './products.service';
 
@@ -44,7 +44,7 @@ async function makeProduct(label: string, status: ProductStatus, order: number) 
     data: {
       slug,
       name: `ZZ ${label}`,
-      category: Category.SLOW_SINKING_PELLETS,
+      category: 'SLOW_SINKING_PELLETS',
       status,
       shortDesc: 'fixture',
       displayOrder: order,

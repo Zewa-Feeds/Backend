@@ -7,7 +7,6 @@
  * a discount or an eligibility claim that came from a browser.
  */
 import type {
-  Category,
   CouponStacking,
   CouponTrigger,
   CustomerEligibility,
@@ -19,7 +18,7 @@ import type {
 export interface PromoLine {
   variantId: string;
   familyId: string;
-  category: Category;
+  category: string;
   sku: string;
   productName: string;
   qty: number;

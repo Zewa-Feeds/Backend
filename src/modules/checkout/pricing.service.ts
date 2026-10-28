@@ -9,7 +9,7 @@
  * Client-supplied prices are never trusted. The request says *what* and *how many*;
  * everything monetary is looked up server-side.
  */
-import { MediaStatus, ProductStatus, type Category } from '@prisma/client';
+import { MediaStatus, ProductStatus } from '@prisma/client';
 import { resolveGallery } from '@/modules/products/media.resolver';
 import { toResolvable, type TargetableMediaRow } from '@/modules/products/media.integrity';
 import { pickHero } from '@/modules/products/media.presentation';
@@ -29,7 +29,7 @@ export interface CartLineInput {
 export interface PricedLine {
   variantId: string;
   familyId: string;
-  category: Category;
+  category: string;
   sku: string;
   productName: string;
   productSlug: string;

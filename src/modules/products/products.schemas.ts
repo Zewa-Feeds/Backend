@@ -7,7 +7,8 @@
  * stripped of markup entirely.
  */
 import { z } from 'zod';
-import { Badge, Category, MediaType, ProductStatus } from '@prisma/client';
+import { Badge, MediaType, ProductStatus } from '@prisma/client';
+import { parseCategory } from '@/modules/categories/categories.registry';
 import { plainText, richText } from '@/lib/sanitize';
 import { paginationSchema, slugSchema } from '@/middleware/validate';
 
@@ -18,8 +19,21 @@ import { paginationSchema, slugSchema } from '@/middleware/validate';
 const normaliseEnum = (v: unknown) =>
   typeof v === 'string' ? v.toUpperCase().replace(/\s+/g, '_') : v;
 
+/**
+ * A category code or label ("Dried BSF Larvae"), resolved against the CMS-managed
+ * list. Hidden categories are accepted, so a product already in one still saves.
+ */
+const categoryCodeSchema = z.string().transform((v, ctx) => {
+  const code = parseCategory(v.trim());
+  if (!code) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Choose a category from the list.' });
+    return z.NEVER;
+  }
+  return code;
+});
+
 /** Required on writes. */
-const categorySchema = z.preprocess(normaliseEnum, z.nativeEnum(Category));
+const categorySchema = categoryCodeSchema;
 const statusSchema = z.preprocess(normaliseEnum, z.nativeEnum(ProductStatus));
 
 /**
@@ -36,7 +50,10 @@ const asFilter = <T extends z.ZodTypeAny>(inner: T) =>
     return typeof norm === 'string' && ALL_SENTINEL.has(norm) ? undefined : norm;
   }, inner.optional());
 
-const categoryFilterSchema = asFilter(z.nativeEnum(Category));
+const categoryFilterSchema = z.preprocess(
+  (v) => (typeof v === 'string' && ALL_SENTINEL.has(normaliseEnum(v) as string) ? undefined : v),
+  categoryCodeSchema.optional(),
+);
 const statusFilterSchema = asFilter(z.nativeEnum(ProductStatus));
 
 const badgeSchema = z.preprocess(

@@ -5,14 +5,14 @@
  * Also covers the Buy X Get Y unit maths, which shares the same targeting.
  */
 import { describe, expect, it } from 'vitest';
-import { Category, CouponScope, CouponTargetRole } from '@prisma/client';
+import { CouponScope, CouponTargetRole } from '@prisma/client';
 import { resolveTargeting } from './targeting';
 import { priceBxgy } from './bxgy';
 import type { PromoLine, PromotionRow } from './types';
 
 const line = (over: Partial<PromoLine> & { familyId: string }): PromoLine => ({
   variantId: `v-${over.familyId}`,
-  category: Category.SLOW_SINKING_PELLETS,
+  category: 'SLOW_SINKING_PELLETS',
   sku: `SKU-${over.familyId}`,
   productName: `Product ${over.familyId}`,
   qty: 1,
@@ -66,11 +66,11 @@ describe('product-specific promotions', () => {
 
   it('discount by category', () => {
     const lines = [
-      line({ familyId: 'A', category: Category.FLOATING_PELLETS }),
-      line({ familyId: 'B', category: Category.BOTTOM_DWELLERS }),
+      line({ familyId: 'A', category: 'FLOATING_PELLETS' }),
+      line({ familyId: 'B', category: 'BOTTOM_DWELLERS' }),
     ];
     const t = resolveTargeting(
-      coupon({ categories: [{ category: Category.BOTTOM_DWELLERS, role: D }] }),
+      coupon({ categories: [{ category: 'BOTTOM_DWELLERS', role: D }] }),
       lines,
     );
     expect(t.discountableIdx).toEqual([1]);
@@ -78,12 +78,12 @@ describe('product-specific promotions', () => {
 
   it('honour an exclusion carved out of a broader selection', () => {
     const lines = [
-      line({ familyId: 'A', category: Category.FLOATING_PELLETS }),
-      line({ familyId: 'B', category: Category.FLOATING_PELLETS }),
+      line({ familyId: 'A', category: 'FLOATING_PELLETS' }),
+      line({ familyId: 'B', category: 'FLOATING_PELLETS' }),
     ];
     const t = resolveTargeting(
       coupon({
-        categories: [{ category: Category.FLOATING_PELLETS, role: D }],
+        categories: [{ category: 'FLOATING_PELLETS', role: D }],
         products: [{ familyId: 'B', role: X }],
       }),
       lines,

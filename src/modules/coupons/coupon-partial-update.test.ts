@@ -11,7 +11,6 @@
  * This is deliberately a database test, not a mock: what is under test is the
  * rows that survive the transaction.
  */
-import type { Category } from '@prisma/client';
 import type * as AuditService from '@/modules/audit/audit.service';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { prisma } from '@/lib/prisma';
@@ -26,7 +25,7 @@ const CTX = { actorId: null, actorName: 'test', ip: '::1' } as never;
 const CODE = `ZZPATCH${Date.now().toString().slice(-6)}`;
 
 let couponId: string;
-let categoryOfInterest: Category;
+let categoryOfInterest: string;
 
 beforeAll(async () => {
   // A category that exists in this schema, whatever the enum happens to hold.
