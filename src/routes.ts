@@ -50,6 +50,7 @@ import { previewRouter } from '@/modules/catalog/preview.routes';
 import { checkoutRouter, trackingRouter } from '@/modules/checkout/checkout.routes';
 import { webhookRouter } from '@/modules/checkout/webhook.routes';
 import { accountRouter, customerAuthRouter } from '@/modules/customers/account.routes';
+import { feedFinderRouter } from '@/modules/feed-finder/feed-finder.routes';
 
 export const apiRouter = Router();
 
@@ -81,6 +82,7 @@ publicRouter.use('/preview', previewRouter);
 publicRouter.use('/checkout', checkoutRouter);
 // Guest order tracking: /orders/track?orderNo=&email=
 publicRouter.use('/orders', trackingRouter);
+publicRouter.use('/feed-finder', feedFinderRouter); // anonymous Find My Feed run log
 // Customer accounts.
 publicRouter.use('/auth/customer', customerAuthRouter);
 publicRouter.use('/account', accountRouter); // customer session required inside

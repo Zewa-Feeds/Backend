@@ -2464,3 +2464,33 @@ model CustomerEarnCapOverride {
   /// is this index.
   @@index([customerId, revokedAt, expiresAt])
 }
+
+/// One completed Find My Feed run (storefront /find-my-feed).
+///
+/// Every finished run is written, including no-match runs: those are the
+/// signal for which species the range does not cover yet. Anonymous by
+/// design — the answers describe a fish, not a person.
+model FeedFinderRun {
+  id String @id @default(uuid())
+
+  /// The answers exactly as the storefront holds them
+  /// ({ species, size, mates, home, goal, count }).
+  answers Json
+  /// "MATCH" or "NO_MATCH".
+  outcome String
+  /// §8 case for a no-match run ("notlisted", "stingray", …); null on a match.
+  noMatchCase String?
+  /// The hero SKU on a match.
+  resultSku String?
+  addOnSkus String[] @default([])
+
+  /// Set when anything from the result screen went into the cart.
+  addedToCart Boolean  @default(false)
+  addedSkus   String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([createdAt])
+  @@index([outcome, createdAt])
+}
