@@ -240,7 +240,14 @@ export async function notifyExpiring(
 export async function notifyAdjusted(
   accountId: string,
   sourceEventId: string,
-  input: { orderNo: string; orderId: string; restored: number; clawedBack: number },
+  input: {
+    orderNo: string;
+    orderId: string;
+    restored: number;
+    clawedBack: number;
+    /** What changed the order. Defaults to a return, the original wording. */
+    event?: 'return' | 'cancellation' | 'refund';
+  },
 ): Promise<void> {
   if (input.restored <= 0 && input.clawedBack <= 0) return;
   const to = await recipient(accountId);
@@ -259,6 +266,7 @@ export async function notifyAdjusted(
     orderNo: input.orderNo,
     restored: input.restored,
     clawedBack: input.clawedBack,
+    event: input.event,
     coinsUrl: coinsUrl(),
   }, to.id);
 }

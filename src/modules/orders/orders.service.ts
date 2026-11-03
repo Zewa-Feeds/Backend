@@ -14,6 +14,7 @@ import {
   OrderStatus,
   PaymentMethod,
   PaymentStatus,
+  ReturnKind,
   type Prisma,
 } from '@prisma/client';
 import { SPEND_ORDER_SELECT, spendByCustomer, totalSpendPaise } from '@/modules/customers/spend';
@@ -57,6 +58,7 @@ import * as couponsService from '@/modules/coupons/coupons.service';
 import * as loyaltyLifecycle from '@/modules/loyalty/lifecycle.service';
 import * as loyaltyNotify from '@/modules/loyalty/notify.service';
 import * as loyaltyRedemption from '@/modules/loyalty/redemption.service';
+import * as loyaltyReversal from '@/modules/loyalty/reversal.service';
 
 const log = logger.child({ module: 'orders.service' });
 
@@ -245,6 +247,8 @@ export async function transition(
      * already leaves this same transaction.
      */
     let earned: Awaited<ReturnType<typeof loyaltyLifecycle.onDelivered>> = null;
+    // Same pattern: what the "your seeds were updated" email needs after commit.
+    let seedsRestored: Awaited<ReturnType<typeof loyaltyReversal.cancelOrderTx>> | null = null;
     // Map the step's fields onto columns. Only keys the spec declares are read,
     // so a client cannot set arbitrary order columns through this endpoint.
     const data: Prisma.OrderUpdateInput = { status: input.to };
@@ -344,9 +348,11 @@ export async function transition(
      * unlocked here — the scheduled job does that when the window actually
      * closes, which is the deferred-unlock fraud control (§12.1).
      *
-     * CANCELLED restores any coins spent on the order and voids the pending
-     * grant, so a cancelled order can never leave spendable coins behind. It is
-     * idempotent on the source event, so a repeated cancellation is a no-op.
+     * CANCELLED releases an unpaid hold, gives back seeds the customer already
+     * spent on the order (to the lots, and expiry dates, they came from) and
+     * voids the pending grant, so a cancelled order never costs the customer
+     * seeds and never leaves unearned ones behind. Idempotent on the source
+     * event, so a repeated cancellation is a no-op.
      */
     if (input.to === OrderStatus.DELIVERED) {
       const deliveredAt = (data.deliveredAt as Date | undefined) ?? new Date();
@@ -355,8 +361,18 @@ export async function transition(
       earned = await loyaltyLifecycle.onDelivered(tx, order.id, deliveredAt);
     }
     if (input.to === OrderStatus.CANCELLED) {
+      // An unconfirmed hold first; a confirmed redemption is restored below.
       await loyaltyRedemption.releaseForOrder(tx, order.id);
-      await loyaltyLifecycle.voidPendingForOrder(tx, order.id, 'Order cancelled');
+      // Staff tick "returned to us / refused at delivery" on a shipped order:
+      // the same restore, plus the RTO counter behind the 3-in-90-days rule.
+      const deliveryFailed =
+        order.status === OrderStatus.SHIPPED && input.fields.deliveryFailed === true;
+      seedsRestored = await loyaltyReversal.cancelOrderTx(tx, {
+        orderId: order.id,
+        sourceEventId: `order-cancel:${order.id}`,
+        reason: deliveryFailed ? 'Returned to origin / refused at delivery' : 'Order cancelled',
+      });
+      if (deliveryFailed) await loyaltyReversal.recordRtoTx(tx, order.id);
     }
 
     // 4. Cancelling before delivery returns the stock.
@@ -441,7 +457,7 @@ export async function transition(
       where: { id: order.id },
       select: ORDER_SELECT,
     });
-    return { row, queuedEmailId, earned };
+    return { row, queuedEmailId, earned, seedsRestored };
   });
 
   /*
@@ -467,6 +483,20 @@ export async function transition(
     await loyaltyNotify
       .notifyEarned({ ...notice, orderNo })
       .catch((err) => log.error({ err, orderNo }, 'failed to send coins-earned email'));
+  }
+
+  // Seeds given back on cancellation — after commit, like the email above.
+  const restored = updated.seedsRestored;
+  if (restored?.notify && restored.restored > 0) {
+    await loyaltyNotify
+      .notifyAdjusted(restored.notify.accountId, `order-cancel:${restored.notify.orderId}`, {
+        orderNo,
+        orderId: restored.notify.orderId,
+        restored: restored.restored,
+        clawedBack: 0,
+        event: 'cancellation',
+      })
+      .catch((err) => log.error({ err, orderNo }, 'failed to send coins-adjusted email'));
   }
 
   // 7. Dispatch the send AFTER commit. Enqueuing inside the transaction could
@@ -646,6 +676,59 @@ export async function cancelByCustomer(
 // REFUNDS (§6.4) — Admin only, enforced at the route
 // ============================================================================
 
+/**
+ * Seeds side of a full refund (ZSOP004 §7.3, §6.6).
+ *
+ * Runs AFTER the refund transaction commits, in its own. The gateway has already
+ * paid the money out by then, so a seeds problem must never roll back the record
+ * of that refund: it is logged and written to the audit trail for staff to settle
+ * by hand in Zewa Seeds instead.
+ *
+ * Skipped for a cancelled order — cancellation already restored and voided its
+ * seeds. A partial refund names no items, so it leaves seeds alone. Idempotent on
+ * the order, so a second full-refund call is a no-op.
+ */
+async function reverseSeedsForFullRefund(
+  order: { id: string; orderNo: string; status: OrderStatus; items: { id: string; qty: number; returnedQty: number }[] },
+  ctx: AuditContext,
+): Promise<void> {
+  if (order.status === OrderStatus.CANCELLED) return;
+  const returnedLines = order.items
+    .map((i) => ({ orderItemId: i.id, qty: i.qty - i.returnedQty }))
+    .filter((l) => l.qty > 0);
+  if (returnedLines.length === 0) return;
+
+  const sourceEventId = `refund-full:${order.id}`;
+  try {
+    const result = await loyaltyReversal.reverseOrder({
+      orderId: order.id,
+      returnedLines,
+      sourceEventId,
+      kind: ReturnKind.RETURN,
+      reason: 'Full refund',
+      processedById: ctx.actorId,
+    });
+    if (result.notify && (result.restored > 0 || result.clawedBack > 0)) {
+      await loyaltyNotify
+        .notifyAdjusted(result.notify.accountId, sourceEventId, {
+          orderNo: order.orderNo,
+          orderId: order.id,
+          restored: result.restored,
+          clawedBack: result.clawedBack,
+          event: 'refund',
+        })
+        .catch((err) => log.error({ err, orderNo: order.orderNo }, 'failed to send coins-adjusted email'));
+    }
+  } catch (err) {
+    log.error({ err, orderNo: order.orderNo }, 'refund recorded but seeds could not be reversed');
+    await writeAudit(ctx, {
+      module: AuditModule.ORDERS,
+      action: 'Refund recorded, but Zewa Seeds were not adjusted automatically — adjust them in Zewa Seeds',
+      recordId: order.orderNo,
+    }).catch(() => undefined);
+  }
+}
+
 export async function refund(
   orderNo: string,
   amountPaise: number,
@@ -663,7 +746,9 @@ export async function refund(
       paymentStatus: true,
       paymentMethod: true,
       razorpayPaymentId: true,
+      status: true,
       refunds: { select: { amountPaise: true } },
+      items: { select: { id: true, qty: true, returnedQty: true } },
     },
   });
   if (!order) throw notFound('Order');
@@ -776,6 +861,12 @@ export async function refund(
       refundDate: refundRow.createdAt,
     };
   });
+
+  // Zewa Seeds follow a FULL refund: every unit counts as returned, so seeds
+  // spent on the order come back and seeds earned on it are withdrawn.
+  if (alreadyRefunded + amountPaise >= order.totalPaise) {
+    await reverseSeedsForFullRefund(order, ctx);
+  }
 
   // 1. Customer refund notification
   await emailQueue

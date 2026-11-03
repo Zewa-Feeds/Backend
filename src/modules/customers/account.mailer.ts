@@ -62,6 +62,7 @@ type AccountContext = {
     orderNo: string;
     restored: number;
     clawedBack: number;
+    event?: 'return' | 'cancellation' | 'refund';
     coinsUrl: string;
   };
 };

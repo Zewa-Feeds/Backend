@@ -912,12 +912,14 @@ export const accountTemplates = {
     orderNo: string;
     restored: number;
     clawedBack: number;
+    /** What changed the order; worded as a return when absent. */
+    event?: 'return' | 'cancellation' | 'refund';
     coinsUrl: string;
   }) => ({
     subject: `Your Zewa Seeds after order ${ctx.orderNo}`,
     html: shell(
       'Your seeds have been updated',
-      `Hi ${esc(ctx.firstName)}, we've updated your Zewa Seeds following the return on order ${esc(ctx.orderNo)}.`,
+      `Hi ${esc(ctx.firstName)}, we've updated your Zewa Seeds following the ${esc(ctx.event ?? 'return')} on order ${esc(ctx.orderNo)}.`,
       factsBlock(
         [
           ctx.restored > 0
@@ -931,9 +933,9 @@ export const accountTemplates = {
       ) +
         ctaButton(ctx.coinsUrl, 'View your seeds') +
         note(
-          `Seeds you spent on returned items come back as seeds. Seeds are never refunded as cash — the money you paid is refunded separately.`,
+          `Seeds you spent on ${ctx.event === 'cancellation' ? 'this order' : 'returned items'} come back as seeds. Seeds are never refunded as cash — the money you paid is refunded separately.`,
         ),
-      `Your Zewa Seeds have been updated following your return`,
+      `Your Zewa Seeds have been updated following your ${ctx.event ?? 'return'}`,
     ),
   }),
 
