@@ -52,6 +52,7 @@ export const TRACKING_DEFAULTS: Record<string, boolean> = {
   'staff-order-cancelled': true,
   'staff-stock-zero': true,
   'staff-new-review': true,
+  'staff-article-published': true,
 
   ...Object.fromEntries(SECURITY_TEMPLATES.map((t) => [t, false])),
 };

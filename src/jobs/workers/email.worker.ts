@@ -344,6 +344,24 @@ async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
     return;
   }
 
+  /*
+   * Blog publishes by a non-Admin go to Admins only — they are the ones who
+   * used to hold the sole right to publish, so they are the ones told.
+   */
+  if (data.template === 'staff-article-published') {
+    const admins = await prisma.cmsUser.findMany({
+      where: { status: 'ACTIVE', deletedAt: null, role: Role.ADMIN },
+      select: { email: true, name: true },
+    });
+    const rendered = staffTemplates['staff-article-published'](data.context as never);
+    await sendToEachRecipient(admins, {
+      subject: rendered.subject,
+      htmlBody: rendered.html,
+      reference: `staff-article-${String(data.context.slug)}-${String(data.context.action)}-${String(data.context.at)}`,
+    });
+    return;
+  }
+
   // Other staff alerts (staff-stock-zero)
   const recipients = await prisma.cmsUser.findMany({
     where: {

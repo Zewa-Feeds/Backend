@@ -3,12 +3,13 @@
  *
  * The permission split here is the interesting bit (§2.1):
  *   articles.create   ALL roles — an Editor is hired to write
- *   articles.publish  Ops + Admin — but not to decide what ships
+ *   articles.publish  Editor + Admin — a non-Admin publish emails the Admins
  *   articles.delete   Admin only
  *   banners.edit      ALL roles
  *   homepage.edit     ALL roles
  *
- * So a Content Editor has full authoring rights and zero release authority.
+ * So a Content Editor can write and ship articles, with Admins told every
+ * time, but cannot delete one.
  */
 import { Router } from 'express';
 import { ContentStatus, ContentVersion } from '@prisma/client';
@@ -87,7 +88,7 @@ articlesRouter.patch(
   }),
 );
 
-/** Publishing needs `articles.publish` — Editors are excluded (§2.1). */
+/** Publishing needs `articles.publish` (Editor + Admin). */
 articlesRouter.post(
   '/:slug/publish',
   requirePermission('articles.publish'),

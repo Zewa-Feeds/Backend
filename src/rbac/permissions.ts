@@ -30,14 +30,15 @@ const ADMIN = Role.ADMIN;
 /**
  * Permission -> roles that hold it. The §2.1 matrix, verbatim.
  *
- * Note `articles.create` is held by all three roles while `articles.publish` is
- * Ops+ and `articles.delete` is Admin only — an Editor can write but not ship,
- * and cannot destroy. Same shape for products, coupons, and orders.
+ * Note `articles.publish` is held by Content Editors as well as Admins — an
+ * Editor may ship blog articles, and every publish, schedule or unpublish by a
+ * non-Admin emails the Admins (staff-article-published). `articles.delete`
+ * stays Admin only: an Editor can ship but cannot destroy.
  */
 export const CAN = {
   // Content Creator (Editor + Admin)
   'articles.create': [EDITOR, ADMIN],
-  'articles.publish': [ADMIN],
+  'articles.publish': [EDITOR, ADMIN],
   'articles.delete': [ADMIN],
   'banners.edit': [EDITOR, ADMIN],
   'homepage.edit': [EDITOR, ADMIN],

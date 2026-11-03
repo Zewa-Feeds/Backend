@@ -1209,6 +1209,39 @@ export const staffTemplates = {
       button('Moderate reviews', `${env.CMS_ORIGIN}/reviews`),
     ),
   }),
+
+  /** A non-Admin published, scheduled or unpublished a blog article. */
+  'staff-article-published': (ctx: {
+    action: 'published' | 'scheduled' | 'unpublished';
+    title: string;
+    slug: string;
+    actorName: string;
+    actorRole: string;
+    /** ISO time, for 'scheduled'. */
+    scheduledAt?: string | null;
+  }) => {
+    const when = ctx.scheduledAt
+      ? new Date(ctx.scheduledAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })
+      : '';
+    const verb =
+      ctx.action === 'published'
+        ? 'published'
+        : ctx.action === 'scheduled'
+          ? `scheduled for ${when} IST`
+          : 'unpublished';
+    return {
+      subject: `Blog ${ctx.action}: “${ctx.title}” by ${ctx.actorName}`,
+      html: shell(
+        `Blog article ${ctx.action}`,
+        `${esc(ctx.actorName)} (${esc(ctx.actorRole)}) ${esc(verb)} <strong>${esc(ctx.title)}</strong>.` +
+          (ctx.action === 'unpublished' ? ' It is no longer on the website.' : ''),
+        (ctx.action === 'published'
+          ? button('View on the website', `${env.STOREFRONT_ORIGIN}/blog/${encodeURIComponent(ctx.slug)}`)
+          : '') +
+          button('Open in the CMS', `${env.CMS_ORIGIN}/content/articles/${encodeURIComponent(ctx.slug)}`),
+      ),
+    };
+  },
 } as const;
 
 export type StaffTemplateName = keyof typeof staffTemplates;

@@ -22,6 +22,9 @@ import { slugify } from '@/modules/products/products.service';
 import { publishArticleChange } from '@/modules/site/site.service';
 import { type ArticleSource, articleAssetIds, loadAssets, validateArticle } from '@/modules/site/resolve';
 import { revalidateStorefront } from '@/integrations/storefront/revalidate';
+import { emailQueue } from '@/jobs/queues';
+import { logger } from '@/lib/logger';
+import { ROLE_LABELS } from '@/rbac/permissions';
 import type { z } from 'zod';
 import type {
   ArticleBody,
@@ -377,6 +380,46 @@ const PUBLISH_CHECK_SELECT = {
  * Followed by a site publication carrying the live website sections forward,
  * which is what actually puts the article on the static storefront.
  */
+/**
+ * Email the Admins when someone other than an Admin changes what is live on the
+ * blog. Content Editors hold articles.publish so they can ship without waiting,
+ * and this is the trade for that: an Admin always hears about it.
+ *
+ * Skipped for Admins (they did it themselves) and for the scheduler firing a
+ * publish (actorId null) — whoever scheduled it was notified when they did.
+ * Best effort: a queue failure never turns a successful publish into an error.
+ */
+async function notifyAdminsOfArticleChange(
+  ctx: AuditContext,
+  action: 'published' | 'scheduled' | 'unpublished',
+  article: { title: string; slug: string },
+  scheduledAt?: Date | null,
+) {
+  if (!ctx.actorId || ctx.actorRole === ROLE_LABELS.ADMIN) return;
+  const at = Date.now();
+  try {
+    await emailQueue.add(
+      'staff-article-published',
+      {
+        kind: 'staff',
+        template: 'staff-article-published',
+        context: {
+          action,
+          title: article.title,
+          slug: article.slug,
+          actorName: ctx.actorName,
+          actorRole: ctx.actorRole,
+          scheduledAt: scheduledAt ? scheduledAt.toISOString() : null,
+          at,
+        },
+      },
+      { jobId: `staff-article-${article.slug}-${action}-${at}` },
+    );
+  } catch (err) {
+    logger.error({ err, slug: article.slug, action }, 'failed to queue admin article notification');
+  }
+}
+
 export async function publishArticle(
   slug: string,
   actorId: string | null,
@@ -433,6 +476,7 @@ export async function publishArticle(
   });
 
   const publication = await publishArticleChange(`Published article "${existing.title}"`, { id: actorId, name: ctx.actorName }, ctx);
+  if (!opts.scheduled) await notifyAdminsOfArticleChange(ctx, 'published', { title: existing.title, slug });
   return { ...serializeArticle(published), warnings, siteVersion: publication?.version ?? null };
 }
 
@@ -464,6 +508,8 @@ export async function scheduleArticle(slug: string, scheduledAt: Date | null, ct
     );
     return row;
   });
+  // Cancelling a schedule changes nothing live, so only a new schedule alerts.
+  if (scheduledAt) await notifyAdminsOfArticleChange(ctx, 'scheduled', { title: existing.title, slug }, scheduledAt);
   return serializeArticle(updated);
 }
 
@@ -512,6 +558,11 @@ export async function setArticleStatus(
   });
 
   if (existing.status !== status) {
+    await notifyAdminsOfArticleChange(
+      ctx,
+      status === ContentStatus.PUBLISHED ? 'published' : 'unpublished',
+      { title: existing.title, slug },
+    );
     await publishArticleChange(
       status === ContentStatus.PUBLISHED ? `Published article "${existing.title}"` : `Unpublished article "${existing.title}"`,
       { id: actorId, name: ctx.actorName },

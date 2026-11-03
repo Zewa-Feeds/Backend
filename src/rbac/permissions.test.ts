@@ -137,7 +137,7 @@ describe('Target User Profiles & RBAC Authorization Matrix', () => {
       expect(can(role, 'coupons.edit')).toBe(false);
       expect(can(role, 'coupons.delete')).toBe(false);
       expect(can(role, 'reviews.moderate')).toBe(false);
-      expect(can(role, 'articles.publish')).toBe(false);
+      expect(can(role, 'articles.publish')).toBe(true);
       expect(can(role, 'articles.delete')).toBe(false);
       expect(can(role, 'users.manage')).toBe(false);
       expect(can(role, 'settings.manage')).toBe(false);
