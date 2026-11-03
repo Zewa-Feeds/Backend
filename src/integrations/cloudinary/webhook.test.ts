@@ -6,15 +6,18 @@
  * it wrong is a stranger flipping media to READY or FAILED on a live storefront.
  * Pure functions, so these are exhaustive and instant.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createHash } from 'node:crypto';
 import { interpret, verifyNotification } from './webhook';
 
 const SECRET = 'test_cloudinary_secret';
 
-vi.mock('@/config/env', () => ({
-  env: { CLOUDINARY_API_SECRET: 'test_cloudinary_secret' },
-}));
+// Only the secret is overridden: the shared test setup loads modules (the
+// logger among them) that read the rest of the environment.
+vi.mock('@/config/env', async (orig) => {
+  const actual = (await orig()) as { env: Record<string, unknown> };
+  return { env: { ...actual.env, CLOUDINARY_API_SECRET: 'test_cloudinary_secret' } };
+});
 
 const sign = (body: string, ts: string) =>
   createHash('sha1').update(`${body}${ts}${SECRET}`).digest('hex');

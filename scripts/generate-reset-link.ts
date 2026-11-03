@@ -11,7 +11,7 @@
  *   # Generate link and immediately send the transactional email via ZeptoMail:
  *   npx tsx scripts/generate-reset-link.ts --email vaishnavip@zewafeeds.com --send
  */
-import { PrismaClient, Role } from '@prisma/client';
+import { PrismaClient, type Role } from '@prisma/client';
 import { generateToken, hashToken } from '../src/lib/crypto';
 import { accountTemplates } from '../src/integrations/zeptomail/templates';
 import { sendEmail } from '../src/integrations/zeptomail/zeptomail.client';
@@ -30,12 +30,13 @@ async function main() {
   const emailIdx = args.indexOf('--email');
   const sendEmailFlag = args.includes('--send');
 
-  if (emailIdx === -1 || !args[emailIdx + 1]) {
+  const emailArg = emailIdx === -1 ? undefined : args[emailIdx + 1];
+  if (!emailArg) {
     console.error('Error: Please provide --email <user-email>');
     process.exit(1);
   }
 
-  const email = args[emailIdx + 1].trim().toLowerCase();
+  const email = emailArg.trim().toLowerCase();
 
   const user = await prisma.cmsUser.findFirst({
     where: { email: { equals: email, mode: 'insensitive' }, deletedAt: null },

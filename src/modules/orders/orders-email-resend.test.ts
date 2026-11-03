@@ -39,7 +39,7 @@ describe('Order and Customer Email API Features', () => {
     expect(ctx.orderNo).toBe('27ZFO350');
     expect(ctx.customerName).toBe('Vikram Patel');
     expect(ctx.items).toHaveLength(1);
-    expect(ctx.items[0].sku).toBe('G2-45G');
+    expect(ctx.items[0]?.sku).toBe('G2-45G');
     expect(ctx.totalPaise).toBe(37000);
     expect(ctx.paymentMethod).toBe('RAZORPAY');
   });

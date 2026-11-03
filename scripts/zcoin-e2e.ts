@@ -18,7 +18,7 @@ const TAG = `zze2e${Date.now().toString(36)}`;
 let pass = 0;
 let fail = 0;
 
-function check(label, condition, detail = '') {
+function check(label: string, condition: unknown, detail = '') {
   if (condition) {
     console.log(`  ✓ ${label}`);
     pass++;
@@ -28,7 +28,15 @@ function check(label, condition, detail = '') {
   }
 }
 
-async function api(path, { method = 'GET', body, token } = {}) {
+interface ApiOptions {
+  method?: string;
+  body?: unknown;
+  token?: string;
+}
+
+// The envelope is `{ data }` or `{ error }`; callers read whichever they expect.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function api(path: string, { method = 'GET', body, token }: ApiOptions = {}): Promise<any> {
   const res = await fetch(`${API}${path}`, {
     method,
     headers: {
@@ -37,8 +45,8 @@ async function api(path, { method = 'GET', body, token } = {}) {
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
-  const json = await res.json().catch(() => null);
-  return { status: res.status, ...json };
+  const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+  return { status: res.status, ...(json ?? {}) };
 }
 
 async function main() {
@@ -195,7 +203,7 @@ async function main() {
   // ---- 5. History ---------------------------------------------------------
   console.log('\n5. History (§9.4)');
   const history = await api('/account/coins/history', { token });
-  const reasons = (history.data?.entries ?? []).map((e) => e.reason);
+  const reasons: string[] = (history.data?.entries ?? []).map((e: { reason: string }) => e.reason);
   check('history has the earn and unlock movements', reasons.includes('UNLOCK'), reasons.join(','));
   check('entries carry plain-language copy', Boolean(history.data?.entries?.[0]?.description));
   check('entries link to the order', Boolean(history.data?.entries?.[0]?.orderNo));

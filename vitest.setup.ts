@@ -27,8 +27,10 @@ config({ path: '.env.test', override: true });
  * load them here. Best effort: pure unit files may run with no database.
  */
 beforeAll(async () => {
-  const { reloadCategories } = await import('@/modules/categories/categories.registry');
-  await reloadCategories().catch(() => undefined);
+  // A file that stubs `@/config/env` may not be able to load the registry's
+  // imports at all; that file does not need categories, so skip quietly.
+  const registry = await import('@/modules/categories/categories.registry').catch(() => null);
+  await registry?.reloadCategories().catch(() => undefined);
 });
 
 process.on('unhandledRejection', (reason: unknown) => {

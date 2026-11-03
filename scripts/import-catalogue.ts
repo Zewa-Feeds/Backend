@@ -90,7 +90,8 @@ async function upload(relPath: string) {
    * already deleted the old catalogue. 165 sequential uploads over a home
    * connection WILL see transient failures; they are not a reason to stop.
    */
-  let b: { secure_url: string; public_id: string; width: number; height: number } | null = null;
+  type Uploaded = { secure_url: string; public_id: string; width: number; height: number };
+  let b: Uploaded | null = null;
   let lastErr = '';
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
@@ -103,7 +104,7 @@ async function upload(relPath: string) {
         // 4xx is a bad request (wrong format, too large) — retrying cannot help.
         if (res.status >= 400 && res.status < 500) break;
       } else {
-        b = (await res.json()) as typeof b;
+        b = (await res.json()) as Uploaded;
         break;
       }
     } catch (e) {
@@ -147,15 +148,15 @@ function proteinOf(nutrition: Record<string, string>) {
 function gramsOf(variant: string) {
   const kg = /([\d.]+)\s*kg/i.exec(variant);
   const base = kg
-    ? parseFloat(kg[1]) * 1000
+    ? parseFloat(kg[1] ?? '') * 1000
     : (() => {
         const g = /([\d.]+)\s*g/i.exec(variant);
-        return g ? parseFloat(g[1]) : null;
+        return g ? parseFloat(g[1] ?? '') : null;
       })();
-  if (base == null) return null;
+  if (base === null) return null;
   // "× 2" / "x 3" — the pack count.
   const mult = /[×x]\s*(\d+)/i.exec(variant);
-  return Math.round(base * (mult ? parseInt(mult[1], 10) : 1));
+  return Math.round(base * (mult ? parseInt(mult[1] ?? '1', 10) : 1));
 }
 
 /**
@@ -293,7 +294,7 @@ async function main() {
       // "bottle" is only unambiguous when the product has exactly one bottle SKU.
       if (pack === 'bottle') {
         const bottles = variants.filter((v) => /bottle/i.test(v.pack));
-        return bottles.length === 1 ? bottles[0].id : null;
+        return bottles.length === 1 ? (bottles[0]?.id ?? null) : null;
       }
       // Never attach to a multi-pack: a "Pack of 2" photo does not exist, and the
       // single-pack shot is the right image for it anyway.
@@ -309,6 +310,7 @@ async function main() {
       await prisma.productMedia.createMany({
         data: gallery.map((g, i) => {
           const up = ledger[g.file];
+          if (!up) throw new Error(`no upload recorded for ${g.file}`);
           return {
             familyId: family.id,
             variantId: variantFor((g as { pack?: string | null }).pack ?? null),

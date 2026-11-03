@@ -22,7 +22,7 @@ const rules = vi.hoisted(() => ({
 }));
 
 vi.mock('./rules.service', async (orig) => ({
-  ...(await orig<typeof import('./rules.service')>()),
+  ...((await orig()) as Record<string, unknown>),
   active: vi.fn(async () => rules),
 }));
 

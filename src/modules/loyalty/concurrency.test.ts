@@ -20,6 +20,7 @@ const TAG = 'zz-conc';
 let ruleVersion: Awaited<ReturnType<typeof rules.active>>;
 /** Restored in afterAll — redemption is OFF by default (§13.2). */
 let originalRedemptionEnabled = false;
+let originalMaxRedemptionPct = 100;
 
 async function sweep() {
   const customers = await prisma.customer.findMany({
@@ -125,9 +126,16 @@ beforeEach(async () => {
    * Setting it per test rather than per file costs one write and makes the
    * suite order-independent.
    */
+  /*
+   * The cap, too. These tests are written against the shipped default — no
+   * cap, 100% (coin-math.ts, Decision 4) — and assert the ₹1-stays-payable
+   * floor on top of it. The row is shared with the CMS Rules page in local dev,
+   * so a cap set there (90%) used to fail them for reasons unrelated to the
+   * code. Restored in afterAll.
+   */
   await prisma.loyaltyRuleVersion.updateMany({
     where: { isActive: true },
-    data: { redemptionEnabled: true },
+    data: { redemptionEnabled: true, maxRedemptionPct: 100 },
   });
   rules.invalidate();
 });
@@ -147,6 +155,7 @@ beforeAll(async () => {
   await sweep();
   const current = await rules.active(prisma);
   originalRedemptionEnabled = current.redemptionEnabled;
+  originalMaxRedemptionPct = current.maxRedemptionPct;
 
   // Redemption ships disabled (§13.2 silent accrual). Enable it for this file
   // only, so the double-spend defences can actually be exercised.
@@ -161,7 +170,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.loyaltyRuleVersion.update({
     where: { id: ruleVersion.id },
-    data: { redemptionEnabled: originalRedemptionEnabled },
+    data: { redemptionEnabled: originalRedemptionEnabled, maxRedemptionPct: originalMaxRedemptionPct },
   });
   rules.invalidate();
   await sweep();

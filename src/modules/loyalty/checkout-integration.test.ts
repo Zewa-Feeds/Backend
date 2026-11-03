@@ -60,6 +60,7 @@ const prisma = new PrismaClient();
 const TAG = 'zzchk';
 let ruleVersion: Awaited<ReturnType<typeof rules.active>>;
 let originalRedemption = false;
+let originalMaxRedemptionPct = 100;
 let variantSku = '';
 let familyId = '';
 
@@ -190,6 +191,7 @@ beforeAll(async () => {
   ctx = testCtx(await testActor(prisma));
   const current = await rules.active(prisma);
   originalRedemption = current.redemptionEnabled;
+  originalMaxRedemptionPct = current.maxRedemptionPct;
 
   // Redemption ships OFF (§13.2). Enable it for this file so the paths below
   // can be exercised; restored in afterAll.
@@ -239,9 +241,16 @@ beforeEach(async () => {
    * Setting it per test rather than per file costs one write and makes the
    * suite order-independent.
    */
+  /*
+   * The cap, too. These tests are written against the shipped default — no
+   * cap, 100% (coin-math.ts, Decision 4) — and assert the ₹1-stays-payable
+   * floor on top of it. The row is shared with the CMS Rules page in local dev,
+   * so a cap set there (90%) used to fail them for reasons unrelated to the
+   * code. Restored in afterAll.
+   */
   await prisma.loyaltyRuleVersion.updateMany({
     where: { isActive: true },
-    data: { redemptionEnabled: true },
+    data: { redemptionEnabled: true, maxRedemptionPct: 100 },
   });
   rules.invalidate();
 });
@@ -249,7 +258,7 @@ beforeEach(async () => {
 afterAll(async () => {
   await prisma.loyaltyRuleVersion.update({
     where: { id: ruleVersion.id },
-    data: { redemptionEnabled: originalRedemption },
+    data: { redemptionEnabled: originalRedemption, maxRedemptionPct: originalMaxRedemptionPct },
   });
   rules.invalidate();
   await sweep();
