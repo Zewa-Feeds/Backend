@@ -17,7 +17,6 @@
  */
 import {
   Badge,
-  Category,
   ContentStatus,
   ContentVersion,
   DiscountType,
@@ -132,7 +131,7 @@ const PRODUCTS = [
   {
     slug: 'betta-bites-f3',
     name: 'Betta Bites F3',
-    category: Category.BETTA,
+    category: 'BETTA',
     status: ProductStatus.ACTIVE,
     badge: Badge.BESTSELLER,
     proteinPct: 42,
@@ -160,7 +159,7 @@ const PRODUCTS = [
   {
     slug: 'cichlid-colour-pellets-c7',
     name: 'Cichlid Colour Pellets C7',
-    category: Category.CICHLID,
+    category: 'CICHLID',
     status: ProductStatus.ACTIVE,
     badge: Badge.NEW,
     proteinPct: 38,
@@ -176,7 +175,7 @@ const PRODUCTS = [
   {
     slug: 'hatchery-fry-starter-h1',
     name: 'Hatchery Fry Starter H1',
-    category: Category.HATCHERY,
+    category: 'HATCHERY',
     status: ProductStatus.ACTIVE,
     badge: Badge.PRO,
     proteinPct: 55,
@@ -195,7 +194,7 @@ const PRODUCTS = [
   {
     slug: 'guppy-micro-flakes-g2',
     name: 'Guppy Micro Flakes G2',
-    category: Category.GUPPY,
+    category: 'GUPPY',
     status: ProductStatus.ACTIVE,
     badge: null,
     proteinPct: 36,
@@ -211,7 +210,7 @@ const PRODUCTS = [
   {
     slug: 'betta-bloodworm-treat-f5',
     name: 'Betta Bloodworm Treat F5',
-    category: Category.BETTA,
+    category: 'BETTA',
     status: ProductStatus.DRAFT,
     badge: null,
     proteinPct: 48,
@@ -227,7 +226,7 @@ const PRODUCTS = [
   {
     slug: 'cichlid-growth-sinking-c4',
     name: 'Cichlid Growth Sinking C4',
-    category: Category.CICHLID,
+    category: 'CICHLID',
     status: ProductStatus.ACTIVE,
     badge: null,
     proteinPct: 40,
@@ -246,7 +245,7 @@ const PRODUCTS = [
   {
     slug: 'hatchery-infusoria-boost-h3',
     name: 'Hatchery Infusoria Boost H3',
-    category: Category.HATCHERY,
+    category: 'HATCHERY',
     status: ProductStatus.COMING_SOON,
     badge: null,
     proteinPct: 0,
@@ -263,7 +262,7 @@ const PRODUCTS = [
   {
     slug: 'guppy-colour-enhancer-g6',
     name: 'Guppy Colour Enhancer G6',
-    category: Category.GUPPY,
+    category: 'GUPPY',
     status: ProductStatus.DISCONTINUED,
     badge: null,
     proteinPct: 34,

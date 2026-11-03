@@ -18,7 +18,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import { Category, ProductStatus, MediaType } from '@prisma/client';
+import { ProductStatus, MediaType } from '@prisma/client';
 import { prisma } from '../src/lib/prisma';
 import { env } from '../src/config/env';
 import { buildMediaAlt } from '../src/lib/media-alt';
@@ -236,7 +236,7 @@ async function main() {
 
     const data = {
       name: p.name,
-      category: m.category as Category,
+      category: m.category,
       status: ProductStatus.DRAFT,
       shortDesc: p.shortDescription.slice(0, 200),
       fullDescHtml: toHtml(p.longParagraphs),
