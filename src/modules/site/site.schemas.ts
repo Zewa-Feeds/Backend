@@ -263,7 +263,100 @@ const aboutCopySchema = z.object({
     body: text(600),
     products: z.array(z.object({ name: requiredText(80), spec: text(160), slug })).max(12),
   }),
-  cta: z.object({ title: requiredText(160), body: text(300), primary: cta, secondary: cta }),
+  /** The heading is no longer shown (the founder card took its place); kept so older drafts still parse. */
+  cta: z.object({ title: text(160), body: text(300), primary: cta, secondary: cta }),
+});
+
+// ---- YouTube links ---------------------------------------------------------
+
+/**
+ * A YouTube link as an editor pastes it — watch?v=, youtu.be/, /shorts/,
+ * /embed/, /live/, or a bare 11-character id — reduced to the video id and
+ * the start time (`t=270s`, `t=4m30s`, `start=270`). Null if it is not one.
+ */
+export function parseYouTube(input: string): { youtubeId: string; start: number } | null {
+  const raw = input.trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(raw)) return { youtubeId: raw, start: 0 };
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+  const host = url.hostname.replace(/^(www|m)\./, '');
+  let id: string | undefined;
+  if (host === 'youtu.be') id = url.pathname.split('/')[1];
+  else if (host === 'youtube.com' || host === 'youtube-nocookie.com') {
+    const [, kind, rest] = url.pathname.split('/');
+    id = kind === 'watch' ? (url.searchParams.get('v') ?? undefined) : ['shorts', 'embed', 'live'].includes(kind ?? '') ? rest : undefined;
+  }
+  if (!id || !/^[A-Za-z0-9_-]{11}$/.test(id)) return null;
+
+  const t = url.searchParams.get('t') ?? url.searchParams.get('start') ?? '';
+  const m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/.exec(t);
+  const start = m ? Number(m[1] ?? 0) * 3600 + Number(m[2] ?? 0) * 60 + Number(m[3] ?? 0) : 0;
+  return { youtubeId: id, start };
+}
+
+const youtubeLink = z
+  .string()
+  .trim()
+  .max(300)
+  .refine((v) => parseYouTube(v) !== null, 'Paste a YouTube link, e.g. https://youtu.be/V8aTafp36WQ.');
+
+// ---- Shared founder card -----------------------------------------------------
+
+/*
+ * These two blocks postdate the content import, so drafts saved before them
+ * lack the keys. The defaults below are what such a draft opens with — the
+ * copy Nik supplied on 4 Nov 2026 — rather than an empty card nobody notices.
+ */
+export const DEFAULT_FOUNDER_CARD = {
+  name: 'Nik Mulakkal',
+  lines: [
+    'Founder & CEO, ZEWA Ecosystems Pvt Ltd',
+    'M.Eng, University of Melbourne · Temasek NextGen Leader 2025 · MDP, IIMB & IIMK',
+  ],
+  photo: null,
+  alt: 'Nik Mulakkal, Founder and CEO of Zewa Ecosystems',
+};
+
+export const DEFAULT_MEDIA_UPDATES = {
+  enabled: true,
+  eyebrow: 'In the media',
+  title: 'Latest media updates',
+  videos: [
+    {
+      url: 'https://www.youtube.com/watch?v=fYO0CCqnOe8&t=270s',
+      title: 'Zewa Feeds - Insect-protein fish feed | Vande Bharatam Unplugged Episode 54',
+    },
+    {
+      url: 'https://youtu.be/V8aTafp36WQ',
+      title: 'Inside Zewa Feeds: The Science Behind Smarter Pet & Fish Nutrition | Nik Mulakkal',
+    },
+  ],
+};
+
+/**
+ * The founder's sign-off card. ONE record, rendered at the end of the About
+ * page, at the foot of /letters and under every letter — so a new photo or
+ * credential changes all three at once.
+ */
+const founderCardSchema = z.object({
+  name: requiredText(80),
+  /** Shown under the name, one per line. */
+  lines: z.array(requiredText(200)).max(4),
+  /** Null = the photo bundled with the storefront (/team/nik-mulakkal.jpg). */
+  photo: assetRef.nullable(),
+  alt: text(200),
+});
+
+const mediaUpdatesSchema = z.object({
+  enabled: z.boolean(),
+  eyebrow: text(60),
+  title: text(160),
+  videos: z.array(z.object({ url: youtubeLink, title: requiredText(200, 'Name the video for screen readers.') })).max(4),
 });
 
 // ---- Founder's letters ------------------------------------------------------
@@ -335,6 +428,8 @@ export const siteSectionsSchema = z.object({
       title: requiredText(200),
     }),
     founder: z.object({ enabled: z.boolean(), portrait: assetRef.nullable(), alt: text(200) }),
+    founderCard: founderCardSchema.default(DEFAULT_FOUNDER_CARD),
+    mediaUpdates: mediaUpdatesSchema.default(DEFAULT_MEDIA_UPDATES),
     milestones: z.array(milestone).max(24),
     logos: z.array(logo).max(40),
     copy: aboutCopySchema,

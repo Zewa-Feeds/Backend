@@ -28,7 +28,7 @@ import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
 import { publishQueue } from '@/jobs/queues';
 import { deployHookConfigured } from '@/integrations/storefront/revalidate';
 import type { Issue } from './placements';
-import { type SiteSections, siteSectionsSchema } from './site.schemas';
+import { DEFAULT_FOUNDER_CARD, DEFAULT_MEDIA_UPDATES, type SiteSections, siteSectionsSchema } from './site.schemas';
 import {
   type ArticleSource,
   type ResolvedArticle,
@@ -71,6 +71,8 @@ export const DEFAULT_SECTIONS: SiteSections = {
   about: {
     storyVideo: { youtubeId: 'gcnpEOW09k0', title: 'The Zewa story' },
     founder: { enabled: false, portrait: null, alt: '' },
+    founderCard: DEFAULT_FOUNDER_CARD,
+    mediaUpdates: DEFAULT_MEDIA_UPDATES,
     milestones: [],
     logos: [],
     copy: {
@@ -316,8 +318,11 @@ export function planFor(scopes: string[], snapshot: Snapshot) {
       tags.add('site:blog');
       paths.add('/blog');
     } else if (scope === 'about') {
+      // The founder card lives here and is shown on /letters and every letter too.
       tags.add('site:about');
       paths.add('/about');
+      paths.add('/letters');
+      for (const l of snapshot.sections.letters ?? []) paths.add(`/letters/${l.slug}`);
     } else if (scope === 'letters') {
       // The About page previews the newest letter, so it changes too.
       tags.add('site:letters');

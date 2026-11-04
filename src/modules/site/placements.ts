@@ -278,6 +278,26 @@ export const PLACEMENTS: Record<string, Placement> = {
     preview: { desktop: { ratio: [4, 5] }, mobile: { ratio: [4, 5] } },
     guidance: 'Portrait 4:5. A square file is cropped top and bottom.',
   },
+  // The founder card postdates the spec; sized for how it renders (a 72–128px
+  // rounded square on /about, /letters and under each letter).
+  'about.founderCard': {
+    key: 'about.founderCard',
+    spec: null,
+    page: 'About',
+    label: 'Founder card photo',
+    kind: 'IMAGE',
+    formats: PHOTO,
+    recommendedFormats: ['jpg', 'jpeg', 'webp'],
+    width: 512,
+    height: 512,
+    minWidth: 256,
+    minHeight: 256,
+    ratio: [1, 1],
+    fit: 'cover',
+    position: 'center',
+    preview: { desktop: { width: 128, height: 128 }, mobile: { width: 96, height: 96 } },
+    guidance: 'Square head-and-shoulders shot. Shown on /about, /letters and under every letter.',
+  },
   'about.milestone': {
     key: 'about.milestone',
     spec: 15,

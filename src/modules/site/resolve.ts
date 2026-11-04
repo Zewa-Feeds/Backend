@@ -13,7 +13,7 @@ import { categoryColor } from './categoryColor';
 import { MediaType, type Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { type Issue, validateAsset } from './placements';
-import type { Block, SiteSections } from './site.schemas';
+import { type Block, type SiteSections, parseYouTube } from './site.schemas';
 
 export interface ResolvedAsset {
   assetId: string;
@@ -49,6 +49,9 @@ const LABELS: Record<string, string> = {
   milestones: 'milestone',
   logos: 'logo',
   founder: 'founder portrait',
+  founderCard: 'founder card',
+  mediaUpdates: 'media updates',
+  videos: 'video',
   blocks: 'block',
   contentBlocks: 'block',
   images: 'photo',
@@ -234,6 +237,17 @@ export function validateSections(sections: SiteSections, assets: AssetMap, refs:
     issues.push({ level: 'error', path: 'about.founder.alt', message: 'Describe the founder portrait for screen readers.' });
   }
 
+  const card = sections.about.founderCard;
+  slot(issues, assets, card.photo, 'about.founderCard', 'about.founderCard.photo', false, 'Founder card photo');
+  if (card.photo && !card.alt) {
+    issues.push({ level: 'error', path: 'about.founderCard.alt', message: 'Describe the founder card photo for screen readers.' });
+  }
+
+  const media = sections.about.mediaUpdates;
+  if (media.enabled && media.videos.length === 0) {
+    issues.push({ level: 'warning', path: 'about.mediaUpdates.videos', message: 'Media updates is shown but has no videos — the section will be hidden.' });
+  }
+
   sections.about.milestones.forEach((m, i) => {
     slot(issues, assets, m.image, 'about.milestone', `about.milestones.${i}.image`, false, `Milestone ${i + 1} photo`);
     if (m.image && !m.imageAlt) {
@@ -308,6 +322,20 @@ export function resolveSections(sections: SiteSections, assets: AssetMap) {
       founder: sections.about.founder.enabled
         ? { portrait: r(sections.about.founder.portrait), alt: sections.about.founder.alt }
         : null,
+      founderCard: {
+        name: sections.about.founderCard.name,
+        lines: sections.about.founderCard.lines,
+        photo: r(sections.about.founderCard.photo),
+        alt: sections.about.founderCard.alt,
+      },
+      mediaUpdates:
+        sections.about.mediaUpdates.enabled && sections.about.mediaUpdates.videos.length > 0
+          ? {
+              eyebrow: sections.about.mediaUpdates.eyebrow,
+              title: sections.about.mediaUpdates.title,
+              videos: sections.about.mediaUpdates.videos.map((v) => ({ ...parseYouTube(v.url)!, title: v.title })),
+            }
+          : null,
       milestones: sections.about.milestones.map((m, i) => ({
         id: m.id,
         year: m.year,

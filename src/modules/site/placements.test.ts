@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { PLACEMENTS, validateAsset } from './placements';
-import { blocksSchema } from './site.schemas';
+import { blocksSchema, parseYouTube, siteSectionsSchema } from './site.schemas';
 
 const img = (format: string, width: number, height: number) => ({ type: 'IMAGE' as const, format, width, height });
 
@@ -61,5 +61,29 @@ describe('article blocks', () => {
     expect(blocksSchema.safeParse([{ type: 'list', items: ['Less waste', 'Clearer water'] }]).success).toBe(true);
     expect(blocksSchema.safeParse([{ type: 'list', ordered: true, items: ['One'] }]).success).toBe(true);
     expect(blocksSchema.safeParse([{ type: 'list', items: [] }]).success).toBe(false);
+  });
+});
+
+describe('YouTube links', () => {
+  it('reads the id and start time from every link shape an editor pastes', () => {
+    expect(parseYouTube('https://www.youtube.com/watch?v=fYO0CCqnOe8&t=270s')).toEqual({ youtubeId: 'fYO0CCqnOe8', start: 270 });
+    expect(parseYouTube('https://youtu.be/V8aTafp36WQ')).toEqual({ youtubeId: 'V8aTafp36WQ', start: 0 });
+    expect(parseYouTube('https://youtu.be/V8aTafp36WQ?t=4m30s')).toEqual({ youtubeId: 'V8aTafp36WQ', start: 270 });
+    expect(parseYouTube('https://m.youtube.com/shorts/V8aTafp36WQ')).toMatchObject({ youtubeId: 'V8aTafp36WQ' });
+    expect(parseYouTube('V8aTafp36WQ')).toEqual({ youtubeId: 'V8aTafp36WQ', start: 0 });
+  });
+
+  it('refuses anything that is not a YouTube video', () => {
+    expect(parseYouTube('https://vimeo.com/123456789')).toBeNull();
+    expect(parseYouTube('https://www.youtube.com/@zewafeeds')).toBeNull();
+    expect(parseYouTube('javascript:alert(1)')).toBeNull();
+  });
+});
+
+describe('About drafts saved before the founder card existed', () => {
+  it('open with the default card and media videos', () => {
+    const about = siteSectionsSchema.shape.about.shape;
+    expect(about.founderCard.parse(undefined).lines).toHaveLength(2);
+    expect(about.mediaUpdates.parse(undefined).videos).toHaveLength(2);
   });
 });
