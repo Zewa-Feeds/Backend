@@ -65,8 +65,10 @@ describe('runPublication', () => {
     });
 
     const out = await runPublication(pub.id, 'revalidate', d);
-    expect(out).toEqual({ result: 'live', verifiedPaths: ['/', '/about'] });
-    expect(d.revalidate).toHaveBeenCalledWith({ tags: ['site:home', 'site:about'], paths: ['/', '/about'], version: 5 });
+    // An About publish also refreshes /letters, which shows the shared founder card.
+    expect(out.result).toBe('live');
+    expect([...(out as { verifiedPaths: string[] }).verifiedPaths].sort()).toEqual(['/', '/about', '/letters']);
+    expect(d.revalidate).toHaveBeenCalledWith({ tags: ['site:home', 'site:about'], paths: ['/', '/about', '/letters'], version: 5 });
 
     const row = await prisma.sitePublication.findUniqueOrThrow({ where: { id: pub.id } });
     expect(row.status).toBe(PublicationStatus.LIVE);

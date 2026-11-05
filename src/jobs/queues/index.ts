@@ -116,7 +116,12 @@ export interface PublishScheduledJob {
   kind: 'publish-scheduled-articles';
 }
 
-export type MaintenanceJob = ReconcileMediaJob | LoyaltySweepJob | PublishScheduledJob;
+export interface RecoverLatePaymentsJob {
+  /** Find payments Razorpay captured for orders we had cancelled as unpaid. */
+  kind: 'recover-late-payments';
+}
+
+export type MaintenanceJob = ReconcileMediaJob | LoyaltySweepJob | PublishScheduledJob | RecoverLatePaymentsJob;
 
 /**
  * Make the storefront serve a website publication, and prove it.
@@ -235,6 +240,21 @@ export async function scheduleMaintenance(): Promise<void> {
     {
       repeat: { every: 60 * 1000 },
       jobId: 'publish-scheduled-articles',
+      removeOnComplete: { count: 24 },
+      removeOnFail: { count: 24 },
+    },
+  );
+
+  /*
+   * Captured-after-cancel recovery. The webhook is the fast path; this hourly
+   * check is what makes a missed webhook survivable for a paying customer.
+   */
+  await maintenanceQueue.add(
+    'recover-late-payments',
+    { kind: 'recover-late-payments' },
+    {
+      repeat: { every: 60 * 60 * 1000 },
+      jobId: 'recover-late-payments',
       removeOnComplete: { count: 24 },
       removeOnFail: { count: 24 },
     },

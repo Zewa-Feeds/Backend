@@ -362,7 +362,7 @@ async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
     return;
   }
 
-  // Other staff alerts (staff-stock-zero)
+  // Other staff alerts (staff-stock-zero, staff-payment-needs-review)
   const recipients = await prisma.cmsUser.findMany({
     where: {
       status: 'ACTIVE',
@@ -385,7 +385,7 @@ async function handleStaffEmail(job: Job<EmailJob>): Promise<void> {
     {
       subject: rendered.subject,
       htmlBody: rendered.html,
-      reference: data.template,
+      reference: typeof data.context.reference === 'string' ? data.context.reference : data.template,
     },
   );
 }

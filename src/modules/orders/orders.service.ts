@@ -58,6 +58,7 @@ import * as couponsService from '@/modules/coupons/coupons.service';
 import * as loyaltyLifecycle from '@/modules/loyalty/lifecycle.service';
 import * as loyaltyNotify from '@/modules/loyalty/notify.service';
 import * as loyaltyRedemption from '@/modules/loyalty/redemption.service';
+import * as loyaltyEarn from '@/modules/loyalty/earn.service';
 import * as loyaltyReversal from '@/modules/loyalty/reversal.service';
 
 const log = logger.child({ module: 'orders.service' });
@@ -1071,6 +1072,18 @@ export async function reconcilePayment(
       tx,
     );
 
+    /*
+     * The cancellation released the order's coupon redemptions, and
+     * confirmRedemption only counts unreleased ones — so a restored order
+     * used to stay out of coupon usage and revenue for good (27ZFO152,
+     * Nov 2026). Restoring the order restores its redemptions first.
+     */
+    if (order.status === OrderStatus.CANCELLED) {
+      await tx.couponRedemption.updateMany({
+        where: { orderId: order.id, confirmedAt: null, releasedAt: { not: null } },
+        data: { releasedAt: null },
+      });
+    }
     await couponsService.confirmRedemption(order.id, tx);
 
     const emailRow = await tx.emailLog.create({
@@ -1107,6 +1120,11 @@ export async function reconcilePayment(
     })
     .catch((err) => log.error({ err, orderNo }, 'failed to enqueue reconciled staff email'));
 
+  // Seeds for the now-paid order, as confirmPayment would have granted them.
+  // Outside the transaction on purpose: a loyalty failure is queued for replay
+  // and must never undo a payment that has been reconciled.
+  await loyaltyEarn.earnForOrderSafe(order.id);
+
   log.info({ orderNo, capturedPaymentId }, 'order payment reconciled successfully');
 
   return {
@@ -1116,6 +1134,147 @@ export async function reconcilePayment(
     paymentId: capturedPaymentId,
     amountPaise: capturedAmountPaise,
   };
+}
+
+/**
+ * A payment Razorpay captured for an order we had already cancelled as unpaid.
+ *
+ * WHY THIS HAPPENS. An order is cancelled as unpaid by the release sweep
+ * (30 minutes), straight away when Razorpay reports `payment.failed`, or by the
+ * storefront when its payment window reports a failure. Razorpay lets the
+ * customer retry inside the same gateway order, so a retry can succeed seconds
+ * after the order was cancelled. 27ZFO152 (29 Oct 2026) was cancelled at
+ * minute 9 by the failed-payment release, and its retry was captured moments
+ * later; `confirmPayment` correctly refused to resurrect a cancelled order, so
+ * the money sat unmatched until someone pressed Verify a week later.
+ *
+ * WHAT THIS DOES. The same restore the CMS Verify button runs
+ * (`reconcilePayment`), automatically — except where restoring is not safe to
+ * do unattended, when staff are emailed instead and the order is flagged in its
+ * audit trail. Never throws: it runs inside the webhook and a sweep.
+ */
+export type LateCaptureOutcome = 'not-applicable' | 'restored' | 'needs-review';
+
+export async function recoverLateCapture(
+  orderNo: string,
+  payment: { id: string; amountPaise: number },
+  ctx: AuditContext,
+): Promise<LateCaptureOutcome> {
+  try {
+    const order = await prisma.order.findUnique({
+      where: { orderNo },
+      select: {
+        status: true,
+        paymentStatus: true,
+        paymentMethod: true,
+        totalPaise: true,
+        shippedAt: true,
+        loyalty: { select: { coinsRedeemed: true } },
+      },
+    });
+    if (!order || order.status !== OrderStatus.CANCELLED || order.paymentStatus !== PaymentStatus.UNPAID) {
+      return 'not-applicable';
+    }
+
+    if (payment.amountPaise !== order.totalPaise) {
+      await flagLateCapture(orderNo, payment, `the captured amount (${formatInr(payment.amountPaise)}) does not match the order total (${formatInr(order.totalPaise)})`, ctx);
+      return 'needs-review';
+    }
+    if (order.shippedAt) {
+      await flagLateCapture(orderNo, payment, 'the order had already been shipped before it was cancelled', ctx);
+      return 'needs-review';
+    }
+    if ((order.loyalty?.coinsRedeemed ?? 0) > 0) {
+      // The cancellation gave the customer's Seeds back. Restoring would hand
+      // them the Seeds discount for free, so a person decides.
+      await flagLateCapture(orderNo, payment, 'Seeds were spent on this order and were returned to the customer when it was cancelled', ctx);
+      return 'needs-review';
+    }
+
+    const result = await reconcilePayment(orderNo, payment.id, ctx);
+    if (!result.reconciled) {
+      await flagLateCapture(orderNo, payment, result.message, ctx);
+      return 'needs-review';
+    }
+    log.warn({ orderNo, paymentId: payment.id }, 'payment captured after cancellation — order restored automatically');
+    return 'restored';
+  } catch (err) {
+    log.error({ err, orderNo, paymentId: payment.id }, 'late-capture recovery failed');
+    await flagLateCapture(orderNo, payment, `automatic restore failed: ${(err as Error).message}`, ctx).catch(() => undefined);
+    return 'needs-review';
+  }
+}
+
+/**
+ * The safety net under the webhook: ask Razorpay about every online order
+ * cancelled as unpaid in the last 48 hours, and recover any that was paid after
+ * all. Catches a capture whose webhook never arrived. Hourly, a handful of
+ * orders at most, so a few gateway calls per run.
+ */
+export async function sweepLateCaptures(): Promise<{ checked: number; restored: number; flagged: number }> {
+  const provider = paymentProvider();
+  if (!provider) return { checked: 0, restored: 0, flagged: 0 };
+
+  const candidates = await prisma.order.findMany({
+    where: {
+      status: OrderStatus.CANCELLED,
+      paymentStatus: PaymentStatus.UNPAID,
+      paymentMethod: PaymentMethod.RAZORPAY,
+      razorpayOrderId: { not: null },
+      cancelledAt: { gte: new Date(Date.now() - 48 * 3600 * 1000) },
+    },
+    select: { orderNo: true, razorpayOrderId: true },
+    take: 200,
+  });
+
+  const ctx: AuditContext = { actorId: null, actorName: 'System', actorRole: 'System', ip: '127.0.0.1', userAgent: 'zewa-worker' };
+  let restored = 0;
+  let flagged = 0;
+  for (const c of candidates) {
+    try {
+      const payments = await provider.fetchOrderPayments(c.razorpayOrderId!);
+      const captured = payments.find((p) => p.status === 'captured' || p.status === 'authorized');
+      if (!captured) continue;
+      const outcome = await recoverLateCapture(c.orderNo, { id: captured.id, amountPaise: captured.amountPaise }, ctx);
+      if (outcome === 'restored') restored++;
+      if (outcome === 'needs-review') flagged++;
+    } catch (err) {
+      log.error({ err, orderNo: c.orderNo }, 'late-capture sweep could not check this order');
+    }
+  }
+  return { checked: candidates.length, restored, flagged };
+}
+
+/**
+ * Tell staff about a captured payment on a cancelled order that could not be
+ * restored automatically. Once per payment: the hourly sweep finds the same
+ * order again until someone acts, and must not email every hour.
+ */
+async function flagLateCapture(
+  orderNo: string,
+  payment: { id: string; amountPaise: number },
+  reason: string,
+  ctx: AuditContext,
+): Promise<void> {
+  const marker = `Payment ${payment.id} captured after cancellation`;
+  const already = await prisma.auditLog.findFirst({
+    where: { recordId: orderNo, action: { startsWith: marker } },
+    select: { id: true },
+  });
+  if (already) return;
+
+  await writeAudit(
+    { ...ctx, actorId: null, actorName: 'Payment Gateway', actorRole: 'System' },
+    { module: AuditModule.ORDERS, action: `${marker} — needs review: ${reason}`, recordId: orderNo },
+  );
+  await emailQueue
+    .add('staff-email', {
+      kind: 'staff',
+      template: 'staff-payment-needs-review',
+      context: { orderNo, paymentId: payment.id, amountPaise: payment.amountPaise, reason, reference: `staff-late-capture-${payment.id}` },
+    })
+    .catch((err) => log.error({ err, orderNo }, 'failed to enqueue late-capture staff alert'));
+  log.error({ orderNo, paymentId: payment.id, reason }, 'payment captured after cancellation — needs review');
 }
 
 /**

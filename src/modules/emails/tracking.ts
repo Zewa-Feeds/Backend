@@ -51,6 +51,7 @@ export const TRACKING_DEFAULTS: Record<string, boolean> = {
   'staff-refund-processed': true,
   'staff-order-cancelled': true,
   'staff-stock-zero': true,
+  'staff-payment-needs-review': true,
   'staff-new-review': true,
   'staff-article-published': true,
 

@@ -16,12 +16,14 @@
  * logged loudly instead.
  */
 import { Router, type Request } from 'express';
+import { OrderStatus, PaymentStatus } from '@prisma/client';
 import { asyncHandler } from '@/middleware/asyncHandler';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { paymentProvider } from '@/integrations/razorpay/payment.service';
 import { auditContext } from '@/modules/audit/audit.service';
 import * as checkoutService from '@/modules/checkout/checkout.service';
+import * as ordersService from '@/modules/orders/orders.service';
 import { paymentQueue } from '@/jobs/queues';
 
 const log = logger.child({ module: 'webhook.razorpay' });
@@ -117,7 +119,23 @@ webhookRouter.post(
           }
         }
 
-        if (orderNo && payment?.id) {
+        /*
+         * Captured after we cancelled the order as unpaid — a retry inside the
+         * same Razorpay window that succeeded seconds after a failed attempt
+         * released the order (27ZFO152). confirmPayment rightly refuses a
+         * cancelled order, which used to leave the money unmatched and nobody
+         * told. Restore it the way the CMS Verify button does, or alert staff.
+         */
+        const current = orderNo
+          ? await prisma.order.findUnique({ where: { orderNo }, select: { status: true, paymentStatus: true } })
+          : null;
+        if (orderNo && payment?.id && current?.status === OrderStatus.CANCELLED && current.paymentStatus === PaymentStatus.UNPAID) {
+          await ordersService.recoverLateCapture(
+            orderNo,
+            { id: payment.id, amountPaise: Number(payment.amount) },
+            { ...auditContext(req), actorId: null, actorName: 'Razorpay Webhook', actorRole: 'System' },
+          );
+        } else if (orderNo && payment?.id) {
           await checkoutService.confirmPayment(orderNo, payment.id, {
             ...auditContext(req),
             actorId: null,

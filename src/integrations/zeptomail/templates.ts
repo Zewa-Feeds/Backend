@@ -1183,6 +1183,15 @@ export const staffTemplates = {
     ),
   }),
 
+  'staff-payment-needs-review': (ctx: { orderNo: string; paymentId: string; amountPaise: number; reason: string }) => ({
+    subject: `Action needed: payment received for cancelled order #${ctx.orderNo}`,
+    html: shell(
+      'Payment received for a cancelled order',
+      `Razorpay captured <strong>${esc(formatInr(ctx.amountPaise))}</strong> (payment <code>${esc(ctx.paymentId)}</code>) for order <strong>${esc(ctx.orderNo)}</strong>, which had already been cancelled as unpaid. It could not be restored automatically because ${esc(ctx.reason)}. Open the order and either use <strong>Verify with Razorpay</strong> to restore it, or refund the payment.`,
+      button('Open Order in CMS', `${env.CMS_ORIGIN}/orders/${ctx.orderNo}`),
+    ),
+  }),
+
   'staff-stock-zero': (ctx: { sku: string; productName: string }) => ({
     subject: `Stock alert: ${ctx.sku} is out of stock`,
     html: shell(

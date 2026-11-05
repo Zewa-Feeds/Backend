@@ -99,6 +99,7 @@ describe('starting workers inside the API', () => {
           'loyalty-unlock',
           'publish-scheduled-articles',
           'reconcile-media',
+          'recover-late-payments',
         ].sort(),
       );
     } finally {
@@ -117,8 +118,8 @@ describe('starting workers inside the API', () => {
     const second = await startEmbeddedWorkers();
     try {
       const repeatables = await maintenanceQueue.getRepeatableJobs();
-      expect(repeatables).toHaveLength(6);
-      expect(new Set(repeatables.map((r) => r.name)).size).toBe(6);
+      expect(repeatables).toHaveLength(7);
+      expect(new Set(repeatables.map((r) => r.name)).size).toBe(7);
     } finally {
       await Promise.allSettled(second.map((w) => w.close()));
     }

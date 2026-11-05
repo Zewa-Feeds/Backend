@@ -163,7 +163,8 @@ describe('publishing the website', () => {
     const v2 = await site.publishSite({ acknowledgeWarnings: true }, user(), testCtx(actorId));
     expect(v2.version).toBeGreaterThan(v1.version);
     expect(v2.scopes).toEqual(['about']);
-    expect(v2.plan).toMatchObject({ tags: ['site:about'], paths: ['/about'] });
+    // /letters shows the founder card kept in the About section, so it is rebuilt too.
+    expect(v2.plan).toMatchObject({ tags: ['site:about'], paths: ['/about', '/letters'] });
 
     const current = await prisma.sitePublication.findMany({ where: { isCurrent: true } });
     expect(current.map((c) => c.version)).toEqual([v2.version]);

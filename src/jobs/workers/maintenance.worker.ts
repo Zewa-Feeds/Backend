@@ -23,6 +23,7 @@ import * as loyaltyRedemption from '@/modules/loyalty/redemption.service';
 import * as loyaltyReconcile from '@/modules/loyalty/reconcile.service';
 import * as loyaltyNotify from '@/modules/loyalty/notify.service';
 import { publishDueArticles } from '@/modules/site/scheduler';
+import { sweepLateCaptures } from '@/modules/orders/orders.service';
 
 const log = logger.child({ module: 'worker.maintenance' });
 
@@ -144,6 +145,11 @@ export function startMaintenanceWorker(): Worker<MaintenanceJob> {
       if (job.data.kind === 'publish-scheduled-articles') {
         const outcome = await withLockNamed('zewa:maintenance:publish-scheduled:lock', publishDueArticles);
         if (outcome !== 'skipped' && outcome.published > 0) log.info(outcome, 'scheduled articles published');
+        return;
+      }
+      if (job.data.kind === 'recover-late-payments') {
+        const outcome = await withLockNamed('zewa:maintenance:late-payments:lock', sweepLateCaptures);
+        if (outcome !== 'skipped' && (outcome.restored > 0 || outcome.flagged > 0)) log.warn(outcome, 'late-capture sweep found paid cancelled orders');
         return;
       }
       if (job.data.kind.startsWith('loyalty-')) return handleLoyalty(job.data.kind);
