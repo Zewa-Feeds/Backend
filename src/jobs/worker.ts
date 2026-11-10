@@ -10,6 +10,7 @@
  * mid-send, which would otherwise mean a duplicate email on retry.
  */
 import { startEmailWorker } from './workers/email.worker';
+import { captureError, flushMonitoring, initMonitoring } from '@/lib/monitoring';
 import { startPaymentWorker } from './workers/payment.worker';
 import { startMaintenanceWorker } from './workers/maintenance.worker';
 import { startPublishWorker } from './workers/publish.worker';
@@ -77,7 +78,7 @@ async function main(): Promise<void> {
       // close(false) lets active jobs finish before the connection drops.
       await Promise.allSettled(workers.map((w) => w.close()));
       await closeQueues();
-      await Promise.allSettled([disconnectPrisma(), disconnectRedis()]);
+      await Promise.allSettled([disconnectPrisma(), disconnectRedis(), flushMonitoring()]);
       clearTimeout(force);
       log.info('worker shutdown complete');
       process.exit(0);
@@ -89,11 +90,14 @@ async function main(): Promise<void> {
 
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
+  initMonitoring('worker');
   process.on('uncaughtException', (err) => {
+    captureError(err);
     log.fatal({ err }, 'worker uncaught exception');
     void shutdown('uncaughtException');
   });
   process.on('unhandledRejection', (reason) => {
+    captureError(reason);
     log.fatal({ reason }, 'worker unhandled rejection');
     void shutdown('unhandledRejection');
   });

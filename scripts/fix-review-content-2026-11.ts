@@ -25,6 +25,8 @@
 import 'dotenv/config';
 import { readFileSync } from 'node:fs';
 import { AuditModule, Prisma, PrismaClient } from '@prisma/client';
+// Note: run once on 11 Nov 2026. A second pass the same day removed the
+// "[N words]" notes the first pass had carried over from the brief.
 
 const prisma = new PrismaClient();
 const args = process.argv.slice(2);
@@ -78,8 +80,12 @@ async function main() {
       continue;
     }
 
-    const full = fixSpelling(src.shortDescription.trim());
-    const stillTruncated = fam.shortDesc === src.shortDescription.trim().slice(0, 200);
+    // The brief's copy ends in an editor's note, "   [43 words]". Never shown to customers.
+    const full = fixSpelling(src.shortDescription.trim().replace(/\s*\[\d+ words\]\s*$/i, ''));
+    const stillTruncated =
+      fam.shortDesc === src.shortDescription.trim().slice(0, 200).trim() ||
+      // First run of this script restored the copy with the note still on it.
+      fam.shortDesc === fixSpelling(src.shortDescription.trim());
     const nextShort = stillTruncated ? full : fixSpelling(fam.shortDesc);
     const nextFull = fixSpelling(fam.fullDescHtml);
     const nextBenefits = fam.benefits.map(fixSpelling);

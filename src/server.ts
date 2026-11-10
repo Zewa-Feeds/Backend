@@ -12,6 +12,7 @@
  *    deploy can kill a request mid-transaction.
  */
 import type { Server } from 'node:http';
+import { captureError, flushMonitoring, initMonitoring } from '@/lib/monitoring';
 import { createApp } from '@/app';
 import { env } from '@/config/env';
 import { logger } from '@/lib/logger';
@@ -144,7 +145,7 @@ function installShutdownHandlers(server: Server, workers: EmbeddedWorkers): void
         log.info({ workers: workers.length }, 'in-process workers closed');
       }
 
-      await Promise.allSettled([disconnectPrisma(), disconnectRedis()]);
+      await Promise.allSettled([disconnectPrisma(), disconnectRedis(), flushMonitoring()]);
       log.info('shutdown complete');
 
       clearTimeout(force);
@@ -160,11 +161,14 @@ function installShutdownHandlers(server: Server, workers: EmbeddedWorkers): void
 
   // A thrown-but-uncaught error leaves the process in an unknown state. Log it
   // loudly and let the platform restart us clean.
+  initMonitoring('api');
   process.on('uncaughtException', (err) => {
+    captureError(err);
     log.fatal({ err }, 'uncaught exception');
     void shutdown('uncaughtException');
   });
   process.on('unhandledRejection', (reason) => {
+    captureError(reason);
     log.fatal({ reason }, 'unhandled promise rejection');
     void shutdown('unhandledRejection');
   });

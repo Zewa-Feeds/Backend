@@ -2,7 +2,7 @@
   "name": "zewa-feeds-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "Zewa Feeds API \u2014 one backend serving the storefront (/api/v1) and the CMS (/api/v1/admin).",
+  "description": "Zewa Feeds API — one backend serving the storefront (/api/v1) and the CMS (/api/v1/admin).",
   "engines": {
     "node": ">=20.0.0"
   },
@@ -35,6 +35,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.2.1",
+    "@sentry/node": "8.55.2",
     "bcryptjs": "^2.4.3",
     "bullmq": "^5.34.6",
     "cloudinary": "^2.5.1",

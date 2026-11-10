@@ -7,6 +7,7 @@
  *   { error: { code, message, fields?, details? } }
  */
 import type { ErrorRequestHandler, NextFunction, Request, Response } from 'express';
+import { captureError } from '@/lib/monitoring';
 import { Prisma } from '@prisma/client';
 import { ZodError } from 'zod';
 import { AppError, ErrorCode, notFound } from '@/lib/errors';
@@ -95,6 +96,7 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     log.info(payload, appErr.message);
   } else {
     log.error(payload, appErr.message);
+    captureError(err, { method: req.method, path: req.originalUrl, requestId: req.id });
   }
 
   // Headers already flushed (e.g. a stream failed mid-send) — just end it.
