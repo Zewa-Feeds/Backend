@@ -29,6 +29,7 @@ import { signCustomerToken, verifyCustomerToken } from '@/lib/tokens';
 import { AppError, ErrorCode, notFound, unauthenticated } from '@/lib/errors';
 import { plainText } from '@/lib/sanitize';
 import { prisma } from '@/lib/prisma';
+import * as marketing from '@/modules/customers/marketing';
 import * as ordersService from '@/modules/orders/orders.service';
 import { logger } from '@/lib/logger';
 import { ORDER_STATUS_LABELS, PAYMENT_STATUS_LABELS, formatAddress } from '@/modules/orders/orders.serializer';
@@ -38,8 +39,8 @@ import {
   customerCancelBlockedReason,
   isCustomerCancellable,
 } from '@/modules/orders/lifecycle';
-import { formatInvoiceFilename, generateInvoicePdf } from '@/integrations/pdf/invoice';
-import { getTaxConfig } from '@/modules/settings/settings.service';
+import { formatInvoiceFilename } from '@/integrations/pdf/invoice';
+import { renderInvoice } from '@/modules/orders/invoice-seller';
 import type { RequestHandler } from 'express';
 
 const log = logger.child({ module: 'customer.auth' });
@@ -180,6 +181,8 @@ customerAuthRouter.post(
       email: emailSchema,
       phone: phoneSchema.optional(),
       password: customerPasswordSchema,
+      /** The unticked "send me founder's letters and offers" box. */
+      marketingOptIn: z.boolean().optional().default(false),
     }),
   }),
   asyncHandler(async (req, res) => {
@@ -225,6 +228,8 @@ customerAuthRouter.post(
           select: { id: true, email: true, firstName: true, lastName: true },
         });
 
+    if (req.body.marketingOptIn) await marketing.recordOptIn(customer.id, customer.email);
+
     // Invalidate any old verification tokens for this customer
     await prisma.customerEmailVerification.updateMany({
       where: { customerId: customer.id, usedAt: null },
@@ -260,6 +265,26 @@ customerAuthRouter.post(
         message: 'Account created. Please check your email to verify your account.',
       },
     });
+  }),
+);
+
+/**
+ * One-click unsubscribe from marketing email, from the link in a broadcast.
+ * Public on purpose: the signed token is the authority (see marketing.ts), and
+ * nobody should have to sign in to stop receiving email.
+ */
+customerAuthRouter.post(
+  '/unsubscribe',
+  passwordResetLimiter,
+  validate({ body: z.object({ token: z.string().min(10).max(600) }) }),
+  asyncHandler(async (req, res) => {
+    const email = marketing.verifyUnsubscribeToken(req.body.token);
+    if (!email) {
+      throw new AppError(400, ErrorCode.VALIDATION_FAILED, 'This unsubscribe link is not valid. Write to info@zewafeeds.com and we will remove you.');
+    }
+    await marketing.optOut(email);
+    log.info('marketing unsubscribe recorded');
+    res.json({ data: { unsubscribed: true, email } });
   }),
 );
 
@@ -960,7 +985,7 @@ accountRouter.get(
       );
     }
 
-    const pdf = await generateInvoicePdf(order, await getTaxConfig());
+    const pdf = await renderInvoice(order);
 
     const customerName =
       (order.shippingAddress as any)?.name ||

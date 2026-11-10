@@ -53,6 +53,8 @@ const checkoutSchema = z.object({
   customerNote: z.string().trim().max(1000).transform(plainText).optional(),
   /** "Save this address for next time" on the checkout form. */
   saveAddress: z.boolean().optional().default(false),
+  /** The unticked "send me founder's letters and offers" box. */
+  marketingOptIn: z.boolean().optional().default(false),
   /**
    * The cart's Zewa Coins hold (ZSOP004 §4.3).
    *

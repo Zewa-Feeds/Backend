@@ -275,7 +275,7 @@ model ProductFamily {
   displayOrder Int @default(0)
 
   /// Max 200 chars (§5.2). Enforced in the DTO too.
-  shortDesc    String @db.VarChar(200)
+  shortDesc    String @db.VarChar(320)
   /// Sanitised Tiptap HTML — sanitised server-side on write, never trusted raw.
   fullDescHtml String @default("")
 
@@ -592,6 +592,13 @@ model ProductDraft {
 // ============================================================================
 
 model Order {
+  /// The seller block and tax basis printed on this order's invoice
+  /// ({name, address, gstin, state, stateCode, email, phone, gstRatePct,
+  /// gstInclusive}), frozen when the order is placed (or, for orders placed
+  /// before Nov 2026, the first time the invoice is produced). A GST invoice must
+  /// not change after issue, so a later change to the company's details or tax
+  /// settings never rewrites it. See modules/orders/invoice-seller.ts.
+  invoiceSnapshot Json?
   id      String @id @default(uuid())
   /// ZW-{YYYYMMDD}-{4-digit daily sequence}. Generated in the checkout txn from
   /// OrderCounter — never from COUNT(*).
@@ -885,6 +892,13 @@ model Customer {
   /// migration against live balances.
   phoneVerifiedAt DateTime?
   registeredAt    DateTime  @default(now())
+
+  /// When the customer ticked "send me founder's letters and offers" at signup
+  /// or checkout. Null = never asked or declined. Customers who registered
+  /// before consent was collected (MARKETING_CONSENT_FROM in
+  /// modules/customers/marketing.ts) are still emailed until they unsubscribe.
+  /// Unsubscribing is recorded in MarketingOptOut, by email.
+  marketingOptInAt DateTime?
 
   /// Provenance for a customer migrated from another platform, e.g. "Dukaan".
   /// Null for everyone who signed up or checked out on this site. The pair is
@@ -2475,14 +2489,14 @@ model FeedFinderRun {
 
   /// The answers exactly as the storefront holds them
   /// ({ species, size, mates, home, goal, count }).
-  answers Json
+  answers     Json
   /// "MATCH" or "NO_MATCH".
-  outcome String
+  outcome     String
   /// §8 case for a no-match run ("notlisted", "stingray", …); null on a match.
   noMatchCase String?
   /// The hero SKU on a match.
-  resultSku String?
-  addOnSkus String[] @default([])
+  resultSku   String?
+  addOnSkus   String[] @default([])
 
   /// Set when anything from the result screen went into the cart.
   addedToCart Boolean  @default(false)
@@ -2493,4 +2507,15 @@ model FeedFinderRun {
 
   @@index([createdAt])
   @@index([outcome, createdAt])
+}
+
+/// An address that clicked "unsubscribe" in a broadcast email. Keyed by email
+/// rather than customer so it also covers the CMS's custom-address sends.
+/// Broadcasts skip every address listed here. Ticking the marketing box again
+/// at signup or checkout deletes the row (fresh consent).
+model MarketingOptOut {
+  email     String   @id
+  createdAt DateTime @default(now())
+  /// Where the opt-out came from, e.g. "email-link".
+  source    String?
 }

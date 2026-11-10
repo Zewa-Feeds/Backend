@@ -239,7 +239,7 @@ async function main() {
       name: p.name,
       category: m.category,
       status: ProductStatus.DRAFT,
-      shortDesc: p.shortDescription.slice(0, 200),
+      shortDesc: p.shortDescription.slice(0, 320),
       fullDescHtml: toHtml(p.longParagraphs),
       proteinPct: proteinOf(p.nutrition),
       benefits: p.keyFeatures.map(cleanBullet).filter(Boolean).slice(0, 8),

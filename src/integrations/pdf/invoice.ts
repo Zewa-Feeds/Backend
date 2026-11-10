@@ -244,7 +244,39 @@ export function formatInvoiceFilename(
   return cleanName ? `${cleanInv}-${cleanName}.pdf` : `${cleanInv}.pdf`;
 }
 
-export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConfig): Promise<Uint8Array> {
+/**
+ * The seller block printed on an invoice. Frozen onto the order (see
+ * modules/orders/invoice-seller.ts) so that changing the company's name,
+ * address or GSTIN never rewrites an invoice already issued.
+ */
+export interface SellerDetails {
+  name: string;
+  address: string;
+  gstin: string;
+  state: string;
+  stateCode: string;
+  email: string;
+  phone: string;
+}
+
+/** Today's seller details, from the environment. Used only when an order has no frozen copy. */
+export function currentSellerDetails(): SellerDetails {
+  return {
+    name: env.COMPANY_NAME,
+    address: env.COMPANY_ADDRESS,
+    gstin: env.COMPANY_GSTIN,
+    state: env.COMPANY_STATE,
+    stateCode: env.COMPANY_STATE_CODE,
+    email: env.COMPANY_EMAIL,
+    phone: env.COMPANY_PHONE,
+  };
+}
+
+export async function generateInvoicePdf(
+  order: InvoiceOrder,
+  taxConfig: TaxConfig,
+  seller: SellerDetails = currentSellerDetails(),
+): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
   doc.setTitle(`Invoice ${order.invoiceNumber ?? order.orderNo}`);
   doc.setProducer('Zewa Feeds');
@@ -356,28 +388,28 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
   }
 
   text('INVOICE', MARGIN, y, { size: 18, font: bold });
-  textRight(env.COMPANY_NAME, PAGE_WIDTH - MARGIN, y, { size: 11, font: bold });
+  textRight(seller.name, PAGE_WIDTH - MARGIN, y, { size: 11, font: bold });
   y -= 16;
   /*
    * The registered address is long enough to run into the "Invoice"
    * heading on the left as a single right-aligned line, so it is wrapped on
    * commas into chunks that fit the right-hand column.
    */
-  for (const line of wrapAddress(env.COMPANY_ADDRESS)) {
+  for (const line of wrapAddress(seller.address)) {
     textRight(line, PAGE_WIDTH - MARGIN, y, { size: 8, color: MUTED });
     y -= 11;
   }
-  textRight(`GSTIN/UIN: ${env.COMPANY_GSTIN}`, PAGE_WIDTH - MARGIN, y, { size: 8, color: MUTED });
+  textRight(`GSTIN/UIN: ${seller.gstin}`, PAGE_WIDTH - MARGIN, y, { size: 8, color: MUTED });
   y -= 11;
   // State and code are both required on a GST invoice.
   textRight(
-    `State Name: ${env.COMPANY_STATE}, Code: ${env.COMPANY_STATE_CODE}`,
+    `State Name: ${seller.state}, Code: ${seller.stateCode}`,
     PAGE_WIDTH - MARGIN,
     y,
     { size: 8, color: MUTED },
   );
   y -= 11;
-  textRight(`${env.COMPANY_EMAIL} · ${env.COMPANY_PHONE}`, PAGE_WIDTH - MARGIN, y, {
+  textRight(`${seller.email} · ${seller.phone}`, PAGE_WIDTH - MARGIN, y, {
     size: 8,
     color: MUTED,
   });
@@ -596,7 +628,7 @@ export async function generateInvoicePdf(order: InvoiceOrder, taxConfig: TaxConf
     { size: 7.5, color: MUTED },
   );
   text('This is a computer-generated invoice.', MARGIN, footerY - 5, { size: 7.5, color: MUTED });
-  textRight(env.COMPANY_NAME, PAGE_WIDTH - MARGIN, footerY - 5, {
+  textRight(seller.name, PAGE_WIDTH - MARGIN, footerY - 5, {
     size: 7.5,
     color: MUTED,
   });

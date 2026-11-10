@@ -15,6 +15,7 @@ import { asyncHandler } from '@/middleware/asyncHandler';
 import { checkDatabase, prisma } from '@/lib/prisma';
 import { checkRedis } from '@/lib/redis';
 import { env } from '@/config/env';
+import { requireAuth, requireEnrolled2fa, requirePermission } from '@/middleware/auth';
 
 export const healthRouter = Router();
 
@@ -47,11 +48,17 @@ healthRouter.get(
 );
 
 /**
- * Deeper diagnostics. Deliberately not behind auth (it exposes no secrets) but it
- * does hit the database, so it sits apart from the polled endpoints.
+ * Deeper diagnostics: environment, Node version and live business counts.
+ *
+ * Admin-only. It exposes no secrets, but the order count is commercially
+ * sensitive (anyone polling it could track sales volume), and the runtime
+ * details help an attacker fingerprint the stack. Uptime monitors use /ready.
  */
 healthRouter.get(
   '/info',
+  requireAuth,
+  requireEnrolled2fa,
+  requirePermission('settings.manage'),
   asyncHandler(async (_req, res) => {
     const [products, orders, staff] = await Promise.all([
       prisma.productFamily.count({ where: { deletedAt: null } }),

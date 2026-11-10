@@ -1,0 +1,50 @@
+# Typecheck and the full test suite on every push and pull request.
+#
+# Postgres and Redis run as service containers on the same non-default ports
+# as docker/docker-compose.yml, so the committed .env.test works unchanged.
+# Nothing here can reach production: there is no .env in CI, and the seed
+# refuses any non-local database (src/lib/seedGuard.ts).
+#
+# To make this a gate, turn on branch protection for `main` in GitHub
+# (Settings > Branches): require a pull request and the "test" check.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: zewa
+          POSTGRES_PASSWORD: zewa_local_dev
+          POSTGRES_DB: zewa_feeds
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U zewa" --health-interval 5s --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ['6380:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Apply migrations to the CI database
+        run: node scripts/test-setup.mjs
+      - run: npm run typecheck
+      - run: npm test

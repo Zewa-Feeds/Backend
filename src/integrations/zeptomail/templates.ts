@@ -606,6 +606,8 @@ export interface CustomEmailInput {
   ctaUrl?: string | null;
   customerName?: string | null;
   preheader?: string | null;
+  /** Broadcasts only: one-click unsubscribe link, printed under the message. */
+  unsubscribeUrl?: string | null;
 }
 
 /**
@@ -633,7 +635,12 @@ export function buildCustomEmail(input: CustomEmailInput): { subject: string; ht
 
   const cta = input.ctaText && input.ctaUrl ? button(input.ctaText, input.ctaUrl) : '';
 
-  const fullBody = greeting + formattedBody + (cta ? `<div style="margin-top:24px;">${cta}</div>` : '');
+  const unsubscribe = input.unsubscribeUrl
+    ? `<p style="margin:28px 0 0;font-size:12px;line-height:1.6;color:#8a8f98;">You're receiving this because you bought from or signed up with Zewa Feeds. <a href="${esc(input.unsubscribeUrl)}" style="color:#8a8f98;text-decoration:underline;">Unsubscribe</a> from these emails. Order and delivery updates will still reach you.</p>`
+    : '';
+
+  const fullBody =
+    greeting + formattedBody + (cta ? `<div style="margin-top:24px;">${cta}</div>` : '') + unsubscribe;
 
   const subject = input.subject || input.heading;
   const html = shell(

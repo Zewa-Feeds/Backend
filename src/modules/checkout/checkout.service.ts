@@ -23,6 +23,8 @@ import {
   type Prisma,
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import * as marketing from '@/modules/customers/marketing';
+import { currentInvoiceSnapshot } from '@/modules/orders/invoice-seller';
 import { AppError, ErrorCode, conflict } from '@/lib/errors';
 import { logger } from '@/lib/logger';
 import { env } from '@/config/env';
@@ -70,6 +72,7 @@ export interface CheckoutInput {
   customerId?: string | null;
   /** Keep this address in the customer's address book for next time. */
   saveAddress?: boolean;
+  marketingOptIn?: boolean;
   /** The cart's Zewa Coins hold, if any (ZSOP004 §4.3). */
   coinCartKey?: string;
 }
@@ -337,6 +340,10 @@ export async function checkout(
    * Read before the transaction opens, like the affiliate attribution above, to
    * keep an extra round trip out of a transaction holding stock locks.
    */
+  // The seller details and GST basis this order's invoice will print, frozen
+  // now so later changes never rewrite it (modules/orders/invoice-seller.ts).
+  const invoiceSnapshot = await currentInvoiceSnapshot();
+
   let coinHold: { id: string; coins: number } | null = null;
   // `input.customerId` is the SIGNED-IN customer. A guest cannot hold coins, so
   // this is also the gate that stops an anonymous checkout claiming a hold.
@@ -621,6 +628,11 @@ export async function checkout(
         }
       }
 
+      // Ticked the marketing box: consent belongs to the email, guest or not.
+      if (input.marketingOptIn && customerId) {
+        await marketing.recordOptIn(customerId, input.email, tx);
+      }
+
       /*
        * Save the delivery address to the address book, when asked.
        *
@@ -673,6 +685,7 @@ export async function checkout(
         data: {
           orderNo,
           customerId,
+          invoiceSnapshot: invoiceSnapshot as unknown as Prisma.InputJsonValue,
           email: input.email.toLowerCase(),
           phone: input.phone,
           status: OrderStatus.PENDING,

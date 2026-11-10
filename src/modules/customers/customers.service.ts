@@ -9,6 +9,7 @@
  * cannot drift out of step with the orders they summarise.
  */
 import { AuditModule, CustomerStatus, PaymentStatus, type Prisma } from '@prisma/client';
+import { broadcastEligible, optedOutAmong, unsubscribeUrl } from './marketing';
 import { prisma } from '@/lib/prisma';
 import { badRequest, notFound } from '@/lib/errors';
 import { logger } from '@/lib/logger';
@@ -286,7 +287,7 @@ export async function sendCustomerEmail(
 
   if (input.audience === 'all') {
     const customers = await prisma.customer.findMany({
-      where: { status: CustomerStatus.ACTIVE },
+      where: { status: CustomerStatus.ACTIVE, ...broadcastEligible },
       select: { email: true, firstName: true, lastName: true },
     });
     recipients = customers.map((c) => ({
@@ -298,6 +299,7 @@ export async function sendCustomerEmail(
       where: {
         status: CustomerStatus.ACTIVE,
         orders: { some: {} },
+        ...broadcastEligible,
       },
       select: { email: true, firstName: true, lastName: true },
     });
@@ -336,15 +338,24 @@ export async function sendCustomerEmail(
     return true;
   });
 
-  if (uniqueRecipients.length === 0) {
-    throw badRequest('No valid recipients found.');
+  /*
+   * Whatever the audience, nobody who has unsubscribed is emailed again (see
+   * marketing.ts). They are counted as skipped so staff can see it happened.
+   */
+  const optedOut = await optedOutAmong(uniqueRecipients.map((r) => r.email));
+  const reachable = uniqueRecipients.filter((r) => !optedOut.has(r.email.toLowerCase()));
+
+  if (reachable.length === 0) {
+    throw badRequest(
+      optedOut.size > 0 ? 'Every selected recipient has unsubscribed from marketing email.' : 'No valid recipients found.',
+    );
   }
 
   let sentCount = 0;
   let failedCount = 0;
-  let skippedCount = 0;
+  let skippedCount = optedOut.size;
 
-  for (const recipient of uniqueRecipients) {
+  for (const recipient of reachable) {
     const rendered = buildCustomEmail({
       heading: input.heading,
       message: input.message,
@@ -352,6 +363,7 @@ export async function sendCustomerEmail(
       ctaText: input.ctaText,
       ctaUrl: input.ctaUrl,
       customerName: recipient.name,
+      unsubscribeUrl: unsubscribeUrl(recipient.email),
     });
 
     try {
@@ -373,7 +385,7 @@ export async function sendCustomerEmail(
 
   await writeAudit(ctx, {
     module: AuditModule.CUSTOMERS,
-    action: `Broadcast email "${input.subject}" sent to ${uniqueRecipients.length} recipient(s) (audience: ${input.audience}, sent: ${sentCount}, skipped: ${skippedCount}, failed: ${failedCount})`,
+    action: `Broadcast email "${input.subject}" sent to ${uniqueRecipients.length} recipient(s) (audience: ${input.audience}, sent: ${sentCount}, skipped: ${skippedCount} incl. ${optedOut.size} unsubscribed, failed: ${failedCount})`,
     recordId: `broadcast-${Date.now()}`,
   });
 
@@ -382,7 +394,9 @@ export async function sendCustomerEmail(
     sentCount,
     failedCount,
     skippedCount,
-    message: `Email dispatched to ${uniqueRecipients.length} recipient${uniqueRecipients.length === 1 ? '' : 's'}.`,
+    message:
+      `Email dispatched to ${reachable.length} recipient${reachable.length === 1 ? '' : 's'}.` +
+      (optedOut.size ? ` ${optedOut.size} skipped: unsubscribed from marketing email.` : ''),
   };
 }
 

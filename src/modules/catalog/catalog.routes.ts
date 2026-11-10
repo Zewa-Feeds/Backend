@@ -419,6 +419,8 @@ catalogRouter.get(
           state: ReviewState.APPROVED,
           // A 3★ "it was fine" is honest but not a testimonial.
           rating: { gte: 4 },
+          // Never quote a product the shop no longer sells.
+          family: { deletedAt: null, status: 'ACTIVE' },
         },
         select: {
           rating: true,
@@ -430,7 +432,7 @@ catalogRouter.get(
           family: { select: { name: true } },
         },
         orderBy: [{ rating: 'desc' }, { submittedAt: 'desc' }],
-        take: 60,
+        take: 200,
       }),
       prisma.productFamily.findMany({
         where: { deletedAt: null },
@@ -457,18 +459,34 @@ catalogRouter.get(
       siteRatings.map((r) => r.rating),
     );
 
-    const items = rows
-      .filter((r) => r.body.trim().length >= 60)
-      .slice(0, 12)
-      .map((r) => ({
-        // First name only, exactly as the product page does.
-        author: r.customer?.firstName ?? r.guestName ?? 'Verified buyer',
+    /*
+     * A spread, not just the top twelve. Taken straight from the sort, the
+     * carousel showed five Micro Pellets quotes and three in a row from "Raj",
+     * which read as duplicates (Nov 2026 review). So: at most two quotes per
+     * product, and one per author name.
+     */
+    const perProduct = new Map<string, number>();
+    const authorsSeen = new Set<string>();
+    const items = [];
+    for (const r of rows) {
+      if (items.length >= 12) break;
+      if (r.body.trim().length < 60) continue;
+      // First name only, exactly as the product page does.
+      const author = r.customer?.firstName ?? r.guestName ?? 'Verified buyer';
+      const authorKey = author.trim().toLowerCase();
+      const fromProduct = perProduct.get(r.family.name) ?? 0;
+      if (fromProduct >= 2 || (authorKey !== 'verified buyer' && authorsSeen.has(authorKey))) continue;
+      perProduct.set(r.family.name, fromProduct + 1);
+      authorsSeen.add(authorKey);
+      items.push({
+        author,
         rating: r.rating,
         title: r.title,
         body: r.body,
         product: r.family.name,
         source: r.externalSource,
-      }));
+      });
+    }
 
     res.setHeader('Cache-Control', CACHE_60S);
     res.json({ data: { average: summary.average, count: summary.count, items } });

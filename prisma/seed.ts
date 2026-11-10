@@ -28,7 +28,9 @@ import {
   Role,
   TwofaMethod,
 } from '@prisma/client';
+import 'dotenv/config';
 import bcrypt from 'bcryptjs';
+import { assertSeedTargetIsLocal } from '../src/lib/seedGuard';
 import { authenticator } from 'otplib';
 import { createCipheriv, randomBytes, createHash } from 'node:crypto';
 
@@ -69,7 +71,8 @@ const DEV_PASSWORD = 'zewa1234';
  * one authenticator entry covers every dev account.
  *
  * DEV ONLY. Real accounts generate a unique secret during enrolment (§14.3), and
- * this constant never reaches production because the seed is not run there.
+ * this constant never reaches production: the seed refuses any non-local database
+ * (src/lib/seedGuard.ts).
  */
 const DEV_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
 
@@ -460,6 +463,8 @@ const SETTINGS = {
 // SEED
 // ============================================================================
 async function main() {
+  // Before anything is written: never against production (see seedGuard.ts).
+  assertSeedTargetIsLocal();
   console.log('▸ Seeding Zewa Feeds database…\n');
 
   // ---- CMS users --------------------------------------------------------

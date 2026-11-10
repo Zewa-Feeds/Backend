@@ -16,8 +16,8 @@ import { currentUser, requirePermission } from '@/middleware/auth';
 import { enumListFilter, paginationSchema, validate } from '@/middleware/validate';
 import { plainText } from '@/lib/sanitize';
 import { auditContext } from '@/modules/audit/audit.service';
-import { formatInvoiceFilename, generateInvoicePdf } from '@/integrations/pdf/invoice';
-import * as settingsService from '@/modules/settings/settings.service';
+import { formatInvoiceFilename } from '@/integrations/pdf/invoice';
+import { renderInvoice } from '@/modules/orders/invoice-seller';
 import * as ordersService from './orders.service';
 
 export const ordersRouter = Router();
@@ -137,8 +137,7 @@ ordersRouter.get(
       return;
     }
 
-    const taxConfig = await settingsService.getTaxConfig();
-    const pdf = await generateInvoicePdf(order, taxConfig);
+    const pdf = await renderInvoice(order);
 
     const customerName =
       (order.shippingAddress as any)?.name ||

@@ -51,8 +51,8 @@ import {
   type CustomerTemplateName,
   type OrderEmailContext,
 } from '@/integrations/zeptomail/templates';
-import { formatInvoiceFilename, generateInvoicePdf } from '@/integrations/pdf/invoice';
-import * as settingsService from '@/modules/settings/settings.service';
+import { formatInvoiceFilename } from '@/integrations/pdf/invoice';
+import { renderInvoice } from '@/modules/orders/invoice-seller';
 import { paymentProvider } from '@/integrations/razorpay/payment.service';
 import * as couponsService from '@/modules/coupons/coupons.service';
 import * as loyaltyLifecycle from '@/modules/loyalty/lifecycle.service';
@@ -1425,8 +1425,7 @@ export async function sendOrderEmail(
 
   if (input.attachInvoice) {
     try {
-      const taxConfig = await settingsService.getTaxConfig();
-      const pdf = await generateInvoicePdf(order as any, taxConfig);
+      const pdf = await renderInvoice(order as any);
       const invoiceNo = order.invoiceNumber || orderNo;
       attachments.push({
         name: formatInvoiceFilename(invoiceNo, emailCtx.customerName),

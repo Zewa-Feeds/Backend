@@ -248,12 +248,14 @@ export const productBodySchema = z.object({
   status: statusSchema.optional(),
   badge: badgeSchema,
 
-  // §5.2: max 200 characters, plain text (it renders under the product name).
+  // Plain text, under the product name. §5.2 said 200 characters, but the
+  // product brief's copy runs to ~290 and was being cut mid-word, so the cap is
+  // 320 (Nov 2026). Cards clamp it to three lines.
   shortDesc: z
     .string()
     .trim()
     .min(1, 'Short description is required.')
-    .max(200, 'Maximum 200 characters.')
+    .max(320, 'Maximum 320 characters.')
     .transform(plainText),
 
   // Rich text — sanitised against the allowlist.
