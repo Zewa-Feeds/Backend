@@ -29,8 +29,10 @@ let categoryOfInterest: string;
 
 beforeAll(async () => {
   // A category that exists in this schema, whatever the enum happens to hold.
+  // A fresh database (CI) has no products yet, so fall back to a category the
+  // categories migration always creates.
   const anyVariant = await prisma.productFamily.findFirst({ select: { category: true } });
-  categoryOfInterest = anyVariant!.category;
+  categoryOfInterest = anyVariant?.category ?? 'FLOATING_PELLETS';
 
   const created = await prisma.coupon.create({
     data: {
