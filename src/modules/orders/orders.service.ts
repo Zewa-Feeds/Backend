@@ -1039,6 +1039,25 @@ export async function reconcilePayment(
 
   // Restore and confirm
   const updated = await prisma.$transaction(async (tx) => {
+    /*
+     * Claim the order first, atomically. Razorpay sends payment.captured AND
+     * order.paid for one payment, seconds apart; on 27ZFO157 (11 Nov 2026) both
+     * read "cancelled + unpaid" before either committed, so the order was
+     * restored twice: two confirmation emails, two staff alerts, and its stock
+     * taken twice. The conditional update lets exactly one caller through;
+     * Postgres re-checks the WHERE after the row lock, so the loser sees 0.
+     */
+    const nextStatus = order.status === OrderStatus.CANCELLED ? OrderStatus.PENDING : order.status;
+    const claim = await tx.order.updateMany({
+      where: { id: order.id, status: order.status, paymentStatus: { not: PaymentStatus.PAID } },
+      data: {
+        status: nextStatus,
+        paymentStatus: PaymentStatus.PAID,
+        razorpayPaymentId: capturedPaymentId,
+      },
+    });
+    if (claim.count === 0) return null;
+
     // If order was cancelled, re-decrement stock for items
     if (order.status === OrderStatus.CANCELLED) {
       for (const item of order.items) {
@@ -1050,17 +1069,6 @@ export async function reconcilePayment(
         }
       }
     }
-
-    const nextStatus = order.status === OrderStatus.CANCELLED ? OrderStatus.PENDING : order.status;
-
-    await tx.order.update({
-      where: { id: order.id },
-      data: {
-        status: nextStatus,
-        paymentStatus: PaymentStatus.PAID,
-        razorpayPaymentId: capturedPaymentId,
-      },
-    });
 
     await writeAudit(
       ctx,
@@ -1102,6 +1110,19 @@ export async function reconcilePayment(
       emailId: emailRow.id,
     };
   });
+
+  if (!updated) {
+    // Another signal for the same payment got there first and did the work.
+    log.info({ orderNo, capturedPaymentId }, 'payment already reconciled by a concurrent call — skipping');
+    const current = await prisma.order.findUniqueOrThrow({ where: { id: order.id }, select: ORDER_SELECT });
+    return {
+      reconciled: true,
+      message: 'Order payment is already recorded and verified.',
+      order: serializeOrder(current),
+      paymentId: capturedPaymentId,
+      amountPaise: capturedAmountPaise,
+    };
+  }
 
   await emailQueue
     .add('customer-email', {

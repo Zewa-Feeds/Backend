@@ -42,14 +42,19 @@ describe('payment.failed webhook', () => {
     expect(src).not.toMatch(/payment\.failed and others need no action/);
   });
 
-  it('enqueues the release immediately rather than after the unpaid TTL', async () => {
+  it('brings the release forward to five minutes, not the unpaid TTL and not zero', async () => {
     const src = await import('node:fs').then((fs) =>
       fs.readFileSync('src/modules/checkout/webhook.routes.ts', 'utf8'),
     );
     const branch = src.slice(src.indexOf("'payment.failed'"));
-    // Reuses the existing job, with no delay — the 30-minute wait is the bug.
+    // Reuses the existing job. Not the 30-minute TTL (the original bug), and
+    // not immediately either: an in-window retry needs time to be captured
+    // before the gateway check runs (27ZFO152, 27ZFO157).
     expect(branch).toMatch(/release-unpaid/);
     expect(branch).not.toMatch(/UNPAID_ORDER_TTL_MINUTES/);
+    expect(branch).toMatch(/delay: PAYMENT_FAILED_RELEASE_DELAY_MS/);
+    const { PAYMENT_FAILED_RELEASE_DELAY_MS } = await import('./webhook.routes');
+    expect(PAYMENT_FAILED_RELEASE_DELAY_MS).toBe(5 * 60 * 1000);
   });
 
   it('removes the delayed sweep before adding the immediate one', async () => {

@@ -1056,10 +1056,17 @@ export async function confirmPayment(
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    await tx.order.update({
-      where: { id: order.id },
+    /*
+     * Atomic claim. The browser's verify call, payment.captured and order.paid
+     * often arrive within the same second, and all three passed the PAID check
+     * above before any committed (duplicate "Payment confirmed" audit rows on
+     * ~20 orders by Nov 2026). Only the caller whose update matches goes on.
+     */
+    const claim = await tx.order.updateMany({
+      where: { id: order.id, paymentStatus: { not: PaymentStatus.PAID }, status: { not: OrderStatus.CANCELLED } },
       data: { paymentStatus: PaymentStatus.PAID, razorpayPaymentId: gatewayPaymentId },
     });
+    if (claim.count === 0) return null;
     await writeAudit(
       { ...ctx, actorId: null, actorName: 'Payment Gateway', actorRole: 'System' },
       {
@@ -1091,6 +1098,15 @@ export async function confirmPayment(
 
     return tx.order.findUniqueOrThrow({ where: { id: order.id }, select: ORDER_SELECT });
   });
+
+  if (!updated) {
+    log.info({ orderNo }, 'payment confirmed by a concurrent signal — ignoring duplicate');
+    const current = await prisma.order.findUniqueOrThrow({ where: { id: order.id }, select: ORDER_SELECT });
+    if (current.status === OrderStatus.CANCELLED && current.paymentStatus !== PaymentStatus.PAID) {
+      throw conflict('This order was cancelled before payment completed. Please place a new order.', ErrorCode.CONFLICT);
+    }
+    return serializeOrder(current);
+  }
 
   // The release sweep is no longer needed.
   await paymentQueue

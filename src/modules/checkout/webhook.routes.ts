@@ -21,6 +21,9 @@ import { asyncHandler } from '@/middleware/asyncHandler';
 import { logger } from '@/lib/logger';
 import { prisma } from '@/lib/prisma';
 import { paymentProvider } from '@/integrations/razorpay/payment.service';
+
+/** How long after payment.failed the order's holds are released (see below). */
+export const PAYMENT_FAILED_RELEASE_DELAY_MS = 5 * 60 * 1000;
 import { auditContext } from '@/modules/audit/audit.service';
 import * as checkoutService from '@/modules/checkout/checkout.service';
 import * as ordersService from '@/modules/orders/orders.service';
@@ -199,12 +202,22 @@ webhookRouter.post(
              * and the customer would still wait out the sweep.
              */
             await paymentQueue.remove(`release-${orderNo}`).catch(() => undefined);
+            /*
+             * Five minutes, not immediately. Razorpay's window lets the
+             * customer retry right after a failed attempt (same gateway order).
+             * Released at once, the gateway check ran before the retry was
+             * captured, so the order was cancelled, the customer was emailed
+             * "cancelled", and seconds later the capture had to restore it
+             * (27ZFO152, 27ZFO157). A customer who instead closes the window is
+             * released by the storefront itself; this is the backstop for a
+             * dead tab, where five minutes costs nothing.
+             */
             await paymentQueue.add(
               'release-unpaid',
               { kind: 'release-unpaid', orderNo },
-              { jobId: `release-${orderNo}` },
+              { jobId: `release-${orderNo}`, delay: PAYMENT_FAILED_RELEASE_DELAY_MS },
             );
-            log.info({ orderNo, paymentId: payment?.id }, 'payment failed — releasing holds now');
+            log.info({ orderNo, paymentId: payment?.id }, 'payment failed — releasing holds in 5 minutes unless a retry succeeds');
           } catch (err) {
             log.error({ err, orderNo }, 'could not bring the release forward; the TTL sweep still applies');
           }

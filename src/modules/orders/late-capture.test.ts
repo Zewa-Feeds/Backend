@@ -131,6 +131,25 @@ describe('a payment captured after the order was cancelled as unpaid', () => {
     expect(redemption.confirmedAt).not.toBeNull();
   });
 
+  it('restores once when payment.captured and order.paid arrive together (27ZFO157)', async () => {
+    const order = await cancelledUnpaidOrder('twin');
+    const before = await prisma.productVariant.findUniqueOrThrow({ where: { sku: variantSku }, select: { stock: true } });
+
+    const payment = { id: `pay_${TAG}twin`, amountPaise: order.totalPaise };
+    const outcomes = await Promise.all([
+      ordersService.recoverLateCapture(order.orderNo, payment, ctx as never),
+      ordersService.recoverLateCapture(order.orderNo, payment, ctx as never),
+    ]);
+    expect(outcomes).toEqual(['restored', 'restored']);
+
+    const emails = await prisma.emailLog.count({ where: { orderId: order.id, template: 'order-placed' } });
+    expect(emails).toBe(1);
+    const restores = await prisma.auditLog.count({ where: { recordId: order.orderNo, action: { startsWith: 'Payment reconciled' } } });
+    expect(restores).toBe(1);
+    const after = await prisma.productVariant.findUniqueOrThrow({ where: { sku: variantSku }, select: { stock: true } });
+    expect(after.stock).toBe(before.stock - 1);
+  });
+
   it('does not touch an order that is not cancelled-and-unpaid', async () => {
     const order = await cancelledUnpaidOrder('paid');
     await ordersService.recoverLateCapture(order.orderNo, { id: `pay_${TAG}paid`, amountPaise: order.totalPaise }, ctx as never);
