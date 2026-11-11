@@ -42,6 +42,7 @@ const EXPECTED_SWEEPS = [
   'loyalty-reconcile',
   'publish-scheduled-articles',
   'recover-late-payments',
+  'weekly-data-export',
 ] as const;
 
 describe('the recurring schedule', () => {

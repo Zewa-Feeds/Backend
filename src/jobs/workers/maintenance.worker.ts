@@ -13,6 +13,7 @@
  * inside an HTTP request or compete with one.
  */
 import { Worker, type Job } from 'bullmq';
+import { sendWeeklyExport } from '@/modules/exports/weekly-export';
 import { queueRedis, redis } from '@/lib/redis';
 import { logger } from '@/lib/logger';
 import { QUEUE_NAMES, type MaintenanceJob } from '@/jobs/queues';
@@ -150,6 +151,11 @@ export function startMaintenanceWorker(): Worker<MaintenanceJob> {
       if (job.data.kind === 'recover-late-payments') {
         const outcome = await withLockNamed('zewa:maintenance:late-payments:lock', sweepLateCaptures);
         if (outcome !== 'skipped' && (outcome.restored > 0 || outcome.flagged > 0)) log.warn(outcome, 'late-capture sweep found paid cancelled orders');
+        return;
+      }
+      if (job.data.kind === 'weekly-data-export') {
+        const outcome = await withLockNamed('zewa:maintenance:weekly-export:lock', () => sendWeeklyExport());
+        if (outcome !== 'skipped' && !outcome.sent) log.error(outcome, 'weekly data export was not sent');
         return;
       }
       if (job.data.kind.startsWith('loyalty-')) return handleLoyalty(job.data.kind);

@@ -121,7 +121,12 @@ export interface RecoverLatePaymentsJob {
   kind: 'recover-late-payments';
 }
 
-export type MaintenanceJob = ReconcileMediaJob | LoyaltySweepJob | PublishScheduledJob | RecoverLatePaymentsJob;
+export interface WeeklyExportJob {
+  /** Email every table as an Excel workbook (modules/exports/weekly-export.ts). */
+  kind: 'weekly-data-export';
+}
+
+export type MaintenanceJob = ReconcileMediaJob | LoyaltySweepJob | PublishScheduledJob | RecoverLatePaymentsJob | WeeklyExportJob;
 
 /**
  * Make the storefront serve a website publication, and prove it.
@@ -257,6 +262,21 @@ export async function scheduleMaintenance(): Promise<void> {
       jobId: 'recover-late-payments',
       removeOnComplete: { count: 24 },
       removeOnFail: { count: 24 },
+    },
+  );
+
+  /*
+   * Weekly data export, Mondays 06:00 IST. Supabase Free keeps no backups,
+   * so this emailed workbook is the business's own copy.
+   */
+  await maintenanceQueue.add(
+    'weekly-data-export',
+    { kind: 'weekly-data-export' },
+    {
+      repeat: { pattern: '0 6 * * 1', tz: 'Asia/Kolkata' },
+      jobId: 'weekly-data-export',
+      removeOnComplete: { count: 8 },
+      removeOnFail: { count: 8 },
     },
   );
 

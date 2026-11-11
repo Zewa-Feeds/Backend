@@ -163,6 +163,8 @@ const schema = z.object({
   ZEPTOMAIL_WEBHOOK_KEY: optionalStr,
 
   SENTRY_DSN: optionalUrl,
+  /** Where the weekly Excel export of every table is emailed (jobs: weekly-data-export). */
+  DATA_EXPORT_EMAIL: z.string().email().default('it@zewafeeds.com'),
 
   // ---- Company (invoices, §6.5) -------------------------------------------
   COMPANY_NAME: z.string().default('Zewa Ecosystems Pvt. Ltd'),
