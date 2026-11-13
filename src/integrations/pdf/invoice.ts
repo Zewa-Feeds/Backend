@@ -51,7 +51,16 @@ export interface InvoiceOrder {
   phone: string;
   shippingAddress: unknown;
   subtotalPaise: number;
+  /** Everything taken off the order: coupons AND Zewa Seeds (checkout adds the two). */
   discountPaise: number;
+  /**
+   * Rupee value of the Zewa Seeds redeemed on this order (1 Seed = ₹1), from
+   * OrderLoyalty.coinsRedeemed. Seeds are a discount, not a payment (§11.2), so
+   * they reduce the taxable value and get their own "Less:" line. Missing on
+   * 27ZFO158's first invoice (Nov 2026): the ₹33 of Seeds sat inside
+   * discountPaise with no line, so the rows didn't add up to the Grand Total.
+   */
+  seedsRedeemedPaise?: number;
   shippingPaise: number;
   totalPaise: number;
   couponCode?: string | null;
@@ -152,14 +161,16 @@ export function resolveOrderAppliedCoupons(
     const nonShipping = list.filter((c) => c.scope !== 'shipping');
     const nonShippingTotal = nonShipping.reduce((sum, c) => sum + c.amountPaise, 0);
     const firstNonShipping = nonShipping[0];
-    if (nonShippingTotal === 0 && order.discountPaise > 0 && firstNonShipping) {
-      firstNonShipping.amountPaise = order.discountPaise;
+    const couponOnlyDiscount = order.discountPaise - (order.seedsRedeemedPaise ?? 0);
+    if (nonShippingTotal === 0 && couponOnlyDiscount > 0 && firstNonShipping) {
+      firstNonShipping.amountPaise = couponOnlyDiscount;
     }
     return list;
   }
 
-  if (order.couponCode && order.discountPaise > 0) {
-    return [{ code: order.couponCode, scope: 'cart', amountPaise: order.discountPaise }];
+  const couponOnly = order.discountPaise - (order.seedsRedeemedPaise ?? 0);
+  if (order.couponCode && couponOnly > 0) {
+    return [{ code: order.couponCode, scope: 'cart', amountPaise: couponOnly }];
   }
 
   return [];
@@ -305,9 +316,19 @@ export async function generateInvoicePdf(
     shippingDiscountPaise = shippingFeePaise;
   }
 
-  // Cart discount pro-rata across item lines
-  const totalCartDiscountPaise = cartCoupons.reduce((sum, c) => sum + c.amountPaise, 0);
-  const lineDiscounts = allocateCartDiscount(order.items, totalCartDiscountPaise);
+  // Cart discount pro-rata across item lines: cart coupons plus Zewa Seeds,
+  // which apply to products only, never shipping.
+  const seedsPaise = Math.max(0, order.seedsRedeemedPaise ?? 0);
+  const couponLineDiscounts = allocateCartDiscount(
+    order.items,
+    cartCoupons.reduce((sum, c) => sum + c.amountPaise, 0),
+  );
+  // Seeds split pro-rata over what is left of each line after its coupons.
+  const seedLineDiscounts = allocateCartDiscount(
+    order.items.map((i, idx) => ({ lineTotalPaise: Math.max(0, i.lineTotalPaise - (couponLineDiscounts[idx] ?? 0)) })),
+    seedsPaise,
+  );
+  const lineDiscounts = couponLineDiscounts.map((d, idx) => d + (seedLineDiscounts[idx] ?? 0));
 
   const productTaxRatePct = Number(order.items[0]?.taxRatePct ?? taxConfig.gstRatePct ?? 0);
   const taxableLines: TaxableLine[] = [
@@ -491,7 +512,11 @@ export async function generateInvoicePdf(
   rule(y);
   y -= 14;
 
-  const cartCodeLabel = cartCoupons.map((c) => c.code).join(', ');
+  // One source fits beside the amount ("31.40 (SPECIAL10)"). Two or more would
+  // run into the GROSS column, so the line shows the amount alone and the totals
+  // block below names each discount.
+  const discountSources = [...cartCoupons.map((c) => c.code), ...(seedsPaise > 0 ? ['Seeds'] : [])];
+  const cartCodeLabel = discountSources.length === 1 ? discountSources[0] : '';
 
   for (let idx = 0; idx < order.items.length; idx++) {
     const item = order.items[idx];
@@ -583,6 +608,12 @@ export async function generateInvoicePdf(
     if (c.amountPaise > 0) {
       totalRow(`Less: ${c.code}`, `- ${money(c.amountPaise)}`);
     }
+  }
+
+  // 2b. Less: Zewa Seeds
+  if (seedsPaise > 0) {
+    const seeds = Math.round(seedsPaise / 100);
+    totalRow(`Less: Zewa Seeds (${seeds} Seed${seeds === 1 ? '' : 's'})`, `- ${money(seedsPaise)}`);
   }
 
   // 3. Less: Shipping coupon

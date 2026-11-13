@@ -250,3 +250,14 @@ describe('generateInvoicePdf', () => {
     expect(pdfBytes.length).toBeGreaterThan(1000);
   });
 });
+
+describe('Zewa Seeds on the invoice (27ZFO158)', () => {
+  it('a coupon fallback never absorbs the Seeds part of discountPaise', () => {
+    const coupons = resolveOrderAppliedCoupons({
+      orderNo: 'X', invoiceNumber: null, placedAt: new Date(), email: 'a@b.c', phone: '1', shippingAddress: {},
+      subtotalPaise: 31400, discountPaise: 3140 + 3300, seedsRedeemedPaise: 3300, shippingPaise: 0, totalPaise: 24960,
+      couponCode: 'SPECIAL10', items: [],
+    } as InvoiceOrder);
+    expect(coupons).toEqual([{ code: 'SPECIAL10', scope: 'cart', amountPaise: 3140 }]);
+  });
+});

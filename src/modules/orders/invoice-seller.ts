@@ -56,6 +56,15 @@ export async function invoiceSnapshotFor(orderNo: string): Promise<InvoiceSnapsh
 /** Render an order's invoice from its frozen seller details and tax basis. */
 export async function renderInvoice(order: InvoiceOrder): Promise<Uint8Array> {
   const snap = await invoiceSnapshotFor(order.orderNo);
+  // Seeds redeemed: the order's total discount includes them, but only the
+  // loyalty record says how much of it was Seeds (1 Seed = ₹1).
+  if (order.seedsRedeemedPaise === undefined) {
+    const loyalty = await prisma.orderLoyalty.findFirst({
+      where: { order: { orderNo: order.orderNo } },
+      select: { coinsRedeemed: true },
+    });
+    order = { ...order, seedsRedeemedPaise: (loyalty?.coinsRedeemed ?? 0) * 100 };
+  }
   const { gstRatePct, gstInclusive, ...seller } = snap;
   return generateInvoicePdf(order, { gstRatePct, gstInclusive, sellerState: seller.state }, seller);
 }
