@@ -28,7 +28,7 @@ import { type AuditContext, writeAudit } from '@/modules/audit/audit.service';
 import { publishQueue } from '@/jobs/queues';
 import { deployHookConfigured } from '@/integrations/storefront/revalidate';
 import type { Issue } from './placements';
-import { DEFAULT_FOUNDER_CARD, DEFAULT_MEDIA_UPDATES, type SiteSections, siteSectionsSchema } from './site.schemas';
+import { DEFAULT_BLOG_QUOTE, DEFAULT_FOUNDER_CARD, DEFAULT_MEDIA_UPDATES, type SiteSections, siteSectionsSchema } from './site.schemas';
 import {
   type ArticleSource,
   type ResolvedArticle,
@@ -67,7 +67,7 @@ export const DEFAULT_SECTIONS: SiteSections = {
     proof: { eyebrow: '', title: '', intro: '', stats: [], footnote: '' },
   },
   products: { heroBanner: { enabled: false, image: null, alt: '' } },
-  blog: { featuredSlug: null, topics: ['All'] },
+  blog: { featuredSlug: null, topics: ['All'], quote: DEFAULT_BLOG_QUOTE },
   about: {
     storyVideo: { youtubeId: 'gcnpEOW09k0', title: 'The Zewa story' },
     founder: { enabled: false, portrait: null, alt: '' },

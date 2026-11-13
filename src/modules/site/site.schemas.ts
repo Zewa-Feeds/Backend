@@ -17,6 +17,12 @@ import { z } from 'zod';
 // eslint-disable-next-line no-control-regex -- stripping control characters is the point
 const clean = (v: string) => v.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim();
 
+/** The Knowledge Hub pull quote as the page shipped with it (blog.quote default). */
+export const DEFAULT_BLOG_QUOTE = {
+  text: 'Every formula we publish is cross-referenced with actual lab digestibility data — not marketing claims.',
+  attribution: 'Zewa Research Team',
+};
+
 export const text = (max: number) => z.string().max(max * 2).transform(clean).pipe(z.string().max(max));
 export const requiredText = (max: number, message = 'Required.') =>
   text(max).pipe(z.string().min(1, message));
@@ -421,6 +427,12 @@ export const siteSectionsSchema = z.object({
     /** Null = newest article. */
     featuredSlug: slug.nullable().default(null),
     topics: z.array(requiredText(40)).min(1).max(12),
+    /**
+     * The pull quote between the article grid and "More articles on the way".
+     * Added Nov 2026; the default is the wording the page shipped with, so
+     * older drafts pick it up unchanged.
+     */
+    quote: z.object({ text: requiredText(240), attribution: text(80) }).default(DEFAULT_BLOG_QUOTE),
   }),
   about: z.object({
     storyVideo: z.object({
