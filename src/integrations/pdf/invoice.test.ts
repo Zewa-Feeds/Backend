@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatInvoiceFilename,
   resolveOrderAppliedCoupons,
+  wrapToWidth,
   allocateCartDiscount,
   generateInvoicePdf,
   type InvoiceOrder,
@@ -259,5 +260,20 @@ describe('Zewa Seeds on the invoice (27ZFO158)', () => {
       couponCode: 'SPECIAL10', items: [],
     } as InvoiceOrder);
     expect(coupons).toEqual([{ code: 'SPECIAL10', scope: 'cart', amountPaise: 3140 }]);
+  });
+});
+
+describe('wrapToWidth (long customer addresses, 27ZFI032)', () => {
+  const measure = (v: string) => v.length; // one unit per character
+  it('wraps on spaces within the width', () => {
+    expect(wrapToWidth('8 B Artha Reviera Chandapura Anekal Road', 15, measure)).toEqual(['8 B Artha', 'Reviera', 'Chandapura', 'Anekal Road']);
+  });
+  it('breaks a single word wider than the column', () => {
+    const lines = wrapToWidth('Supercalifragilisticexpialidocious', 10, measure);
+    expect(lines.every((l) => l.length <= 10)).toBe(true);
+    expect(lines.join('')).toBe('Supercalifragilisticexpialidocious');
+  });
+  it('leaves a short line alone', () => {
+    expect(wrapToWidth('Bangalore 562106', 40, measure)).toEqual(['Bangalore 562106']);
   });
 });

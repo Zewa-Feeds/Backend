@@ -242,6 +242,42 @@ function wrapAddress(address: string, maxChars = 60): string[] {
 }
 
 /**
+ * Word-wrap text to a width in points, using the real glyph widths.
+ *
+ * Customer address fields are free text and often one long line ("8 B Artha
+ * Reviera Chandapura Anekal Road, Marsur Gate Junction, Landmark…"); drawn
+ * as-is it ran off the right edge of the page (27ZFI032, Nov 2026). Breaks on
+ * spaces; a single word wider than the column is broken by characters.
+ */
+export function wrapToWidth(value: string, maxWidth: number, measure: (s: string) => number): string[] {
+  const words = value.replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  const lines: string[] = [];
+  let current = '';
+  const pushWord = (word: string) => {
+    // A word too wide for any line: split it by characters.
+    let rest = word;
+    while (measure(rest) > maxWidth && rest.length > 1) {
+      let cut = rest.length - 1;
+      while (cut > 1 && measure(rest.slice(0, cut)) > maxWidth) cut--;
+      lines.push(rest.slice(0, cut));
+      rest = rest.slice(cut);
+    }
+    return rest;
+  };
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (measure(candidate) <= maxWidth) {
+      current = candidate;
+      continue;
+    }
+    if (current) lines.push(current);
+    current = pushWord(word);
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+/**
  * Sanitize and format invoice download filename as:
  * {invoiceNumber}-{customerName}.pdf
  * e.g. 27ZFI003-Nikhildev M.pdf
@@ -319,9 +355,16 @@ export async function generateInvoicePdf(
   // Cart discount pro-rata across item lines: cart coupons plus Zewa Seeds,
   // which apply to products only, never shipping.
   const seedsPaise = Math.max(0, order.seedsRedeemedPaise ?? 0);
+  /*
+   * Cart AND item coupons come off the product lines. Item-scope coupons
+   * (checkout records SPECIAL10 that way) used to be left out here, so the
+   * line showed 0.00 discount and an overstated taxable value while the
+   * totals block still subtracted them (27ZFI032, Nov 2026). Each line's own
+   * allocatedCouponDiscountPaise is used when it adds up; otherwise pro-rata.
+   */
   const couponLineDiscounts = allocateCartDiscount(
     order.items,
-    cartCoupons.reduce((sum, c) => sum + c.amountPaise, 0),
+    [...cartCoupons, ...itemCoupons].reduce((sum, c) => sum + c.amountPaise, 0),
   );
   // Seeds split pro-rata over what is left of each line after its coupons.
   const seedLineDiscounts = allocateCartDiscount(
@@ -447,8 +490,11 @@ export async function generateInvoicePdf(
   y -= 12;
   // §6.5: entered manually to match the Tally sequence. No auto-generation.
   text(order.invoiceNumber ?? '—', MARGIN, y, { size: 10, font: bold });
-  text(addr.name ?? '—', colRight, y, { size: 10, font: bold });
+  const addrWidth = PAGE_WIDTH - MARGIN - colRight;
+  const nameLines = wrapToWidth(addr.name ?? '—', addrWidth, (v) => bold.widthOfTextAtSize(v, 10));
+  for (const [i, nl] of nameLines.entries()) text(nl, colRight, y - i * 12, { size: 10, font: bold });
   y -= 14;
+  const nameExtra = (nameLines.length - 1) * 12;
 
   const metaRows: [string, string][] = [
     ['Order Number', order.orderNo],
@@ -467,17 +513,22 @@ export async function generateInvoicePdf(
     order.email,
   ].filter((v): v is string => Boolean(v));
 
-  const rowCount = Math.max(metaRows.length, addressLines.length);
-  for (let i = 0; i < rowCount; i++) {
-    const meta = metaRows[i];
-    if (meta) {
-      text(meta[0], MARGIN, y, { size: 7.5, color: MUTED });
-      text(meta[1], MARGIN + 90, y, { size: 8.5 });
-    }
-    const line = addressLines[i];
-    if (line) text(line, colRight, y, { size: 8.5, color: i === 0 ? INK : MUTED });
-    y -= 12;
+  // The two columns run independently: a long address wraps over as many
+  // lines as it needs without stretching the invoice details beside it.
+  let yLeft = y;
+  for (const [label, value] of metaRows) {
+    text(label, MARGIN, yLeft, { size: 7.5, color: MUTED });
+    text(value, MARGIN + 90, yLeft, { size: 8.5 });
+    yLeft -= 12;
   }
+  let yRight = y - nameExtra;
+  addressLines.forEach((field, i) => {
+    for (const line of wrapToWidth(field, addrWidth, (v) => font.widthOfTextAtSize(v, 8.5))) {
+      text(line, colRight, yRight, { size: 8.5, color: i === 0 ? INK : MUTED });
+      yRight -= 12;
+    }
+  });
+  y = Math.min(yLeft, yRight);
 
   y -= 8;
   rule(y);
@@ -515,7 +566,7 @@ export async function generateInvoicePdf(
   // One source fits beside the amount ("31.40 (SPECIAL10)"). Two or more would
   // run into the GROSS column, so the line shows the amount alone and the totals
   // block below names each discount.
-  const discountSources = [...cartCoupons.map((c) => c.code), ...(seedsPaise > 0 ? ['Seeds'] : [])];
+  const discountSources = [...cartCoupons.map((c) => c.code), ...itemCoupons.map((c) => c.code), ...(seedsPaise > 0 ? ['Seeds'] : [])];
   const cartCodeLabel = discountSources.length === 1 ? discountSources[0] : '';
 
   for (let idx = 0; idx < order.items.length; idx++) {
