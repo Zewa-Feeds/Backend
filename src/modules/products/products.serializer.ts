@@ -91,6 +91,22 @@ export function stockStatus(units: number): StockStatus {
   return 'In Stock';
 }
 
+/**
+ * Stock judged per SKU, not per family.
+ *
+ * A family total hides an empty pack: Micro Pellets M3 showed "In Stock · 26"
+ * while its 45 g bottle and 1 kg pouch were both at 0 (Nov 2026). The worst
+ * active SKU decides the family's state: any at 0 → Out of Stock, any under
+ * LOW_STOCK_THRESHOLD → Low Stock. Inactive SKUs aren't for sale and don't count.
+ */
+export function skuStockSummary(variants: { stock: number; isActive: boolean }[]) {
+  const active = variants.filter((v) => v.isActive);
+  const out = active.filter((v) => v.stock <= 0).length;
+  const low = active.filter((v) => v.stock > 0 && v.stock < LOW_STOCK_THRESHOLD).length;
+  const worst: StockStatus = active.length === 0 || out > 0 ? 'Out of Stock' : low > 0 ? 'Low Stock' : 'In Stock';
+  return { worst, out, low, activeSkus: active.length };
+}
+
 // ---- Selects ---------------------------------------------------------------
 
 export const VARIANT_SELECT = {
@@ -235,7 +251,9 @@ export function serializeFamily(family: FamilyRow, role?: Role) {
     seoTitle: family.seoTitle,
     seoDesc: family.seoDesc,
     stock: totalStock,
-    stockStatus: stockStatus(totalStock),
+    /** Worst active SKU (see skuStockSummary), not the family total. */
+    stockStatus: skuStockSummary(family.variants).worst,
+    skuStock: skuStockSummary(family.variants),
     /*
      * Flatten variant.sku onto each asset so the CMS editor can show and edit
      * which pack it belongs to. Without this the editor cannot round-trip the
@@ -310,6 +328,7 @@ export function serializeListRow(family: FamilyRow, role?: Role) {
     protein: full.protein,
     stock: full.stock,
     stockStatus: full.stockStatus,
+    skuStock: full.skuStock,
     variantCount: family.variants.length,
     variants: full.variants,
     // Position 0 is the lead asset, but a thumbnail must be an image: a video

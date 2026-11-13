@@ -36,7 +36,6 @@ import type { Role } from '@prisma/client';
 import {
   categoryLabel,
   FAMILY_SELECT,
-  LOW_STOCK_THRESHOLD,
   serializeFamily,
   serializeListRow,
   toPaise,
@@ -78,7 +77,7 @@ export async function list(params: ListQuery, role: Role) {
       : {}),
   };
 
-  // Stock filters need a per-family SUM, which Prisma cannot express in a
+  // Stock filters judge each SKU (skuStockSummary), which Prisma cannot express in a
   // findMany where-clause. Filter after serialization — the catalogue is small
   // (tens of products), so this is cheaper than a raw query and stays typed.
   const needsStockFilter = params.stock !== 'All';
@@ -96,8 +95,9 @@ export async function list(params: ListQuery, role: Role) {
   let serialized = rows.map((r) => serializeListRow(r, role));
 
   if (needsStockFilter) {
+    // Per SKU: "Out" = any active SKU at 0; "Low/Out" = any active SKU under the threshold.
     serialized = serialized.filter((p) =>
-      params.stock === 'Out' ? p.stock === 0 : p.stock < LOW_STOCK_THRESHOLD,
+      params.stock === 'Out' ? p.skuStock.out > 0 : p.skuStock.out + p.skuStock.low > 0,
     );
     const filteredTotal = serialized.length;
     const { skip, take } = toSkipTake(params);

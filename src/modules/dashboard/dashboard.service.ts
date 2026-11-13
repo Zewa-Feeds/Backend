@@ -99,13 +99,15 @@ export async function counters(role: Role): Promise<DashboardCounters> {
 async function countLowStockFamilies(): Promise<number> {
   const rows = await prisma.$queryRaw<{ count: bigint }[]>`
     SELECT COUNT(*)::bigint AS count FROM (
+      -- A product counts when ANY active SKU is low or out (or it has none),
+      -- not when the family total is: a total hides an empty pack.
       SELECT f.id
       FROM "ProductFamily" f
       LEFT JOIN "ProductVariant" v ON v."familyId" = f.id AND v."isActive" = true
       WHERE f."deletedAt" IS NULL
         AND f.status IN ('ACTIVE', 'COMING_SOON')
       GROUP BY f.id
-      HAVING COALESCE(SUM(v.stock), 0) < ${LOW_STOCK_THRESHOLD}
+      HAVING COUNT(v.id) = 0 OR MIN(v.stock) < ${LOW_STOCK_THRESHOLD}
     ) AS low
   `;
   return Number(rows[0]?.count ?? 0);
