@@ -9,7 +9,7 @@
  *     data and staff attribution. The CMS serializers are not reused.
  */
 import { Router } from 'express';
-import { ContentStatus, ContentVersion, ProductStatus, ReviewState } from '@prisma/client';
+import { ContentStatus, ContentVersion, MediaType, ProductStatus, ReviewState } from '@prisma/client';
 import { z } from 'zod';
 import { asyncHandler } from '@/middleware/asyncHandler';
 import { validate, emailSchema, slugSchema } from '@/middleware/validate';
@@ -252,6 +252,13 @@ catalogRouter.get(
               orderBy: { position: 'asc' },
               select: { pricePaise: true, mrpPaise: true, pack: true },
             },
+            // Fallback picture: the product's lead image, when the spotlight has none.
+            media: {
+              where: { type: MediaType.IMAGE },
+              orderBy: { position: 'asc' },
+              take: 1,
+              select: { url: true },
+            },
           },
         },
       },
@@ -266,7 +273,9 @@ catalogRouter.get(
         tagline: s.tagline,
         subText: s.subText,
         badge: s.badge,
-        imageUrl: s.imageUrl,
+        // Without its own image the banner showed "Image coming soon"; use the
+        // product's lead photo instead.
+        imageUrl: s.imageUrl ?? s.family.media[0]?.url ?? null,
         proteinPct: s.family.proteinPct,
         packs: s.family.variants.map((v) => v.pack),
         pricePaise: s.family.variants[0]?.pricePaise ?? null,
