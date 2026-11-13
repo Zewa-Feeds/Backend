@@ -709,7 +709,7 @@ export async function generateInvoicePdf(
     footerY + 6,
     { size: 7.5, color: MUTED },
   );
-  text('This is a computer-generated invoice.', MARGIN, footerY - 5, { size: 7.5, color: MUTED });
+  text('This is a computer-generated invoice. E&OE.', MARGIN, footerY - 5, { size: 7.5, color: MUTED });
   textRight(seller.name, PAGE_WIDTH - MARGIN, footerY - 5, {
     size: 7.5,
     color: MUTED,
