@@ -126,6 +126,9 @@ const TEAL = rgb(0.05, 0.72, 0.62);
 const money = (paise: number): string => formatInr(paise).replace('₹', 'Rs. ');
 const formatDecimal = (paise: number): string => (paise / 100).toFixed(2);
 
+/** Services Accounting Code for the shipping line (road transport of goods). */
+export const SHIPPING_SAC = '996511';
+
 /**
  * Resolves coupon records from order snapshot or redemptions.
  * Distinguishes shipping coupons (e.g. ZEWA1) from item/cart coupons (e.g. SPECIAL10).
@@ -611,7 +614,9 @@ export async function generateInvoicePdf(
       : '0.00';
 
   text('Shipping & Handling', COL.item, y, { size: 8 });
-  text('—', COL.hsn, y, { size: 7.5, color: MUTED });
+  // SAC 996511: road transport of goods (courier delivery). Printed in the
+  // HSN column, as GST invoices do for services.
+  text(SHIPPING_SAC, COL.hsn, y, { size: 7.5, color: MUTED });
   textRight('1', COL.qty, y, { size: 8 });
   textRight(formatDecimal(shippingFeePaise), COL.rate, y, { size: 8 });
   textRight(formatDecimal(shippingFeePaise), COL.gross, y, { size: 8 });
