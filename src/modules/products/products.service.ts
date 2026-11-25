@@ -1021,8 +1021,6 @@ async function applyToLive(
    */
   const renamedFrom = new Map<string, string>();
 
-  const keptIds = new Set<string>();
-
   const fields = (v: ProductBody['variants'][number], i: number) => ({
     pack: v.pack,
     mrpPaise: toPaise(v.mrp),
@@ -1031,7 +1029,13 @@ async function applyToLive(
     hsn: v.hsn,
     weightGrams: v.weightGrams ?? null,
     position: i,
-    isActive: v.isActive,
+    /*
+     * Always true: a saved pack is never switched off from the editor. A
+     * payload's isActive is ignored, so a stale client still holding `false`
+     * for a pack (as M3-1KG was on 19 Nov 2026) turns it back on instead of
+     * keeping it hidden. Only deleting the whole product hides its packs.
+     */
+    isActive: true,
   });
 
   /*
@@ -1078,7 +1082,6 @@ async function applyToLive(
   for (const [i, v] of body.variants.entries()) {
     const row = resolved.get(i);
     if (!row) continue;
-    keptIds.add(row.id);
     if (row.sku !== v.sku) renamedFrom.set(row.sku, v.sku);
     // `sku` is written too: this is the rename, off the park value if it took one.
     await tx.productVariant.update({
@@ -1089,27 +1092,20 @@ async function applyToLive(
 
   for (const [i, v] of body.variants.entries()) {
     if (resolved.has(i)) continue;
-    const created = await tx.productVariant.create({
+    await tx.productVariant.create({
       data: { ...fields(v, i), familyId, sku: v.sku },
-      select: { id: true },
     });
-    keptIds.add(created.id);
   }
 
   /*
-   * Removed from the editor => deactivate, preserving order history.
+   * A pack left out of the payload is NOT deactivated.
    *
-   * Keyed on the ids actually matched above, not on SKUs. With SKU matching a
-   * renamed pack appeared in neither set and was deactivated as a side effect
-   * of its own rename.
+   * This used to switch omitted packs off ("removed from the editor"). On
+   * 19 Nov 2026 that took M3-1KG off sale with no visible way back: the editor
+   * had no switch to turn a pack on again, and the CMS just showed
+   * "Not for sale". Packs are never switched off now; an omitted pack keeps its
+   * current state, and the editor no longer offers removal of a saved pack.
    */
-  const removed = existing.filter((v) => !keptIds.has(v.id));
-  if (removed.length > 0) {
-    await tx.productVariant.updateMany({
-      where: { id: { in: removed.map((v) => v.id) } },
-      data: { isActive: false },
-    });
-  }
 
   await applyMediaToLive(tx, familyId, body, orphanSink, renamedFrom);
   await applyHeroes(tx, familyId, body);

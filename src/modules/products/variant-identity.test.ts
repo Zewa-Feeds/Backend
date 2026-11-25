@@ -73,7 +73,7 @@ async function withProduct<T>(fn: (b: Built) => Promise<T>): Promise<T> {
  * schema the route uses, so display strings become enums and the new optional
  * `id` field is exercised rather than smuggled past validation.
  */
-const body = (b: Built, variants: { id?: string; sku: string; pack: string; heroMediaId?: string | null }[],
+const body = (b: Built, variants: { id?: string; sku: string; pack: string; heroMediaId?: string | null; isActive?: boolean }[],
               media: { id?: string; url: string; skus: string[] }[]) => productBodySchema.parse({
   name: 'Identity Test', slug: b.slug, category: 'Betta', status: 'Active', badge: null,
   shortDesc: 'x', fullDesc: '', protein: 40, benefits: [], tags: [],
@@ -86,7 +86,7 @@ const body = (b: Built, variants: { id?: string; sku: string; pack: string; hero
   variants: variants.map((v) => ({
     ...(v.id ? { id: v.id } : {}),
     sku: v.sku, pack: v.pack, mrp: 100, price: 100, stock: 5, hsn: '23099090',
-    isActive: true, heroMediaId: v.heroMediaId ?? null,
+    isActive: v.isActive ?? true, heroMediaId: v.heroMediaId ?? null,
   })),
 }) as never;
 
@@ -445,7 +445,7 @@ describe('renaming a SKU', () => {
     });
   });
 
-  it('still deactivates a pack genuinely removed from the editor', async () => {
+  it('never deactivates a pack left out of a save', async () => {
     await withProduct(async (b) => {
       const before = await live(b.familyId);
       const kiloRow = before.variants.find((v) => v.sku === b.kilo)!;
@@ -454,7 +454,18 @@ describe('renaming a SKU', () => {
         [{ sku: b.base, pack: '45g Bottle' }, { sku: b.twin, pack: '45g x 2' }], []));
 
       const after = await live(b.familyId);
-      expect(after.variants.find((v) => v.id === kiloRow.id)!.isActive).toBe(false);
+      expect(after.variants.find((v) => v.id === kiloRow.id)!.isActive).toBe(true);
+    });
+  });
+
+  it('ignores isActive: false in the payload', async () => {
+    await withProduct(async (b) => {
+      await saveAndPublish(b.slug, body(b,
+        [{ sku: b.base, pack: '45g Bottle' }, { sku: b.twin, pack: '45g x 2' },
+         { sku: b.kilo, pack: '1kg Pouch', isActive: false }], []));
+
+      const after = await live(b.familyId);
+      for (const v of after.variants) expect(v.isActive).toBe(true);
     });
   });
 

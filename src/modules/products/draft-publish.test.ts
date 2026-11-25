@@ -327,10 +327,16 @@ describe('listing representative', () => {
     });
   });
 
-  it('clears a pack that is no longer active', async () => {
+  it('keeps a representative pack that a later draft leaves out', async () => {
     await withProduct({ published: false }, async (b) => {
       const id = await actor();
-      // Drop the 1kg from the payload (deactivating it) while naming it representative.
+      await saveDraft(b.slug, body(b, { representativeSku: b.kilo }), id, ctxFor(id), ADMIN);
+      await publish(b.slug, id, ctxFor(id), ADMIN);
+      const chosen = (await state(b.familyId)).representativeVariantId;
+      expect(chosen).not.toBeNull();
+
+      // Leaving the 1kg out of a later draft no longer switches it off, so the
+      // representative it names stays valid.
       await saveDraft(b.slug, body(b, {
         representativeSku: b.kilo,
         variants: [{ sku: b.base, pack: '45g Bottle', mrp: 100, price: 100, stock: 5, hsn: '23099090', isActive: true }],
@@ -338,27 +344,8 @@ describe('listing representative', () => {
       await publish(b.slug, id, ctxFor(id), ADMIN);
 
       const after = await state(b.familyId);
-      expect(after.variants.find((v) => v.sku === b.kilo)!.isActive).toBe(false);
-      expect(after.representativeVariantId).toBeNull();
-    });
-  });
-
-  it('survives deactivation of the pack it points at', async () => {
-    await withProduct({ published: false }, async (b) => {
-      const id = await actor();
-      await saveDraft(b.slug, body(b, { representativeSku: b.kilo }), id, ctxFor(id), ADMIN);
-      await publish(b.slug, id, ctxFor(id), ADMIN);
-      expect((await state(b.familyId)).representativeVariantId).not.toBeNull();
-
-      // Now retire that pack.
-      await saveDraft(b.slug, body(b, {
-        representativeSku: b.kilo,
-        variants: [{ sku: b.base, pack: '45g Bottle', mrp: 100, price: 100, stock: 5, hsn: '23099090', isActive: true }],
-      }), id, ctxFor(id), ADMIN);
-      await publish(b.slug, id, ctxFor(id), ADMIN);
-
-      // Cleared rather than left dangling; the resolver falls back to position.
-      expect((await state(b.familyId)).representativeVariantId).toBeNull();
+      expect(after.variants.find((v) => v.sku === b.kilo)!.isActive).toBe(true);
+      expect(after.representativeVariantId).toBe(chosen);
     });
   });
 });
