@@ -142,6 +142,7 @@ export const FAMILY_SELECT = {
   fullDescHtml: true,
   proteinPct: true,
   benefits: true,
+  faq: true,
   tags: true,
   feedFreq: true,
   feedPortion: true,
@@ -201,6 +202,16 @@ type VariantRow = Prisma.ProductVariantGetPayload<{ select: typeof VARIANT_SELEC
 
 // ---- Serializers -----------------------------------------------------------
 
+/** Stored FAQs as a clean [{ q, a }] list; anything malformed is dropped rather than served. */
+export function faqList(raw: unknown): { q: string; a: string }[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((f) =>
+    f && typeof f === 'object' && typeof (f as { q?: unknown }).q === 'string' && typeof (f as { a?: unknown }).a === 'string'
+      ? [{ q: (f as { q: string }).q, a: (f as { a: string }).a }]
+      : [],
+  );
+}
+
 export function serializeVariant(v: VariantRow) {
   return {
     id: v.id,
@@ -242,6 +253,7 @@ export function serializeFamily(family: FamilyRow, role?: Role) {
     fullDesc: family.fullDescHtml,
     protein: family.proteinPct,
     benefits: family.benefits,
+    faq: faqList(family.faq),
     tags: family.tags,
     feedFreq: family.feedFreq,
     feedPortion: family.feedPortion,
@@ -396,6 +408,7 @@ export function serializePublic(family: FamilyRow) {
     fullDescHtml: family.fullDescHtml,
     proteinPct: family.proteinPct,
     benefits: family.benefits,
+    faq: faqList(family.faq),
     tags: family.tags,
     feeding: {
       frequency: family.feedFreq,

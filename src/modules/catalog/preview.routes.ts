@@ -75,6 +75,7 @@ previewRouter.get(
       fullDesc?: string;
       protein?: number;
       benefits?: string[];
+      faq?: { q: string; a: string }[];
       nutrition?: Record<string, string>;
       variants?: { sku: string; pack: string; price: number; mrp: number; stock: number }[];
     };
@@ -88,6 +89,7 @@ previewRouter.get(
         fullDescHtml: payload.fullDesc ?? base.fullDescHtml,
         proteinPct: payload.protein ?? base.proteinPct,
         benefits: payload.benefits ?? base.benefits,
+        faq: payload.faq ?? base.faq,
         nutrition: canonicalNutrition(payload.nutrition ?? base.nutrition),
         packs:
           payload.variants?.map((v) => ({

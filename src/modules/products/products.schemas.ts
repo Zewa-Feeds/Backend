@@ -13,6 +13,17 @@ import { plainText, richText } from '@/lib/sanitize';
 import { paginationSchema, slugSchema } from '@/middleware/validate';
 import { canonicalNutrition } from './nutrition';
 
+/** Markup stripped, then the stripper's entities decoded back to plain characters. */
+const faqText = (v: string) =>
+  plainText(v)
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .trim();
+
 /**
  * Enums accept either the enum value or the CMS's display label
  * ("Coming Soon" → COMING_SOON).
@@ -269,6 +280,25 @@ export const productBodySchema = z.object({
     .max(8, 'Up to 8 key benefits.')
     .default([])
     .transform((list) => list.filter((b) => b.length > 0)),
+
+  /**
+   * Product FAQs, in display order. Plain text only: markup is stripped, then
+   * the entities the stripper produces are decoded back to characters, so "&"
+   * stays "&" (the storefront escapes on render). A row left fully blank in the
+   * editor is dropped; a half-filled row is an error rather than a silent loss.
+   * Optional so an older client that omits it never wipes stored FAQs.
+   */
+  faq: z
+    .array(
+      z.object({
+        q: z.string().trim().max(300).transform(faqText),
+        a: z.string().trim().max(2000).transform(faqText),
+      }),
+    )
+    .max(20, 'Up to 20 FAQs.')
+    .transform((list) => list.filter((f) => f.q.length > 0 || f.a.length > 0))
+    .refine((list) => list.every((f) => f.q.length > 0 && f.a.length > 0), 'Each FAQ needs both a question and an answer.')
+    .optional(),
 
   /** Species / search tags, e.g. ["betta","halfmoon"]. Many per product. */
   tags: z

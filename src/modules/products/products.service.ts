@@ -154,6 +154,8 @@ function familyData(body: ProductBody) {
     fullDescHtml: body.fullDesc,
     proteinPct: body.protein,
     benefits: body.benefits,
+    // Only when sent: an older client (or a draft saved before FAQs existed) keeps stored FAQs.
+    ...(body.faq ? { faq: body.faq as Prisma.InputJsonValue } : {}),
     ...(body.tags ? { tags: body.tags } : {}),
     feedFreq: body.feedFreq ?? null,
     feedPortion: body.feedPortion ?? null,

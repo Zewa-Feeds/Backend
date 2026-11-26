@@ -283,6 +283,11 @@ model ProductFamily {
   /// Up to 8 bullet points, shown as trust badges on the PDP (§5.2).
   benefits   String[]
 
+  /// Product FAQs, in display order: [{ q, a }]. Plain text (no markup); the
+  /// storefront renders them under the product and as FAQPage JSON-LD.
+  /// Edited through the CMS like any other copy (draft, then publish).
+  faq        Json       @default("[]")
+
   /// Species and search tags, e.g. ["betta","halfmoon","plakat"].
   ///
   /// Many-valued on purpose: one feed suits several species, so this is what
