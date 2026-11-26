@@ -1021,21 +1021,29 @@ async function applyToLive(
    */
   const renamedFrom = new Map<string, string>();
 
-  const fields = (v: ProductBody['variants'][number], i: number) => ({
+  /*
+   * CONTENT ONLY: never `stock`, never `isActive`.
+   *
+   * The payload carries each pack's stock as it was when the editor loaded,
+   * and publishing used to write it back. Any order, restock or stock-tool
+   * count in between was silently undone (M3-1KG, 19 Nov 2026: set to 10 with
+   * the stock tool, back to 2 after a publish two minutes later). Stock belongs
+   * to checkout, the order paths and updateStock(); active state is never a
+   * side effect of publishing copy. Leaving both columns out of the UPDATE is
+   * also what makes a publish safe against concurrent orders: checkout's
+   * `stock = stock - qty` runs on the same row and always sees the latest value.
+   *
+   * Only a pack CREATED by this publish takes its initial stock from the
+   * payload (no order can exist for a row that does not exist yet), and it
+   * starts active.
+   */
+  const contentFields = (v: ProductBody['variants'][number], i: number) => ({
     pack: v.pack,
     mrpPaise: toPaise(v.mrp),
     pricePaise: toPaise(v.price),
-    stock: v.stock,
     hsn: v.hsn,
     weightGrams: v.weightGrams ?? null,
     position: i,
-    /*
-     * Always true: a saved pack is never switched off from the editor. A
-     * payload's isActive is ignored, so a stale client still holding `false`
-     * for a pack (as M3-1KG was on 19 Nov 2026) turns it back on instead of
-     * keeping it hidden. Only deleting the whole product hides its packs.
-     */
-    isActive: true,
   });
 
   /*
@@ -1086,14 +1094,14 @@ async function applyToLive(
     // `sku` is written too: this is the rename, off the park value if it took one.
     await tx.productVariant.update({
       where: { id: row.id },
-      data: { ...fields(v, i), sku: v.sku },
+      data: { ...contentFields(v, i), sku: v.sku },
     });
   }
 
   for (const [i, v] of body.variants.entries()) {
     if (resolved.has(i)) continue;
     await tx.productVariant.create({
-      data: { ...fields(v, i), familyId, sku: v.sku },
+      data: { ...contentFields(v, i), stock: v.stock, isActive: true, familyId, sku: v.sku },
     });
   }
 
